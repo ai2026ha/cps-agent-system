@@ -253,3 +253,30 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 .dashboard-registration-card{margin:2px 0 0;background:linear-gradient(180deg,#fff,#fbfcff)}
 .overview-groups>.dashboard-registration-card{width:100%}
 @media(max-width:720px){.dashboard-registration-card{margin-top:0}}
+
+/* V30: 注册地址左对齐 + 玩家查询/编辑 */
+.registration-link-card{justify-content:flex-start;align-items:flex-start}
+.registration-link-main{display:flex;flex-direction:column;gap:5px;min-width:0;width:100%}
+.registration-link-row{display:flex;align-items:center;justify-content:flex-start;gap:12px;flex-wrap:wrap}
+.registration-link-row>span{flex:0 1 auto}
+.registration-link-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;min-width:0;width:auto}
+.registration-link-actions input{width:300px;max-width:42vw;min-width:220px;background:#f7f9fc;color:#3f4d68}
+@media(max-width:900px){
+  .registration-link-card{flex-direction:column}
+  .registration-link-row{align-items:flex-start;flex-direction:column;gap:8px}
+  .registration-link-actions{width:100%}
+  .registration-link-actions input{width:min(100%,520px);max-width:100%;min-width:0}
+}
+
+.player-search-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px;margin-bottom:12px;padding:12px 14px;background:#f8f9fc;border:1px solid #e7ebf2;border-radius:12px}
+.player-search-bar>.query-field{flex:0 0 190px;width:190px;min-width:0}
+.player-search-bar>.query-field input{width:100%}
+.player-search-bar .query-actions{flex:0 0 auto;padding-bottom:0}
+.player-table-scroll.player-editable table th:last-child,.player-table-scroll.player-editable table td:last-child{position:sticky;right:0;z-index:1;background:#fff;box-shadow:-1px 0 0 #edf0f5}
+.player-table-scroll.player-editable table th:last-child{z-index:2;background:#f8f9fc}
+.player-table-scroll.player-editable table tbody tr:hover td:last-child{background:#fafbfe}
+@media(max-width:700px){
+  .player-search-bar>.query-field{flex:1 1 180px;width:auto}
+  .player-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}
+}
+@media(max-width:520px){.player-search-bar>.query-field{flex:1 0 100%}}

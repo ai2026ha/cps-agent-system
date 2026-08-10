@@ -27,6 +27,14 @@ class PlayerRegister(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+
+class PlayerAdminUpdate(BaseModel):
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+    status: str | None = None
+    owner_agent_id: str | None = None
+    coin_action: str | None = None
+    coin_amount: int | None = Field(default=None, ge=1, le=2_000_000_000)
+
 class ProductCreate(BaseModel):
     sku: str
     name: str

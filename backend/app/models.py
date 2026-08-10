@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, date
 from decimal import Decimal
-from sqlalchemy import String, Integer, DateTime, Date, Numeric, ForeignKey, Text, Boolean, UniqueConstraint
+from sqlalchemy import String, Integer, BigInteger, DateTime, Date, Numeric, ForeignKey, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -50,6 +50,19 @@ class Player(Base):
     total_recharge: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_login_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    platform_coin_balance: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+class PlayerCoinLedger(Base):
+    __tablename__ = "player_coin_ledger"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    action: Mapped[str] = mapped_column(String(24), index=True)
+    delta: Mapped[int] = mapped_column(BigInteger)
+    balance_after: Mapped[int] = mapped_column(BigInteger)
+    operator: Mapped[str] = mapped_column(String(64), default="system")
+    note: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 class Product(Base):

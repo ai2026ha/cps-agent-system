@@ -4,6 +4,7 @@ let actorType = localStorage.getItem('cps_actor_type') || 'admin';
 let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
+let playerSearch = {account:'', parent:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
 
@@ -50,7 +51,7 @@ function formatApiError(detail){
   if(!detail) return '请求失败';
   if(typeof detail==='string') return detail;
   if(Array.isArray(detail)){
-    const labels={username:'登录账号',password:'登录密码',agent_name:'代理名称',agent_level:'代理等级',subagent_limit:'可开通下级代理数量',commission_rate:'佣金比例',status:'后台状态',parent_agent_id:'更改归属'};
+    const labels={username:'登录账号',password:'登录密码',agent_name:'代理名称',agent_level:'代理等级',subagent_limit:'可开通下级代理数量',commission_rate:'佣金比例',status:'后台状态',parent_agent_id:'更改归属',owner_agent_id:'玩家归属',coin_action:'平台币操作',coin_amount:'平台币数量'};
     return detail.map(item=>{
       if(typeof item==='string') return item;
       const key=Array.isArray(item?.loc)?item.loc[item.loc.length-1]:'';
@@ -304,7 +305,7 @@ function dashboardRegistrationCard(){
  const isAdmin=currentUser?.actor_type==='admin';
  const title=isAdmin?'超管专属注册地址':'我的专属注册地址';
  const note=isAdmin?'通过此地址注册的玩家直属总平台，并自动进入超管玩家列表。':`通过此地址注册的玩家会自动绑定代理 ${esc(currentUser.agent_id)}。`;
- return `<section class="registration-link-card dashboard-registration-card"><div><strong>${title}</strong><span>${note}</span></div><div class="registration-link-actions"><input value="${esc(url)}" readonly id="dashboardRegistrationUrl"><button class="btn primary" id="copyDashboardRegistration">复制地址</button></div></section>`;
+ return `<section class="registration-link-card dashboard-registration-card"><div class="registration-link-main"><strong>${title}</strong><div class="registration-link-row"><span>${note}</span><div class="registration-link-actions"><input value="${esc(url)}" readonly id="dashboardRegistrationUrl"><button class="btn primary" id="copyDashboardRegistration">复制地址</button></div></div></div></section>`;
 }
 function bindDashboardRegistrationCopy(){
  const btn=$('#copyDashboardRegistration');
@@ -321,9 +322,30 @@ window.copyRegistrationLink=async(agentId)=>{
  const ok=await copyText(url);
  showToast(ok?`注册地址已复制：${url}`:'复制失败，请手动复制注册地址',ok?'success':'error',ok?3200:4200);
 };
+function playerSearchQuery(){
+ const p=new URLSearchParams();
+ if(playerSearch.account)p.set('account',playerSearch.account);
+ if(playerSearch.parent)p.set('parent',playerSearch.parent);
+ const qs=p.toString();
+ return qs?`?${qs}`:'';
+}
+function playerSearchBar(){
+ return `<div class="player-search-bar">
+   <div class="query-field"><label>账号查询</label><input id="playerAccountQuery" value="${esc(playerSearch.account)}" placeholder="输入玩家账号"></div>
+   <div class="query-field"><label>上级代理查询</label><input id="playerParentQuery" value="${esc(playerSearch.parent)}" placeholder="代理ID/账号/名称"></div>
+   <div class="query-actions"><button class="btn primary" id="playerQueryBtn">查询</button><button class="btn" id="playerResetBtn">重置</button></div>
+ </div>`;
+}
+function bindPlayerSearch(){
+ const run=()=>{playerSearch={account:$('#playerAccountQuery')?.value.trim()||'',parent:$('#playerParentQuery')?.value.trim()||''};renderPlayers()};
+ $('#playerQueryBtn').onclick=run;
+ $('#playerResetBtn').onclick=()=>{playerSearch={account:'',parent:''};renderPlayers()};
+ ['#playerAccountQuery','#playerParentQuery'].forEach(sel=>{const el=$(sel);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
+}
 async function renderPlayers(){
- const rows=await api('/api/players');
- $('#content').innerHTML=panel('玩家列表',`<div class="table-scroll">${table(rows,playerCols)}</div>`);
+ const rows=await api('/api/players'+playerSearchQuery());
+ $('#content').innerHTML=panel('玩家列表',`${playerSearchBar()}<div class="table-scroll player-table-scroll ${hasPermission('players.manage')?'player-editable':''}">${table(rows,playerColumns())}</div>`);
+ bindPlayerSearch();
 }
 
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
@@ -423,12 +445,45 @@ window.openAgentEdit=async(agentPk)=>{
   }catch(e){alert(e.message)}
 };
 
+window.openPlayerEdit=async(playerPk)=>{
+ if(!hasPermission('players.manage'))return;
+ try{
+   const data=await api(`/api/players/${playerPk}/edit`);
+   openForm(`编辑玩家 · ${data.player_id}`,{
+     path:`/api/players/${playerPk}`,
+     method:'PATCH',
+     pendingText:'保存中…',
+     note:`玩家账号：${data.username} ｜ 当前平台币余额：${Number(data.platform_coin_balance||0).toLocaleString()}。修改密码留空表示保持原密码；平台币操作留空表示不变。`,
+     defaults:{password:'',status:data.status||'active',owner_agent_id:data.owner_agent_id||'SUPERADMIN',coin_action:'',coin_amount:''},
+     fields:[
+       ['password','修改密码','password',false,{autocomplete:'new-password',placeholder:'留空则不修改；至少 8 位'}],
+       ['owner_agent_id','修改归属','select',true,{options:data.owner_options||[],valueType:'string'}],
+       ['status','账号状态','select',true,{options:[{value:'active',label:'正常'},{value:'disabled',label:'封禁'}]}],
+       ['coin_action','平台币操作','select',false,{options:[{value:'',label:'不操作'},{value:'issue',label:'发放平台币'},{value:'reclaim',label:'收回平台币'}]}],
+       ['coin_amount','平台币数量','number',false,{min:1,max:2000000000,step:1,placeholder:'仅在发放/收回时填写'}]
+     ],
+     transform:obj=>{
+       const out={status:obj.status,owner_agent_id:obj.owner_agent_id};
+       if(obj.password)out.password=obj.password;
+       if(obj.coin_action){
+         const amount=Number(obj.coin_amount||0);
+         if(!Number.isInteger(amount)||amount<=0)throw new Error('发放/收回平台币时，请填写大于 0 的整数数量');
+         out.coin_action=obj.coin_action;out.coin_amount=amount;
+       }
+       return out;
+     }
+   });
+ }catch(e){showToast(e.message,'error',4200)}
+};
+
 async function renderProducts(cat){const rows=await api('/api/products?category='+cat);const manage=hasPermission('products.manage');$('#content').innerHTML=panel(cat==='gift'?'礼包列表':'商品列表',table(rows,productCols),manage?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(manage)$('#addBtn').onclick=()=>openForm(cat==='gift'?'新增礼包':'新增商品',{...forms.product,defaults:{category:cat}})}
 async function renderCDK(){const rows=await api('/api/redemption-batches');const manage=hasPermission('cdk.manage');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>':'');if(manage){$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
 
+function playerStatusBadge(v){return v==='active'?'<span class="badge ok">正常</span>':'<span class="badge bad">封禁</span>'}
 const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',agentStatusBadge],['注册地址','agent_id',(v)=>`<button class="btn compact" onclick="copyRegistrationLink('${esc(v)}')">复制地址</button>`],['操作','id',(_,r)=>hasPermission('channels.edit_basic')||hasPermission('channels.edit_full')?`<button class="btn compact" onclick="openAgentEdit(${Number(r.id)})">编辑</button>`:'-']];
-const playerCols=[['玩家ID','player_id'],['账号','username'],['角色名','role_name'],['区服','server_name'],['所属代理','agent_public_id'],['今日充值','today_recharge'],['总充值','total_recharge'],['注册时间','created_at'],['最后登录','last_login_at'],['登录IP','last_login_ip']];
+const playerBaseCols=[['玩家ID','player_id'],['账号','username'],['角色名','role_name'],['区服','server_name'],['所属代理','agent_public_id'],['平台币余额','platform_coin_balance'],['今日充值','today_recharge'],['总充值','total_recharge'],['状态','status',playerStatusBadge],['注册时间','created_at'],['最后登录','last_login_at'],['登录IP','last_login_ip']];
+function playerColumns(){return hasPermission('players.manage')?[...playerBaseCols,['操作','id',(_,r)=>`<button class="btn compact" onclick="openPlayerEdit(${Number(r.id)})">编辑</button>`]]:playerBaseCols}
 const platformCols=[['订单号','order_no'],['玩家PK','player_id'],['代理PK','agent_id'],['金额','amount'],['平台币','platform_coin'],['支付渠道','payment_channel'],['支付状态','pay_status',badge],['创建时间','created_at']];
 const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','product_id'],['数量','quantity'],['金额','amount'],['支付','pay_status',badge],['发货','delivery_status',badge],['创建时间','created_at']];
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
