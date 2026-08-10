@@ -22,30 +22,33 @@ function logout(){ token='';localStorage.removeItem('cps_token');$('#app').class
 $('#logoutBtn').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;localStorage.setItem('cps_token',token);showApp();}catch(err){$('#loginError').textContent=err.message}};
 function showApp(){ $('#login').classList.add('hidden');$('#app').classList.remove('hidden');syncNavToView(currentView);loadView(currentView); }
-if(token) showApp();
 
-const navParents = [...document.querySelectorAll('#nav .nav-parent')];
+const navRoot = $('#nav');
 const navViews = [...document.querySelectorAll('#nav [data-view]')];
 
 function setSectionOpen(section, open){
+  if(!section) return;
   section.classList.toggle('open', open);
   const parent = section.querySelector('.nav-parent');
   if(parent) parent.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
-navParents.forEach(parent=>{
-  parent.onclick=()=>{
+// 使用事件委托，确保一级菜单在任何登录状态下都能可靠展开/收起。
+navRoot.addEventListener('click', e=>{
+  const parent=e.target.closest('.nav-parent');
+  if(parent && navRoot.contains(parent)){
     const section=parent.closest('.nav-section');
     setSectionOpen(section,!section.classList.contains('open'));
-  };
-});
+    return;
+  }
 
-navViews.forEach(b=>b.onclick=()=>{
+  const viewBtn=e.target.closest('[data-view]');
+  if(!viewBtn || !navRoot.contains(viewBtn)) return;
   navViews.forEach(x=>x.classList.remove('active'));
-  b.classList.add('active');
-  const section=b.closest('.nav-section');
+  viewBtn.classList.add('active');
+  const section=viewBtn.closest('.nav-section');
   if(section) setSectionOpen(section,true);
-  currentView=b.dataset.view;
+  currentView=viewBtn.dataset.view;
   loadView(currentView);
 });
 
@@ -58,6 +61,9 @@ function syncNavToView(view){
 }
 
 $('#refreshBtn').onclick=()=>loadView(currentView);
+
+// 必须在菜单 DOM 与事件全部初始化以后再恢复登录状态，避免 token 已存在时脚本提前中断。
+if(token) showApp();
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function badge(v){const s=String(v??'');const c=['paid','sent','success','active','redeemed','claimed'].includes(s)?'ok':['pending','waiting','queued','unused'].includes(s)?'warn':['failed','disabled'].includes(s)?'bad':'';return `<span class="badge ${c}">${esc(s)}</span>`}
