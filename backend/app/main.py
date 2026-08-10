@@ -52,12 +52,12 @@ def dt(v):
     return v.isoformat(sep=" ", timespec="seconds") if v else None
 
 
-# ---------- 统一后台权限模型（V18） ----------
+# ---------- 统一后台权限模型（V20） ----------
 # 所有账号共用同一个登录入口和后台地址；登录后按角色/代理等级返回权限清单。
 # 菜单边界：
 # - 超级管理员：全部系统。
-# - 一级/二级代理：仅渠道管理、玩家管理、订单管理。
-# - 三级代理：仅玩家管理、订单管理；三级为末级，不拥有任何渠道管理权限。
+# - 一级/二级代理：数据总览、渠道管理、玩家管理、订单管理。
+# - 三级代理：数据总览、玩家管理、订单管理；三级为末级，不拥有任何渠道管理权限。
 PERMISSION_MATRIX = {
     "superadmin": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "channels.edit_full",
@@ -68,16 +68,16 @@ PERMISSION_MATRIX = {
         "mail.view", "mail.send", "system.rebuild",
     },
     "agent_1": {
-        "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
+        "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
         "players.view", "orders.view", "shipments.view",
     },
     "agent_2": {
-        "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
+        "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
         "players.view", "orders.view", "shipments.view",
     },
-    # 三级代理为末级：只保留玩家与订单业务查看权限，不能进入渠道管理，也不能新增代理。
+    # 三级代理为末级：保留数据总览、玩家与订单查看权限，不能进入渠道管理，也不能新增代理。
     "agent_3": {
-        "players.view", "orders.view", "shipments.view",
+        "dashboard.view", "players.view", "orders.view", "shipments.view",
     },
 }
 
@@ -287,12 +287,17 @@ def dashboard(db: Session = Depends(get_db), principal=Depends(require_permissio
         poq = poq.filter(PlatformCoinOrder.agent_id.in_(agent_ids)); moq = moq.filter(MallOrder.agent_id.in_(agent_ids))
         plq = plq.filter(Player.agent_id.in_(agent_ids)); pending_q = pending_q.filter(MallOrder.agent_id.in_(agent_ids))
         aq = aq.filter(Agent.id.in_([x for x in agent_ids if x != principal.agent_pk]))
-    return {
+    result = {
         "agents": aq.count(), "players": plq.count(), "today_turnover": money((pq.scalar() or 0) + (mq.scalar() or 0)),
         "platform_orders": poq.count(), "mall_orders": moq.count(), "pending_shipments": pending_q.count(),
-        "cdk_unused": db.query(RedemptionCode).filter(RedemptionCode.status == "unused").count(),
-        "cdk_redeemed": db.query(RedemptionCode).filter(RedemptionCode.status == "redeemed").count(),
     }
+    # CDK 属于超管专属系统。普通代理的数据总览不暴露全局 CDK 数据。
+    if principal.actor_type != "agent":
+        result.update({
+            "cdk_unused": db.query(RedemptionCode).filter(RedemptionCode.status == "unused").count(),
+            "cdk_redeemed": db.query(RedemptionCode).filter(RedemptionCode.status == "redeemed").count(),
+        })
+    return result
 
 # ---------- 渠道管理 ----------
 def agent_identity_from_pk(agent_pk: int) -> str:
@@ -929,12 +934,16 @@ def intelligence_alerts(db: Session = Depends(get_db), principal=Depends(require
     if principal.actor_type == "agent": failed_q = failed_q.filter(MallOrder.agent_id.in_(ids))
     failed_shipments = failed_q.count()
     if failed_shipments: alerts.append({"level": "high", "type": "shipment", "message": f"有 {failed_shipments} 笔商城订单发货失败，需要处理"})
-    low_stock = db.query(Product).filter(Product.enabled.is_(True), Product.stock <= 5).count()
-    if low_stock: alerts.append({"level": "medium", "type": "stock", "message": f"有 {low_stock} 个商品库存低于或等于 5"})
-    pending_q = db.query(Settlement).filter(Settlement.status == "pending")
-    if principal.actor_type == "agent": pending_q = pending_q.filter(Settlement.agent_id.in_(ids))
-    pending_settle = pending_q.count()
-    if pending_settle: alerts.append({"level": "medium", "type": "settlement", "message": f"有 {pending_settle} 笔渠道结算待处理"})
+    # 商品管理只属于超管后台，代理数据总览不展示全局库存告警。
+    if principal.actor_type != "agent":
+        low_stock = db.query(Product).filter(Product.enabled.is_(True), Product.stock <= 5).count()
+        if low_stock: alerts.append({"level": "medium", "type": "stock", "message": f"有 {low_stock} 个商品库存低于或等于 5"})
+    # 只有具备渠道结算查看权限的账号才展示结算提醒；三级代理不显示。
+    if "settlements.view" in permissions_for(principal, db):
+        pending_q = db.query(Settlement).filter(Settlement.status == "pending")
+        if principal.actor_type == "agent": pending_q = pending_q.filter(Settlement.agent_id.in_(ids))
+        pending_settle = pending_q.count()
+        if pending_settle: alerts.append({"level": "medium", "type": "settlement", "message": f"有 {pending_settle} 笔渠道结算待处理"})
     suspicious_q = db.query(Player.last_login_ip, func.count(Player.id)).filter(Player.last_login_ip.isnot(None))
     if principal.actor_type == "agent": suspicious_q = suspicious_q.filter(Player.agent_id.in_(ids))
     suspicious = suspicious_q.group_by(Player.last_login_ip).having(func.count(Player.id) >= 5).all()

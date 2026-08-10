@@ -1,7 +1,7 @@
 const $ = s => document.querySelector(s);
 let token = localStorage.getItem('cps_token') || '';
 let actorType = localStorage.getItem('cps_actor_type') || 'admin';
-let currentView = actorType === 'agent' ? 'agents' : 'dashboard';
+let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
 
@@ -165,8 +165,13 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='sendMail') return renderSendMail(); if(view==='mailRecords') return renderList('/api/mails',mailCols,'发送记录');
  }catch(e){$('#content').innerHTML=`<div class="panel"><div class="empty error">${esc(e.message)}</div></div>`}}
 
-async function renderDashboard(){const [d,a]=await Promise.all([api('/api/dashboard'),api('/api/intelligence/alerts')]);$('#content').innerHTML=`<div class="metrics">
- ${[['代理数量',d.agents],['玩家数量',d.players],['今日流水','¥ '+d.today_turnover.toFixed(2)],['待发货/异常',d.pending_shipments],['平台币订单',d.platform_orders],['商城订单',d.mall_orders],['未兑换CDK',d.cdk_unused],['已兑换CDK',d.cdk_redeemed]].map(x=>`<div class="metric"><div class="label">${x[0]}</div><strong>${x[1]}</strong></div>`).join('')}
+async function renderDashboard(){const [d,a]=await Promise.all([api('/api/dashboard'),api('/api/intelligence/alerts')]);
+ const metrics=[];
+ if(hasPermission('channels.view'))metrics.push(['代理数量',d.agents]);
+ metrics.push(['玩家数量',d.players],['今日流水','¥ '+d.today_turnover.toFixed(2)],['待发货/异常',d.pending_shipments],['平台币订单',d.platform_orders],['商城订单',d.mall_orders]);
+ if(hasPermission('cdk.view')){metrics.push(['未兑换CDK',d.cdk_unused??0],['已兑换CDK',d.cdk_redeemed??0]);}
+ $('#content').innerHTML=`<div class="metrics">
+ ${metrics.map(x=>`<div class="metric"><div class="label">${x[0]}</div><strong>${x[1]}</strong></div>`).join('')}
  </div>${panel('智能运营提醒',`<div class="alerts">${a.map(x=>`<div class="alert ${x.level}">${esc(x.message)}</div>`).join('')}</div>`,hasPermission('system.rebuild')?`<button class="btn" onclick="rebuildTurnover()">重算代理流水</button>`:'')}`}
 window.rebuildTurnover=async()=>{try{alert((await api('/api/agents/rebuild-turnover',{method:'POST'})).message);loadView('dashboard')}catch(e){alert(e.message)}};
 

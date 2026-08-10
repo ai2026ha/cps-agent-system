@@ -354,7 +354,7 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert l1_login.status_code == 200
         l1_data = l1_login.json(); l1_token = l1_data['access_token']
         assert l1_data['agent_level'] == 1
-        assert 'dashboard.view' not in l1_data['permissions']
+        assert 'dashboard.view' in l1_data['permissions']
         assert 'channels.view' in l1_data['permissions']
         assert 'channels.create' in l1_data['permissions']
         assert 'settlements.view' in l1_data['permissions']
@@ -374,7 +374,7 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert 'channels.create' in l2_data['permissions']
         assert 'players.view' in l2_data['permissions']
         assert 'orders.view' in l2_data['permissions']
-        assert 'dashboard.view' not in l2_data['permissions']
+        assert 'dashboard.view' in l2_data['permissions']
         assert 'products.view' not in l2_data['permissions']
 
         l3 = create_agent(c, l2_token, 'rbac_l3', 'RBAC三级', 3, 0, 0.05)
@@ -390,20 +390,21 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert 'players.view' in l3_data['permissions']
         assert 'orders.view' in l3_data['permissions']
         assert 'shipments.view' in l3_data['permissions']
-        assert 'dashboard.view' not in l3_data['permissions']
+        assert 'dashboard.view' in l3_data['permissions']
 
-        # 一级/二级代理只有渠道、玩家、订单三类系统；其它系统接口仅超管可访问。
+        # 一级/二级代理拥有数据总览、渠道、玩家、订单；其它系统接口仅超管可访问。
         assert c.get('/api/agents', headers=auth(l1_token)).status_code == 200
         assert c.get('/api/players', headers=auth(l1_token)).status_code == 200
         assert c.get('/api/orders/platform', headers=auth(l1_token)).status_code == 200
-        assert c.get('/api/dashboard', headers=auth(l1_token)).status_code == 403
+        assert c.get('/api/dashboard', headers=auth(l1_token)).status_code == 200
         assert c.get('/api/products', headers=auth(l1_token)).status_code == 403
         assert c.get('/api/redemption-batches', headers=auth(l1_token)).status_code == 403
         assert c.get('/api/recharge-rules', headers=auth(l1_token)).status_code == 403
         assert c.get('/api/claims', headers=auth(l1_token)).status_code == 403
         assert c.get('/api/mails', headers=auth(l1_token)).status_code == 403
 
-        # 三级代理只保留玩家、订单；渠道管理接口与新增代理接口都被后端拒绝。
+        # 三级代理保留数据总览、玩家、订单；渠道管理接口与新增代理接口都被后端拒绝。
+        assert c.get('/api/dashboard', headers=auth(l3_token)).status_code == 200
         assert c.get('/api/players', headers=auth(l3_token)).status_code == 200
         assert c.get('/api/orders/platform', headers=auth(l3_token)).status_code == 200
         assert c.get('/api/shipments', headers=auth(l3_token)).status_code == 200
