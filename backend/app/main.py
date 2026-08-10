@@ -52,8 +52,12 @@ def dt(v):
     return v.isoformat(sep=" ", timespec="seconds") if v else None
 
 
-# ---------- 统一后台权限模型（V17） ----------
+# ---------- 统一后台权限模型（V18） ----------
 # 所有账号共用同一个登录入口和后台地址；登录后按角色/代理等级返回权限清单。
+# 菜单边界：
+# - 超级管理员：全部系统。
+# - 一级/二级代理：仅渠道管理、玩家管理、订单管理。
+# - 三级代理：仅玩家管理、订单管理；三级为末级，不拥有任何渠道管理权限。
 PERMISSION_MATRIX = {
     "superadmin": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "channels.edit_full",
@@ -63,22 +67,17 @@ PERMISSION_MATRIX = {
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
         "mail.view", "mail.send", "system.rebuild",
     },
-    # 一级/二级代理可查看自己渠道树内的运营数据；可按既定规则开通直属下级。
     "agent_1": {
-        "dashboard.view", "channels.view", "channels.create", "channels.edit_basic",
-        "settlements.view", "players.view", "orders.view", "shipments.view",
-        "products.view", "cdk.view", "recharge.view", "claims.view",
+        "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
+        "players.view", "orders.view", "shipments.view",
     },
     "agent_2": {
-        "dashboard.view", "channels.view", "channels.create", "channels.edit_basic",
-        "settlements.view", "players.view", "orders.view", "shipments.view",
-        "products.view", "cdk.view", "recharge.view", "claims.view",
+        "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
+        "players.view", "orders.view", "shipments.view",
     },
-    # 三级代理为末级：不再拥有新增/编辑下级渠道权限，但仍可查看自身业务数据。
+    # 三级代理为末级：只保留玩家与订单业务查看权限，不能进入渠道管理，也不能新增代理。
     "agent_3": {
-        "dashboard.view", "channels.view", "settlements.view", "players.view",
-        "orders.view", "shipments.view", "products.view", "cdk.view",
-        "recharge.view", "claims.view",
+        "players.view", "orders.view", "shipments.view",
     },
 }
 
@@ -363,7 +362,7 @@ def creation_capabilities(db: Session, principal):
 
 
 @app.get("/api/agents/capabilities")
-def agent_capabilities(db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+def agent_capabilities(db: Session = Depends(get_db), principal=Depends(require_permission("channels.view"))):
     return creation_capabilities(db, principal)
 
 
@@ -395,9 +394,9 @@ def list_agents(
     turnover_start: date | None = Query(default=None),
     turnover_end: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    principal=Depends(current_channel_user),
+    principal=Depends(require_permission("channels.view")),
 ):
-    # 超级管理员可管理/查询全部三级渠道；代理账号仍严格限制为自己的直属下级。
+    # 超级管理员可管理/查询全部三级渠道；一级/二级代理严格限制为自己的直属下级。
     q = db.query(Agent)
     if principal.actor_type == "agent":
         q = q.filter(Agent.parent_id == principal.agent_pk)
@@ -457,7 +456,7 @@ def list_agents(
 
 
 @app.post("/api/agents")
-def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Depends(require_permission("channels.create"))):
     caps = creation_capabilities(db, principal)
     expected_level = caps["allowed_child_level"]
     if not caps["can_create"]:
@@ -569,7 +568,7 @@ def parent_candidates_for_agent(db: Session, target: Agent):
 
 
 @app.get("/api/agents/{agent_pk}/edit-options")
-def agent_edit_options(agent_pk: int, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+def agent_edit_options(agent_pk: int, db: Session = Depends(get_db), principal=Depends(require_permission("channels.edit_basic"))):
     target = db.get(Agent, agent_pk)
     if not target:
         raise HTTPException(404, "代理不存在")
@@ -589,7 +588,7 @@ def agent_edit_options(agent_pk: int, db: Session = Depends(get_db), principal=D
 
 
 @app.patch("/api/agents/{agent_pk}")
-def update_agent(agent_pk: int, body: AgentUpdate, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+def update_agent(agent_pk: int, body: AgentUpdate, db: Session = Depends(get_db), principal=Depends(require_permission("channels.edit_basic"))):
     target = db.query(Agent).filter(Agent.id == agent_pk).with_for_update().first()
     if not target:
         raise HTTPException(404, "代理不存在")
@@ -667,7 +666,7 @@ def update_agent(agent_pk: int, body: AgentUpdate, db: Session = Depends(get_db)
 
 
 @app.get("/api/agents/{agent_pk}/subagents")
-def subagents(agent_pk: int, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+def subagents(agent_pk: int, db: Session = Depends(get_db), principal=Depends(require_permission("channels.view"))):
     agent = db.get(Agent, agent_pk)
     if not agent:
         raise HTTPException(404, "代理不存在")

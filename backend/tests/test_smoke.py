@@ -116,14 +116,13 @@ def test_three_level_chain_and_creation_permissions():
         assert l3.json()['subagent_limit'] == 0
 
         l3_token = login(c, 'level3_agent', 'AgentPass123!')
+        # 三级代理后台不显示渠道管理，因此渠道能力接口也不可访问。
         cap = c.get('/api/agents/capabilities', headers=auth(l3_token))
-        assert cap.status_code == 200
-        assert cap.json()['can_create'] is False
-        assert cap.json()['allowed_child_level'] is None
+        assert cap.status_code == 403
 
         forbidden = create_agent(c, l3_token, 'level4_agent', '不存在的四级', 3, 0)
         assert forbidden.status_code == 403
-        assert '三级代理为末级代理' in forbidden.json()['detail']
+        assert '无此操作权限' in forbidden.json()['detail']
 
 
 def test_commission_rate_is_internal_ratio_and_validated():
@@ -355,34 +354,61 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert l1_login.status_code == 200
         l1_data = l1_login.json(); l1_token = l1_data['access_token']
         assert l1_data['agent_level'] == 1
-        assert 'dashboard.view' in l1_data['permissions']
+        assert 'dashboard.view' not in l1_data['permissions']
+        assert 'channels.view' in l1_data['permissions']
         assert 'channels.create' in l1_data['permissions']
+        assert 'settlements.view' in l1_data['permissions']
         assert 'players.view' in l1_data['permissions']
-        assert 'products.manage' not in l1_data['permissions']
-        assert 'mail.send' not in l1_data['permissions']
+        assert 'orders.view' in l1_data['permissions']
+        assert 'shipments.view' in l1_data['permissions']
+        for forbidden_permission in ['products.view', 'cdk.view', 'recharge.view', 'claims.view', 'mail.view', 'mail.send']:
+            assert forbidden_permission not in l1_data['permissions']
 
         l2 = create_agent(c, l1_token, 'rbac_l2', 'RBAC二级', 2, 1, 0.1)
         assert l2.status_code == 200, l2.text
-        l2_token = login(c, 'rbac_l2', 'AgentPass123!')
+        l2_login = c.post('/api/auth/login', json={'username': 'rbac_l2', 'password': 'AgentPass123!'})
+        assert l2_login.status_code == 200
+        l2_data = l2_login.json(); l2_token = l2_data['access_token']
+        assert l2_data['agent_level'] == 2
+        assert 'channels.view' in l2_data['permissions']
+        assert 'channels.create' in l2_data['permissions']
+        assert 'players.view' in l2_data['permissions']
+        assert 'orders.view' in l2_data['permissions']
+        assert 'dashboard.view' not in l2_data['permissions']
+        assert 'products.view' not in l2_data['permissions']
+
         l3 = create_agent(c, l2_token, 'rbac_l3', 'RBAC三级', 3, 0, 0.05)
         assert l3.status_code == 200, l3.text
         l3_login = c.post('/api/auth/login', json={'username': 'rbac_l3', 'password': 'AgentPass123!'})
         assert l3_login.status_code == 200
         l3_data = l3_login.json(); l3_token = l3_data['access_token']
         assert l3_data['agent_level'] == 3
+        assert 'channels.view' not in l3_data['permissions']
         assert 'channels.create' not in l3_data['permissions']
+        assert 'channels.edit_basic' not in l3_data['permissions']
+        assert 'settlements.view' not in l3_data['permissions']
+        assert 'players.view' in l3_data['permissions']
         assert 'orders.view' in l3_data['permissions']
+        assert 'shipments.view' in l3_data['permissions']
+        assert 'dashboard.view' not in l3_data['permissions']
 
-        # 同一个后台/API入口下，普通代理能查看被授权的只读模块，但不能执行超管写操作。
-        assert c.get('/api/dashboard', headers=auth(l1_token)).status_code == 200
-        assert c.get('/api/products', headers=auth(l1_token)).status_code == 200
-        denied_product = c.post('/api/products', headers=auth(l1_token), json={
-            'sku': 'RBAC-SKU', 'name': '禁止新增', 'category': 'product', 'price': 1, 'stock': 1, 'description': ''
-        })
-        assert denied_product.status_code == 403
+        # 一级/二级代理只有渠道、玩家、订单三类系统；其它系统接口仅超管可访问。
+        assert c.get('/api/agents', headers=auth(l1_token)).status_code == 200
+        assert c.get('/api/players', headers=auth(l1_token)).status_code == 200
+        assert c.get('/api/orders/platform', headers=auth(l1_token)).status_code == 200
+        assert c.get('/api/dashboard', headers=auth(l1_token)).status_code == 403
+        assert c.get('/api/products', headers=auth(l1_token)).status_code == 403
+        assert c.get('/api/redemption-batches', headers=auth(l1_token)).status_code == 403
+        assert c.get('/api/recharge-rules', headers=auth(l1_token)).status_code == 403
+        assert c.get('/api/claims', headers=auth(l1_token)).status_code == 403
         assert c.get('/api/mails', headers=auth(l1_token)).status_code == 403
 
-        # 三级代理仍使用同一后台登录，但不能开通新的代理。
+        # 三级代理只保留玩家、订单；渠道管理接口与新增代理接口都被后端拒绝。
+        assert c.get('/api/players', headers=auth(l3_token)).status_code == 200
+        assert c.get('/api/orders/platform', headers=auth(l3_token)).status_code == 200
+        assert c.get('/api/shipments', headers=auth(l3_token)).status_code == 200
+        assert c.get('/api/agents', headers=auth(l3_token)).status_code == 403
         caps = c.get('/api/agents/capabilities', headers=auth(l3_token))
-        assert caps.status_code == 200
-        assert caps.json()['can_create'] is False
+        assert caps.status_code == 403
+        denied_create = create_agent(c, l3_token, 'rbac_l4', '禁止新增', 3, 0)
+        assert denied_create.status_code == 403
