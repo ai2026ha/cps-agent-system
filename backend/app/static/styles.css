@@ -26,6 +26,6 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 
 /* V12 channel query controls */
 .agent-search-bar{grid-template-columns:minmax(145px,1fr) minmax(145px,1fr) minmax(330px,1.8fr) minmax(180px,1.15fr) auto}
-.query-turnover{min-width:0}.turnover-choice{display:flex;gap:6px;flex-wrap:wrap}.turnover-mode-btn{height:38px;padding:0 14px;border:1px solid #dce2ed;border-radius:8px;background:#fff;color:#59657a;font:inherit;font-size:13px;font-weight:700;cursor:pointer;transition:.16s ease}.turnover-mode-btn:hover{border-color:#aab7cc;color:#243b63}.turnover-mode-btn.active{background:#1c2f56;border-color:#1c2f56;color:#fff;box-shadow:0 4px 12px #1c2f5625}.custom-turnover-range{margin-top:8px}.custom-turnover-range input{height:36px}
+.query-turnover{min-width:0}.turnover-period-select{width:100%;height:38px;border:1px solid #dce2ed;border-radius:8px;background:#fff;padding:0 34px 0 10px;outline:none;color:#172033;font:inherit;font-size:13px;cursor:pointer}.turnover-period-select:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}.custom-turnover-range{margin-top:8px}.custom-turnover-range input{height:36px;cursor:pointer}
 @media(max-width:1180px){.agent-search-bar{grid-template-columns:1fr 1fr}.query-turnover{grid-column:1/-1}}
-@media(max-width:720px){.agent-search-bar{grid-template-columns:1fr}.query-turnover{grid-column:auto}.turnover-choice{display:grid;grid-template-columns:repeat(3,1fr)}.turnover-mode-btn{padding:0 8px}}
+@media(max-width:720px){.agent-search-bar{grid-template-columns:1fr}.query-turnover{grid-column:auto}}

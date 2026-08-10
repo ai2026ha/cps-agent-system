@@ -142,13 +142,14 @@ function agentSearchBar(){
     <div class="query-field"><label>代理账号查询</label><input id="agentAccountQuery" value="${esc(agentSearch.agent_account)}" placeholder="输入代理登录账号"></div>
     <div class="query-field"><label>代理ID查询</label><input id="agentIdQuery" value="${esc(agentSearch.public_agent_id)}" placeholder="例如 A1"></div>
     <div class="query-field query-turnover"><label>流水查询</label>
-      <div class="turnover-choice">
-        <button type="button" class="turnover-mode-btn ${mode==='yesterday'?'active':''}" data-turnover-mode="yesterday">昨日</button>
-        <button type="button" class="turnover-mode-btn ${mode==='today'?'active':''}" data-turnover-mode="today">今日</button>
-        <button type="button" class="turnover-mode-btn ${mode==='custom'?'active':''}" data-turnover-mode="custom">自定义时间</button>
-      </div>
+      <select id="turnoverPeriodQuery" class="turnover-period-select">
+        <option value="" ${mode===''?'selected':''}>请选择</option>
+        <option value="today" ${mode==='today'?'selected':''}>今日</option>
+        <option value="yesterday" ${mode==='yesterday'?'selected':''}>昨日</option>
+        <option value="custom" ${mode==='custom'?'selected':''}>自定义时间</option>
+      </select>
       <div id="customTurnoverRange" class="date-range custom-turnover-range ${custom?'':'hidden'}">
-        <input id="turnoverStartQuery" type="date" value="${esc(agentSearch.turnover_start)}"><span>至</span><input id="turnoverEndQuery" type="date" value="${esc(agentSearch.turnover_end)}">
+        <input id="turnoverStartQuery" type="date" value="${esc(agentSearch.turnover_start)}" aria-label="开始日期"><span>至</span><input id="turnoverEndQuery" type="date" value="${esc(agentSearch.turnover_end)}" aria-label="结束日期">
       </div>
     </div>
     <div class="query-field"><label>上级代理查询</label><input id="parentAgentQuery" value="${esc(agentSearch.parent)}" placeholder="上级代理ID/账号/名称"></div>
@@ -156,7 +157,7 @@ function agentSearchBar(){
   </div>`;
 }
 function readAgentSearch(){
-  const mode=document.querySelector('.turnover-mode-btn.active')?.dataset.turnoverMode||'';
+  const mode=$('#turnoverPeriodQuery')?.value||'';
   return {
     agent_account:$('#agentAccountQuery')?.value.trim()||'',
     public_agent_id:$('#agentIdQuery')?.value.trim()||'',
@@ -165,6 +166,16 @@ function readAgentSearch(){
     turnover_end:mode==='custom'?($('#turnoverEndQuery')?.value||''):'',
     parent:$('#parentAgentQuery')?.value.trim()||''
   };
+}
+function openNativeDatePicker(input){
+  if(!input)return;
+  requestAnimationFrame(()=>{
+    try{
+      input.focus({preventScroll:true});
+      if(typeof input.showPicker==='function')input.showPicker();
+      else input.click();
+    }catch(_){input.focus();}
+  });
 }
 async function renderAgents(){
   const [rows,caps]=await Promise.all([api('/api/agents'+agentSearchQuery()),api('/api/agents/capabilities')]);
@@ -183,15 +194,28 @@ async function renderAgents(){
     agentSearch=next;await renderAgents();
   };
   $('#agentResetBtn').onclick=async()=>{agentSearch={agent_account:'',public_agent_id:'',turnover_period:'',turnover_start:'',turnover_end:'',parent:''};await renderAgents();};
-  document.querySelectorAll('.turnover-mode-btn').forEach(btn=>btn.onclick=()=>{
-    const wasActive=btn.classList.contains('active');
-    document.querySelectorAll('.turnover-mode-btn').forEach(x=>x.classList.remove('active'));
-    if(!wasActive)btn.classList.add('active');
-    const mode=wasActive?'':btn.dataset.turnoverMode;
+  const turnoverSelect=$('#turnoverPeriodQuery');
+  if(turnoverSelect)turnoverSelect.onchange=()=>{
+    const mode=turnoverSelect.value;
     const custom=$('#customTurnoverRange');
+    const start=$('#turnoverStartQuery');
+    const end=$('#turnoverEndQuery');
     if(custom)custom.classList.toggle('hidden',mode!=='custom');
-    if(mode!=='custom'){const s=$('#turnoverStartQuery'),e=$('#turnoverEndQuery');if(s)s.value='';if(e)e.value='';}
-  });
+    if(mode==='custom'){
+      openNativeDatePicker(start);
+    }else{
+      if(start)start.value='';
+      if(end)end.value='';
+    }
+  };
+  const startDate=$('#turnoverStartQuery'),endDate=$('#turnoverEndQuery');
+  if(startDate)startDate.onchange=()=>{
+    if(startDate.value&&endDate&&!endDate.value){
+      endDate.min=startDate.value;
+      openNativeDatePicker(endDate);
+    }
+  };
+  if(endDate&&startDate?.value)endDate.min=startDate.value;
   ['agentAccountQuery','agentIdQuery','parentAgentQuery'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter')$('#agentQueryBtn').click()})});
   if(caps.can_create) $('#addBtn').onclick=()=>openForm('新增代理',buildAgentForm(caps));
 }
