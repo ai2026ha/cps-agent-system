@@ -40,6 +40,14 @@ def test_login_and_dashboard():
         r = c.get('/api/dashboard', headers=auth(token))
         assert r.status_code == 200
         assert 'agents' in r.json()
+        me = c.get('/api/auth/me', headers=auth(token))
+        assert me.status_code == 200
+        assert me.json()['actor_type'] == 'admin'
+        assert me.json()['role'] == 'superadmin'
+        caps = c.get('/api/agents/capabilities', headers=auth(token))
+        assert caps.status_code == 200
+        assert caps.json()['current_level_name'] == '超级管理员'
+        assert caps.json()['allowed_child_level'] == 1
 
 
 def test_agent_id_invite_parent_level_and_limit_are_controlled():
@@ -53,6 +61,7 @@ def test_agent_id_invite_parent_level_and_limit_are_controlled():
         assert len(parent_data['agent_id']) == 10
         assert len(parent_data['invite_code']) == 8
         assert parent_data['parent_agent_id'] is None
+        assert parent_data['parent_agent_display'] == '超管'
         assert parent_data['agent_level'] == 1
         assert parent_data['subagent_limit'] == 2
 
@@ -160,6 +169,10 @@ def test_agent_query_bar_filters_and_custom_turnover():
         by_parent = c.get('/api/agents', headers=auth(admin), params={'parent': parent_public_id})
         assert by_parent.status_code == 200, by_parent.text
         assert any(x['agent_id'] == child_public_id for x in by_parent.json())
+
+        by_superadmin = c.get('/api/agents', headers=auth(admin), params={'parent': '超管'})
+        assert by_superadmin.status_code == 200, by_superadmin.text
+        assert any(x['agent_id'] == parent_public_id and x['parent_agent_display'] == '超管' for x in by_superadmin.json())
 
         child_row = next(x for x in by_account.json() if x['agent_id'] == child_public_id)
         player = c.post('/api/players', headers=auth(admin), json={

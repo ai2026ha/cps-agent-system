@@ -44,9 +44,19 @@ function logout(){ token='';actorType='admin';currentUser=null;localStorage.remo
 $('#logoutBtn').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=actorType==='agent'?'agents':'dashboard';await showApp();}catch(err){$('#loginError').textContent=err.message}};
 function applyRoleUI(){document.querySelectorAll('[data-admin-only]').forEach(el=>el.classList.toggle('hidden',actorType==='agent'));}
+function roleDisplayName(user){
+  if(user?.actor_type==='admin' && user?.role==='superadmin') return '超级管理员';
+  if(user?.actor_type==='admin') return '管理员';
+  return agentLevelText(user?.agent_level)||'代理';
+}
+function updateIdentityBadge(){
+  const el=$('#identityBadge');
+  if(!el||!currentUser)return;
+  el.innerHTML=`<strong>${esc(currentUser.username||'-')}</strong><span>${esc(roleDisplayName(currentUser))}</span>`;
+}
 async function showApp(){
   if(!currentUser){ currentUser=await api('/api/auth/me'); actorType=currentUser.actor_type||'admin'; localStorage.setItem('cps_actor_type',actorType); }
-  applyRoleUI();$('#login').classList.add('hidden');$('#app').classList.remove('hidden');syncNavToView(currentView);loadView(currentView);
+  applyRoleUI();updateIdentityBadge();$('#login').classList.add('hidden');$('#app').classList.remove('hidden');syncNavToView(currentView);loadView(currentView);
 }
 
 const navRoot = $('#nav');
@@ -166,7 +176,7 @@ async function renderProducts(cat){const rows=await api('/api/products?category=
 async function renderCDK(){const rows=await api('/api/redemption-batches');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>');$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
 
-const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理ID','parent_agent_id'],['下级代理上限','subagent_limit'],['已开通下级','subagent_count'],['剩余名额','subagent_remaining'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',badge]];
+const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['下级代理上限','subagent_limit'],['已开通下级','subagent_count'],['剩余名额','subagent_remaining'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',badge]];
 const playerCols=[['玩家ID','player_id'],['账号','username'],['角色名','role_name'],['区服','server_name'],['代理PK','agent_id'],['今日充值','today_recharge'],['总充值','total_recharge'],['最后登录','last_login_at'],['登录IP','last_login_ip']];
 const platformCols=[['订单号','order_no'],['玩家PK','player_id'],['代理PK','agent_id'],['金额','amount'],['平台币','platform_coin'],['支付渠道','payment_channel'],['支付状态','pay_status',badge],['创建时间','created_at']];
 const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','product_id'],['数量','quantity'],['金额','amount'],['支付','pay_status',badge],['发货','delivery_status',badge],['创建时间','created_at']];
@@ -180,12 +190,17 @@ const mailCols=[['标题','title'],['目标类型','target_type'],['目标','tar
 
 function buildAgentForm(caps){
  const allowed=Number(caps.allowed_child_level);
- const options=[1,2,3].map(level=>({value:level,label:agentLevelText(level),disabled:level!==allowed}));
+ // 代理等级必须由当前登录身份决定，但下拉框应当是真正可操作的。
+ // 只展示当前账号有权开通的等级，避免把其他等级做成灰色禁用项造成“选择不了”的误解。
+ const options=[
+   {value:'',label:'请选择代理等级'},
+   {value:allowed,label:agentLevelText(allowed)}
+ ];
  const isThird=allowed===3;
  return {
   path:'/api/agents',
-  note:`代理ID、邀请码和上级归属均由系统自动处理。当前账号只能开通${agentLevelText(allowed)}。${isThird?'三级代理为末级，不能再开通下级。':'“可开通下级代理数量”是该新代理未来可以创建的直属下级上限。'} 佣金比例填写百分比，例如 50 表示 50%。`,
-  defaults:{agent_level:allowed,subagent_limit:isThird?0:1},
+  note:`代理ID、邀请码和上级归属均由系统自动处理。当前${esc(caps.current_level_name)}只能开通${agentLevelText(allowed)}。${isThird?'三级代理为末级，不能再开通下级。':'“可开通下级代理数量”是该新代理未来可以创建的直属下级上限。'} 佣金比例填写百分比，例如 50 表示 50%。`,
+  defaults:{agent_level:'',subagent_limit:isThird?0:1},
   fields:[
    ['username','登录账号'],['password','登录密码','password'],['agent_name','代理名称'],
    ['agent_level','代理等级','select',true,{options}],
@@ -194,6 +209,7 @@ function buildAgentForm(caps){
   ],
   transform:obj=>{
     const p=obj.commission_rate??0;if(p<0||p>100)throw new Error('佣金比例必须在 0% 到 100% 之间');
+    if(obj.agent_level===undefined||obj.agent_level===null||obj.agent_level==='')throw new Error('请选择代理等级');
     if(Number(obj.agent_level)!==allowed)throw new Error(`当前账号只能开通${agentLevelText(allowed)}`);
     const limit=Number(obj.subagent_limit??0);if(!Number.isInteger(limit)||limit<0||limit>9999)throw new Error('可开通下级代理数量必须是 0 到 9999 的整数');
     if(isThird && limit!==0)throw new Error('三级代理不能继续开通下级代理，数量必须为 0');

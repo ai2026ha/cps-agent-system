@@ -33,12 +33,28 @@ def dt(v):
     return v.isoformat(sep=" ", timespec="seconds") if v else None
 
 def seed_admin():
+    """确保部署配置中的后台账号始终是超级管理员。
+
+    旧版本数据库里如果已经存在同名管理员，也会自动把 role 升级/修正为
+    superadmin，避免仅新建数据库时才生效。密码不会在每次启动时覆盖。
+    """
     db = SessionLocal()
     try:
         username = os.getenv("ADMIN_USERNAME", "admin")
         password = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
-        if not db.query(AdminUser).filter(AdminUser.username == username).first():
+        admin = db.query(AdminUser).filter(AdminUser.username == username).first()
+        if not admin:
             db.add(AdminUser(username=username, password_hash=hash_password(password), role="superadmin"))
+            db.commit()
+            return
+        changed = False
+        if admin.role != "superadmin":
+            admin.role = "superadmin"
+            changed = True
+        if not admin.enabled:
+            admin.enabled = True
+            changed = True
+        if changed:
             db.commit()
     finally:
         db.close()
@@ -194,7 +210,9 @@ def serialize_agent(a: Agent, db: Session):
     return {
         "id": a.id, "agent_id": a.agent_id, "username": a.username, "agent_name": a.agent_name,
         "invite_code": a.invite_code, "parent_id": a.parent_id,
+        # 一级代理在数据库中没有普通代理父节点，但业务展示上归属于超级管理员。
         "parent_agent_id": a.parent.agent_id if a.parent else None,
+        "parent_agent_display": a.parent.agent_id if a.parent else "超管",
         "agent_level": int(a.agent_level or 1), "agent_level_name": agent_level_name(a.agent_level),
         "subagent_limit": limit, "subagent_count": used, "subagent_remaining": max(limit - used, 0),
         "today_turnover": money(a.today_turnover), "yesterday_turnover": money(a.yesterday_turnover),
@@ -205,6 +223,14 @@ def serialize_agent(a: Agent, db: Session):
 
 def creation_capabilities(db: Session, principal):
     if principal.actor_type != "agent":
+        if principal.role != "superadmin":
+            return {
+                "current_level": 0, "current_level_name": "管理员",
+                "allowed_child_level": None, "allowed_child_level_name": None,
+                "subagent_limit": None, "subagent_count": 0,
+                "subagent_remaining": 0, "can_create": False,
+                "reason": "仅超级管理员可以开通一级代理",
+            }
         return {
             "current_level": 0, "current_level_name": "超级管理员",
             "allowed_child_level": 1, "allowed_child_level_name": "一级代理",
@@ -287,15 +313,21 @@ def list_agents(
     if public_agent_id:
         q = q.filter(Agent.agent_id.like(f"%{public_agent_id.strip()}%"))
     if parent:
-        parent_like = f"%{parent.strip()}%"
-        parent_ids = [x[0] for x in db.query(Agent.id).filter(
-            (Agent.agent_id.like(parent_like)) |
-            (Agent.username.like(parent_like)) |
-            (Agent.agent_name.like(parent_like))
-        ).all()]
-        if not parent_ids:
-            return []
-        q = q.filter(Agent.parent_id.in_(parent_ids))
+        parent_term = parent.strip()
+        # “超管”是一级代理的业务上级展示；数据库仍保持 parent_id=NULL，
+        # 避免伪造一个普通代理记录作为超级管理员。
+        if "超管" in parent_term or "超级管理员" in parent_term:
+            q = q.filter(Agent.parent_id.is_(None))
+        else:
+            parent_like = f"%{parent_term}%"
+            parent_ids = [x[0] for x in db.query(Agent.id).filter(
+                (Agent.agent_id.like(parent_like)) |
+                (Agent.username.like(parent_like)) |
+                (Agent.agent_name.like(parent_like))
+            ).all()]
+            if not parent_ids:
+                return []
+            q = q.filter(Agent.parent_id.in_(parent_ids))
 
     result = []
     for a in q.order_by(Agent.id.desc()).all():
@@ -358,6 +390,7 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Dep
         "agent_level_name": agent_level_name(row.agent_level),
         "subagent_limit": row.subagent_limit,
         "parent_agent_id": row.parent.agent_id if row.parent else None,
+        "parent_agent_display": row.parent.agent_id if row.parent else "超管",
         "message": f"{agent_level_name(row.agent_level)}创建成功，代理ID：{row.agent_id}，邀请码：{row.invite_code}",
     }
 
