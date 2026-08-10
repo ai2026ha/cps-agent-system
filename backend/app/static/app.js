@@ -494,7 +494,27 @@ function playerCharactersCell(characters){
  }).join('');
  return `<details class="player-role-dropdown"><summary><span class="player-role-current">${esc(primary?.role_name||'未命名角色')}</span><span class="player-role-chevron" aria-hidden="true">⌄</span></summary><div class="player-role-menu">${items}</div></details>`;
 }
-const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['创建时间(北京时间)','created_at'],['最近登录(北京时间)','last_login_at'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',agentStatusBadge],['注册地址','agent_id',(v)=>`<button class="btn compact" onclick="copyRegistrationLink('${esc(v)}')">复制地址</button>`],['操作','id',(_,r)=>hasPermission('channels.edit_basic')||hasPermission('channels.edit_full')?`<button class="btn compact" onclick="openAgentEdit(${Number(r.id)})">编辑</button>`:'-']];
+const agentCols=[
+ ['代理ID','agent_id'],
+ ['代理等级','agent_level',agentLevelText],
+ ['代理名称','agent_name'],
+ ['账号','username'],
+ ['邀请码','invite_code'],
+ ['上级代理','parent_agent_display'],
+ ['注册人数','registered_count'],
+ ['今日流水','today_turnover'],
+ ['昨日流水','yesterday_turnover'],
+ ['总流水','total_turnover'],
+ ['佣金比例','commission_rate',percent],
+ ['创建时间(北京时间)','created_at'],
+ ['最近登录(北京时间)','last_login_at'],
+ ['状态','status',agentStatusBadge],
+ ['操作','id',(_,r)=>{
+   const copy=`<button class="btn compact" onclick="copyRegistrationLink('${esc(r.agent_id)}')">复制注册地址</button>`;
+   const edit=(hasPermission('channels.edit_basic')||hasPermission('channels.edit_full'))?`<button class="btn compact" onclick="openAgentEdit(${Number(r.id)})">编辑</button>`:'';
+   return `<div class="table-action-buttons">${copy}${edit}</div>`;
+ }]
+];
 const playerBaseCols=[['玩家ID','player_id'],['账号','username'],['角色','characters',playerCharactersCell],['所属代理','agent_public_id'],['平台币余额','platform_coin_balance'],['今日充值','today_recharge'],['总充值','total_recharge'],['状态','status',playerStatusBadge],['注册时间(北京时间)','created_at'],['最后登录(北京时间)','last_login_at'],['登录IP','last_login_ip']];
 function playerColumns(){return hasPermission('players.manage')?[...playerBaseCols,['操作','id',(_,r)=>`<button class="btn compact" onclick="openPlayerEdit(${Number(r.id)})">编辑</button>`]]:playerBaseCols}
 const platformCols=[['订单号','order_no'],['玩家PK','player_id'],['代理PK','agent_id'],['金额','amount'],['平台币','platform_coin'],['支付渠道','payment_channel'],['支付状态','pay_status',badge],['创建时间','created_at']];

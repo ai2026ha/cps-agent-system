@@ -898,3 +898,36 @@ def test_beijing_time_display_and_agent_login_timestamp():
         # API 时间统一输出为可直接展示的北京时间格式。
         datetime.strptime(row['created_at'], '%Y-%m-%d %H:%M:%S')
         datetime.strptime(row['last_login_at'], '%Y-%m-%d %H:%M:%S')
+
+
+def test_agent_list_registered_count_is_direct_registration_count():
+    """V37: 代理列表注册人数只统计直接通过该代理注册链接注册的玩家。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        parent = create_agent(c, admin, 'count_parent_v37', '注册统计一级', 1, 3, 0.1)
+        assert parent.status_code == 200, parent.text
+        parent_id = parent.json()['agent_id']
+        parent_token = login(c, 'count_parent_v37', 'AgentPass123!')
+
+        child = create_agent(c, parent_token, 'count_child_v37', '注册统计二级', 2, 1, 0.05)
+        assert child.status_code == 200, child.text
+        child_id = child.json()['agent_id']
+
+        for i in range(2):
+            reg = c.post(f'/api/public/registration/{parent_id}', json={
+                'username': f'count_parent_player_{i}',
+                'password': 'PlayerPass123!',
+            })
+            assert reg.status_code == 200, reg.text
+
+        reg = c.post(f'/api/public/registration/{child_id}', json={
+            'username': 'count_child_player_0',
+            'password': 'PlayerPass123!',
+        })
+        assert reg.status_code == 200, reg.text
+
+        rows = c.get('/api/agents', headers=auth(admin))
+        assert rows.status_code == 200, rows.text
+        by_id = {row['agent_id']: row for row in rows.json()}
+        assert by_id[parent_id]['registered_count'] == 2
+        assert by_id[child_id]['registered_count'] == 1

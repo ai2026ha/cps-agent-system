@@ -763,6 +763,8 @@ def serialize_agent(a: Agent, db: Session):
     today_turnover = real_paid_platform_turnover(db, agent_ids=direct_ids, start_dt=today_start, end_dt=tomorrow_start)
     yesterday_turnover = real_paid_platform_turnover(db, agent_ids=direct_ids, start_dt=yesterday_start, end_dt=today_start)
     total_turnover = real_paid_platform_turnover(db, agent_ids=direct_ids)
+    # 注册人数只统计通过该代理专属注册链接直接归属到该代理的玩家。
+    registered_count = db.query(Player).filter(Player.agent_id == a.id).count()
     return {
         "id": a.id, "agent_id": a.agent_id, "username": a.username, "agent_name": a.agent_name,
         "invite_code": a.invite_code, "parent_id": a.parent_id,
@@ -770,7 +772,7 @@ def serialize_agent(a: Agent, db: Session):
         "parent_agent_id": a.parent.agent_id if a.parent else None,
         "parent_agent_display": a.parent.agent_id if a.parent else "超管",
         "agent_level": int(a.agent_level or 1), "agent_level_name": agent_level_name(a.agent_level),
-        "subagent_limit": limit, "subagent_count": used,
+        "subagent_limit": limit, "subagent_count": used, "registered_count": registered_count,
         "today_turnover": money(today_turnover), "yesterday_turnover": money(yesterday_turnover),
         "total_turnover": money(total_turnover), "commission_rate": float(a.commission_rate or 0),
         "status": a.status, "registration_path": f"/register/{a.invite_code}",
