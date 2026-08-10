@@ -1143,6 +1143,83 @@ def rebuild_turnover(db: Session = Depends(get_db), _=Depends(current_admin)):
     db.commit()
     return {"message": "代理流水已按真实支付平台币订单重算"}
 
+@app.get("/api/channel-settlements")
+def channel_daily_turnover(
+    account: str = "",
+    public_agent_id: str = "",
+    agent_level: int | None = Query(default=None, ge=1, le=3),
+    settlement_date: date | None = Query(default=None, alias="date"),
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("settlements.view")),
+):
+    """按北京时间自然日展示代理真实支付流水。
+
+    超管可查看全部代理；普通代理只查看自己代理树中的下级代理，不包含自己。
+    流水只统计 pay_status=paid 且 paid_at 非空的平台币订单，手工发放/收回、
+    商城订单以及未支付平台币订单都不会进入这里。
+    """
+    selected_date = settlement_date or business_today()
+    start_dt, end_dt = business_date_bounds(selected_date, selected_date)
+
+    q = db.query(Agent)
+    if principal.actor_type == "agent":
+        visible_ids = scoped_agent_ids(db, principal, include_self=False)
+        if not visible_ids:
+            return {"date": str(selected_date), "rows": []}
+        q = q.filter(Agent.id.in_(visible_ids))
+
+    account = account.strip()
+    public_agent_id = public_agent_id.strip()
+    if account:
+        q = q.filter(Agent.username.like(f"%{account}%"))
+    if public_agent_id:
+        q = q.filter(Agent.agent_id.like(f"%{public_agent_id}%"))
+    if agent_level is not None:
+        q = q.filter(Agent.agent_level == agent_level)
+
+    agents = q.order_by(Agent.id.asc()).all()
+    agent_ids = [a.id for a in agents]
+    turnover_map: dict[int, Decimal] = {}
+    if agent_ids:
+        paid_rows = (
+            db.query(
+                PlatformCoinOrder.agent_id,
+                func.coalesce(func.sum(PlatformCoinOrder.amount), 0),
+            )
+            .filter(
+                PlatformCoinOrder.agent_id.in_(agent_ids),
+                PlatformCoinOrder.pay_status == "paid",
+                PlatformCoinOrder.paid_at.is_not(None),
+                PlatformCoinOrder.paid_at >= start_dt,
+                PlatformCoinOrder.paid_at < end_dt,
+            )
+            .group_by(PlatformCoinOrder.agent_id)
+            .all()
+        )
+        turnover_map = {int(agent_pk): Decimal(amount or 0) for agent_pk, amount in paid_rows if agent_pk is not None}
+
+    rows = []
+    for agent in agents:
+        turnover = turnover_map.get(agent.id, Decimal("0"))
+        rate = Decimal(agent.commission_rate or 0)
+        rows.append({
+            "id": agent.id,
+            "agent_id": agent.agent_id,
+            "username": agent.username,
+            "agent_name": agent.agent_name,
+            "agent_level": int(agent.agent_level or 1),
+            "agent_level_name": agent_level_name(agent.agent_level),
+            "parent_agent_display": agent.parent.agent_id if agent.parent else "超管",
+            "date": str(selected_date),
+            "turnover": money(turnover),
+            "commission_rate": float(rate),
+            "commission_amount": money(turnover * rate),
+        })
+
+    rows.sort(key=lambda row: (-Decimal(str(row["turnover"])), int(row["id"])))
+    return {"date": str(selected_date), "rows": rows}
+
+
 @app.get("/api/settlements")
 def list_settlements(db: Session = Depends(get_db), principal=Depends(require_permission("settlements.view"))):
     q = db.query(Settlement)

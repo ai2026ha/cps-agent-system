@@ -931,3 +931,81 @@ def test_agent_list_registered_count_is_direct_registration_count():
         by_id = {row['agent_id']: row for row in rows.json()}
         assert by_id[parent_id]['registered_count'] == 2
         assert by_id[child_id]['registered_count'] == 1
+
+
+def test_v38_channel_daily_turnover_filters_sort_and_agent_scope():
+    """V38: 渠道结算按所选北京时间日期展示真实支付流水，并按金额降序。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+
+        l1 = create_agent(c, admin, 'v38_l1', 'V38一级', 1, 2, 0.10)
+        assert l1.status_code == 200, l1.text
+        l1_data = l1.json()
+        l1_token = login(c, 'v38_l1', 'AgentPass123!')
+
+        l2 = create_agent(c, l1_token, 'v38_l2', 'V38二级', 2, 1, 0.20)
+        assert l2.status_code == 200, l2.text
+        l2_data = l2.json()
+        l2_token = login(c, 'v38_l2', 'AgentPass123!')
+
+        l3 = create_agent(c, l2_token, 'v38_l3', 'V38三级', 3, 0, 0.30)
+        assert l3.status_code == 200, l3.text
+        l3_data = l3.json()
+
+        p2 = c.post(f"/api/public/registration/{l2_data['agent_id']}", json={
+            'username': 'v38_player_l2', 'password': 'PlayerPass123!'
+        })
+        p3 = c.post(f"/api/public/registration/{l3_data['agent_id']}", json={
+            'username': 'v38_player_l3', 'password': 'PlayerPass123!'
+        })
+        assert p2.status_code == 200, p2.text
+        assert p3.status_code == 200, p3.text
+
+        paid_l2 = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'V38-PAID-L2-001', 'player_id': p2.json()['id'], 'agent_id': l2_data['id'],
+            'amount': 50, 'platform_coin': 5000, 'payment_channel': 'test', 'pay_status': 'paid'
+        })
+        paid_l3 = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'V38-PAID-L3-001', 'player_id': p3.json()['id'], 'agent_id': l3_data['id'],
+            'amount': 100, 'platform_coin': 10000, 'payment_channel': 'test', 'pay_status': 'paid'
+        })
+        pending_l2 = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'V38-PENDING-L2-001', 'player_id': p2.json()['id'], 'agent_id': l2_data['id'],
+            'amount': 999, 'platform_coin': 99900, 'payment_channel': 'test', 'pay_status': 'pending'
+        })
+        assert paid_l2.status_code == 200, paid_l2.text
+        assert paid_l3.status_code == 200, paid_l3.text
+        assert pending_l2.status_code == 200, pending_l2.text
+
+        selected = str(business_today())
+        admin_rows = c.get('/api/channel-settlements', headers=auth(admin), params={
+            'account': 'v38_', 'date': selected
+        })
+        assert admin_rows.status_code == 200, admin_rows.text
+        data = admin_rows.json()
+        assert data['date'] == selected
+        rows = data['rows']
+        assert [x['username'] for x in rows] == ['v38_l3', 'v38_l2', 'v38_l1']
+        assert [x['turnover'] for x in rows] == [100.0, 50.0, 0.0]
+        assert rows[0]['commission_amount'] == 30.0
+        assert rows[1]['commission_amount'] == 10.0
+
+        level_two = c.get('/api/channel-settlements', headers=auth(admin), params={
+            'account': 'v38_', 'agent_level': 2, 'date': selected
+        })
+        assert level_two.status_code == 200, level_two.text
+        assert [x['username'] for x in level_two.json()['rows']] == ['v38_l2']
+
+        by_id = c.get('/api/channel-settlements', headers=auth(admin), params={
+            'public_agent_id': l3_data['agent_id'], 'date': selected
+        })
+        assert by_id.status_code == 200, by_id.text
+        assert [x['agent_id'] for x in by_id.json()['rows']] == [l3_data['agent_id']]
+
+        # 普通一级代理只看自己的下级代理树，不包含自己。
+        child_rows = c.get('/api/channel-settlements', headers=auth(l1_token), params={
+            'account': 'v38_', 'date': selected
+        })
+        assert child_rows.status_code == 200, child_rows.text
+        assert [x['username'] for x in child_rows.json()['rows']] == ['v38_l3', 'v38_l2']
+        assert all(x['agent_id'] != l1_data['agent_id'] for x in child_rows.json()['rows'])

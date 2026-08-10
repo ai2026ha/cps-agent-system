@@ -5,11 +5,12 @@ let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
 let playerSearch = {account:'', parent:''};
+let settlementSearch = {account:'', public_agent_id:'', agent_level:'', date:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
 
 const titles = {
- dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','按周期计算代理佣金'],
+ dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','按北京时间查看下级代理真实支付流水'],
  players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','平台币充值订单记录'], mallOrders:['商城订单','商城购买订单记录'],
  shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], cdk:['兑换码列表','CDK 批次与兑换统计'],
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
@@ -156,7 +157,7 @@ function panel(title, body, actions=''){return `<div class="panel"><div class="p
 async function loadView(view){if(!canView(view)){currentView=firstAllowedView();return loadView(currentView)}if(view!=='dashboard')stopSystemMetricsPolling();const [t,s]=titles[view]||['',''];$('#pageTitle').textContent=t;$('#pageSub').textContent=s;$('#content').innerHTML='<div class="panel"><div class="empty">加载中...</div></div>';try{
  if(view==='dashboard') return renderDashboard();
  if(view==='agents') return renderAgents();
- if(view==='settlements') return renderList('/api/settlements',settleCols,'结算记录',hasPermission('settlements.manage')?()=>openForm('生成结算单',forms.settlement):null);
+ if(view==='settlements') return renderSettlements();
  if(view==='players') return renderPlayers();
  if(view==='platformOrders') return renderList('/api/orders/platform',platformCols,'平台币订单',hasPermission('orders.manage')?()=>openForm('新增平台币订单',forms.platform):null);
  if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单',hasPermission('orders.manage')?()=>openForm('新增商城订单',forms.mall):null);
@@ -385,6 +386,53 @@ async function renderAgents(){
   if(caps.can_create) $('#addBtn').onclick=()=>openForm('新增代理',buildAgentForm(caps));
 }
 
+function settlementSearchQuery(){
+ const p=new URLSearchParams();
+ if(settlementSearch.account)p.set('account',settlementSearch.account);
+ if(settlementSearch.public_agent_id)p.set('public_agent_id',settlementSearch.public_agent_id);
+ if(settlementSearch.agent_level)p.set('agent_level',settlementSearch.agent_level);
+ if(settlementSearch.date)p.set('date',settlementSearch.date);
+ const qs=p.toString();
+ return qs?`?${qs}`:'';
+}
+function settlementSearchBar(activeDate){
+ const level=String(settlementSearch.agent_level||'');
+ return `<div class="settlement-search-bar">
+   <div class="query-field query-account"><label>账号查询</label><input id="settlementAccountQuery" value="${esc(settlementSearch.account)}" placeholder="代理登录账号"></div>
+   <div class="query-field query-agent-id"><label>ID查询</label><input id="settlementIdQuery" value="${esc(settlementSearch.public_agent_id)}" placeholder="例如 A1"></div>
+   <div class="query-field query-level"><label>等级查询</label><select id="settlementLevelQuery"><option value="">全部等级</option><option value="1" ${level==='1'?'selected':''}>一级代理</option><option value="2" ${level==='2'?'selected':''}>二级代理</option><option value="3" ${level==='3'?'selected':''}>三级代理</option></select></div>
+   <div class="query-field query-date"><label>日期选择</label><input id="settlementDateQuery" type="date" value="${esc(activeDate||'')}"></div>
+   <div class="query-actions"><button class="btn primary" id="settlementQueryBtn">查询</button><button class="btn" id="settlementResetBtn">重置</button></div>
+ </div>`;
+}
+function readSettlementSearch(){
+ return {
+   account:$('#settlementAccountQuery')?.value.trim()||'',
+   public_agent_id:$('#settlementIdQuery')?.value.trim()||'',
+   agent_level:$('#settlementLevelQuery')?.value||'',
+   date:$('#settlementDateQuery')?.value||''
+ };
+}
+async function renderSettlements(){
+ const data=await api('/api/channel-settlements'+settlementSearchQuery());
+ const activeDate=settlementSearch.date||data.date||'';
+ if(!settlementSearch.date&&activeDate)settlementSearch.date=activeDate;
+ const rows=Array.isArray(data.rows)?data.rows:[];
+ const scopeNote=currentUser?.actor_type==='admin'
+   ? '超级管理员查看全部一级、二级、三级代理；所选日期流水按金额从高到低排列。'
+   : '当前账号仅查看自己代理树中的下级代理，不包含自己；所选日期流水按金额从高到低排列。';
+ $('#content').innerHTML=panel('渠道结算',`${settlementSearchBar(activeDate)}<div class="query-scope-note">${scopeNote} 流水仅统计真实支付成功的平台币订单。</div><div class="table-scroll settlement-table-scroll">${table(rows,settlementDailyCols)}</div>`);
+ const run=async()=>{settlementSearch=readSettlementSearch();await renderSettlements();};
+ $('#settlementQueryBtn').onclick=run;
+ $('#settlementResetBtn').onclick=async()=>{settlementSearch={account:'',public_agent_id:'',agent_level:'',date:''};await renderSettlements();};
+ ['settlementAccountQuery','settlementIdQuery'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
+ const dateInput=$('#settlementDateQuery');
+ if(dateInput){
+   dateInput.addEventListener('change',()=>{settlementSearch.date=dateInput.value||'';});
+   dateInput.addEventListener('click',()=>{try{dateInput.showPicker?.()}catch{}});
+ }
+}
+
 function statusText(v){return String(v)==='disabled'?'封禁':'正常'}
 function agentStatusBadge(v){const disabled=String(v)==='disabled';return `<span class="badge ${disabled?'bad':'ok'}">${disabled?'封禁':'正常'}</span>`}
 window.openAgentEdit=async(agentPk)=>{
@@ -502,9 +550,6 @@ const agentCols=[
  ['邀请码','invite_code'],
  ['上级代理','parent_agent_display'],
  ['注册人数','registered_count'],
- ['今日流水','today_turnover'],
- ['昨日流水','yesterday_turnover'],
- ['总流水','total_turnover'],
  ['佣金比例','commission_rate',percent],
  ['创建时间(北京时间)','created_at'],
  ['最近登录(北京时间)','last_login_at'],
@@ -522,7 +567,7 @@ const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','p
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
 const productCols=[['SKU','sku'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
 const cdkCols=[['CDK名称','name'],['总数','total_count'],['未兑换数','unused_count'],['已兑换数','redeemed_count'],['状态','enabled',v=>badge(v?'active':'disabled')],['创建时间','created_at']];
-const settleCols=[['结算单','settlement_no'],['代理PK','agent_id'],['开始','period_start'],['结束','period_end'],['流水','turnover'],['佣金比例','commission_rate',percent],['佣金','commission_amount'],['状态','status',badge]];
+const settlementDailyCols=[['代理账号','username'],['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['上级代理','parent_agent_display'],['日期','date'],['当日流水','turnover',v=>`¥ ${Number(v||0).toFixed(2)}`],['佣金比例','commission_rate',percent],['当日佣金','commission_amount',v=>`¥ ${Number(v||0).toFixed(2)}`]];
 const ruleCols=[['名称','name'],['累充门槛','threshold_amount'],['奖励内容','reward_content'],['状态','enabled',v=>badge(v?'active':'disabled')]];
 const claimCols=[['玩家PK','player_id'],['规则PK','rule_id'],['状态','status',badge],['领取时间','claimed_at']];
 const mailCols=[['标题','title'],['目标类型','target_type'],['目标','target_value'],['状态','send_status',badge],['发送人','created_by'],['发送时间','sent_at']];
