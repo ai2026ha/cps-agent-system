@@ -51,6 +51,88 @@ def money(v):
 def dt(v):
     return v.isoformat(sep=" ", timespec="seconds") if v else None
 
+
+# ---------- 统一后台权限模型（V17） ----------
+# 所有账号共用同一个登录入口和后台地址；登录后按角色/代理等级返回权限清单。
+PERMISSION_MATRIX = {
+    "superadmin": {
+        "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "channels.edit_full",
+        "settlements.view", "settlements.manage", "players.view", "players.manage",
+        "orders.view", "orders.manage", "shipments.view", "shipments.manage",
+        "products.view", "products.manage", "cdk.view", "cdk.manage",
+        "recharge.view", "recharge.manage", "claims.view", "claims.manage",
+        "mail.view", "mail.send", "system.rebuild",
+    },
+    # 一级/二级代理可查看自己渠道树内的运营数据；可按既定规则开通直属下级。
+    "agent_1": {
+        "dashboard.view", "channels.view", "channels.create", "channels.edit_basic",
+        "settlements.view", "players.view", "orders.view", "shipments.view",
+        "products.view", "cdk.view", "recharge.view", "claims.view",
+    },
+    "agent_2": {
+        "dashboard.view", "channels.view", "channels.create", "channels.edit_basic",
+        "settlements.view", "players.view", "orders.view", "shipments.view",
+        "products.view", "cdk.view", "recharge.view", "claims.view",
+    },
+    # 三级代理为末级：不再拥有新增/编辑下级渠道权限，但仍可查看自身业务数据。
+    "agent_3": {
+        "dashboard.view", "channels.view", "settlements.view", "players.view",
+        "orders.view", "shipments.view", "products.view", "cdk.view",
+        "recharge.view", "claims.view",
+    },
+}
+
+
+def permission_key(principal, db: Session) -> str:
+    if principal.actor_type == "admin":
+        return "superadmin" if principal.role == "superadmin" else "admin"
+    agent = db.get(Agent, principal.agent_pk)
+    level = int(agent.agent_level or 1) if agent else 1
+    return f"agent_{min(max(level, 1), 3)}"
+
+
+def permissions_for(principal, db: Session) -> set[str]:
+    return set(PERMISSION_MATRIX.get(permission_key(principal, db), set()))
+
+
+def require_permission(code: str):
+    def dependency(principal=Depends(current_user), db: Session = Depends(get_db)):
+        if code not in permissions_for(principal, db):
+            raise HTTPException(403, "当前账号无此操作权限")
+        return principal
+    return dependency
+
+
+def scoped_agent_ids(db: Session, principal, include_self: bool = True) -> list[int]:
+    """返回当前账号可查看的代理树主键。超管用空列表表示不限制。"""
+    if principal.actor_type != "agent":
+        return []
+    root = int(principal.agent_pk)
+    result = [root] if include_self else []
+    frontier = [root]
+    while frontier:
+        children = [x[0] for x in db.query(Agent.id).filter(Agent.parent_id.in_(frontier)).all()]
+        if not children:
+            break
+        result.extend(children)
+        frontier = children
+    return list(dict.fromkeys(result))
+
+
+def identity_payload(principal, db: Session) -> dict:
+    perms = sorted(permissions_for(principal, db))
+    if principal.actor_type == "agent":
+        agent = db.get(Agent, principal.agent_pk)
+        return {
+            "username": principal.username, "role": principal.role, "actor_type": "agent",
+            "agent_id": agent.agent_id, "agent_level": int(agent.agent_level or 1),
+            "subagent_limit": int(agent.subagent_limit or 0), "permissions": perms,
+        }
+    return {
+        "username": principal.username, "role": principal.role, "actor_type": "admin",
+        "agent_id": None, "agent_level": 0, "subagent_limit": None, "permissions": perms,
+    }
+
 def seed_admin():
     """确保部署配置中的后台账号始终是超级管理员。
 
@@ -171,66 +253,44 @@ def index():
 def login(body: LoginIn, db: Session = Depends(get_db)):
     admin = db.query(AdminUser).filter(AdminUser.username == body.username, AdminUser.enabled.is_(True)).first()
     if admin and verify_password(body.password, admin.password_hash):
+        from .security import Principal
+        principal = Principal(username=admin.username, role=admin.role, actor_type="admin")
         return {
             "access_token": create_token(admin.username, admin.role, actor_type="admin"),
-            "token_type": "bearer",
-            "username": admin.username,
-            "role": admin.role,
-            "actor_type": "admin",
-            "agent_id": None,
-            "agent_level": 0,
-            "subagent_limit": None,
+            "token_type": "bearer", **identity_payload(principal, db),
         }
 
     agent = db.query(Agent).filter(Agent.username == body.username, Agent.status == "active").first()
     if agent and verify_password(body.password, agent.password_hash):
+        from .security import Principal
+        principal = Principal(username=agent.username, role="agent", actor_type="agent", agent_pk=agent.id, agent_id=agent.agent_id)
         return {
             "access_token": create_token(agent.username, "agent", actor_type="agent", actor_id=agent.id),
-            "token_type": "bearer",
-            "username": agent.username,
-            "role": "agent",
-            "actor_type": "agent",
-            "agent_id": agent.agent_id,
-            "agent_level": agent.agent_level,
-            "subagent_limit": agent.subagent_limit,
+            "token_type": "bearer", **identity_payload(principal, db),
         }
     raise HTTPException(401, "账号或密码错误")
 
 @app.get("/api/auth/me")
 def auth_me(principal=Depends(current_user), db: Session = Depends(get_db)):
-    if principal.actor_type == "agent":
-        agent = db.get(Agent, principal.agent_pk)
-        return {
-            "username": principal.username,
-            "role": principal.role,
-            "actor_type": principal.actor_type,
-            "agent_id": agent.agent_id,
-            "agent_level": agent.agent_level,
-            "subagent_limit": agent.subagent_limit,
-        }
-    return {
-        "username": principal.username,
-        "role": principal.role,
-        "actor_type": principal.actor_type,
-        "agent_id": None,
-        "agent_level": 0,
-        "subagent_limit": None,
-    }
+    return identity_payload(principal, db)
 
 @app.get("/api/dashboard")
-def dashboard(db: Session = Depends(get_db), _=Depends(current_admin)):
-    today = date.today()
-    start = datetime.combine(today, time.min)
-    platform_today = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.created_at >= start).scalar()
-    mall_today = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(MallOrder.pay_status == "paid", MallOrder.created_at >= start).scalar()
-    pending_shipments = db.query(MallOrder).filter(MallOrder.delivery_status.in_(["waiting", "failed"])).count()
+def dashboard(db: Session = Depends(get_db), principal=Depends(require_permission("dashboard.view"))):
+    today = date.today(); start = datetime.combine(today, time.min)
+    agent_ids = scoped_agent_ids(db, principal)
+
+    pq = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.created_at >= start)
+    mq = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(MallOrder.pay_status == "paid", MallOrder.created_at >= start)
+    poq = db.query(PlatformCoinOrder); moq = db.query(MallOrder); plq = db.query(Player); aq = db.query(Agent)
+    pending_q = db.query(MallOrder).filter(MallOrder.delivery_status.in_(["waiting", "failed"]))
+    if principal.actor_type == "agent":
+        pq = pq.filter(PlatformCoinOrder.agent_id.in_(agent_ids)); mq = mq.filter(MallOrder.agent_id.in_(agent_ids))
+        poq = poq.filter(PlatformCoinOrder.agent_id.in_(agent_ids)); moq = moq.filter(MallOrder.agent_id.in_(agent_ids))
+        plq = plq.filter(Player.agent_id.in_(agent_ids)); pending_q = pending_q.filter(MallOrder.agent_id.in_(agent_ids))
+        aq = aq.filter(Agent.id.in_([x for x in agent_ids if x != principal.agent_pk]))
     return {
-        "agents": db.query(Agent).count(),
-        "players": db.query(Player).count(),
-        "today_turnover": money(platform_today + mall_today),
-        "platform_orders": db.query(PlatformCoinOrder).count(),
-        "mall_orders": db.query(MallOrder).count(),
-        "pending_shipments": pending_shipments,
+        "agents": aq.count(), "players": plq.count(), "today_turnover": money((pq.scalar() or 0) + (mq.scalar() or 0)),
+        "platform_orders": poq.count(), "mall_orders": moq.count(), "pending_shipments": pending_q.count(),
         "cdk_unused": db.query(RedemptionCode).filter(RedemptionCode.status == "unused").count(),
         "cdk_redeemed": db.query(RedemptionCode).filter(RedemptionCode.status == "redeemed").count(),
     }
@@ -634,8 +694,10 @@ def rebuild_turnover(db: Session = Depends(get_db), _=Depends(current_admin)):
     return {"message": "代理流水已重算"}
 
 @app.get("/api/settlements")
-def list_settlements(db: Session = Depends(get_db), _=Depends(current_admin)):
-    rows = db.query(Settlement).order_by(Settlement.id.desc()).all()
+def list_settlements(db: Session = Depends(get_db), principal=Depends(require_permission("settlements.view"))):
+    q = db.query(Settlement)
+    if principal.actor_type == "agent": q = q.filter(Settlement.agent_id.in_(scoped_agent_ids(db, principal)))
+    rows = q.order_by(Settlement.id.desc()).all()
     return [{"id": x.id, "settlement_no": x.settlement_no, "agent_id": x.agent_id, "period_start": str(x.period_start), "period_end": str(x.period_end),
              "turnover": money(x.turnover), "commission_rate": float(x.commission_rate), "commission_amount": money(x.commission_amount), "status": x.status, "paid_at": dt(x.paid_at)} for x in rows]
 
@@ -661,8 +723,9 @@ def create_settlement(body: SettlementCreate, db: Session = Depends(get_db), _=D
 
 # ---------- 玩家管理 ----------
 @app.get("/api/players")
-def list_players(keyword: str = "", db: Session = Depends(get_db), _=Depends(current_admin)):
+def list_players(keyword: str = "", db: Session = Depends(get_db), principal=Depends(require_permission("players.view"))):
     q = db.query(Player)
+    if principal.actor_type == "agent": q = q.filter(Player.agent_id.in_(scoped_agent_ids(db, principal)))
     if keyword:
         like = f"%{keyword}%"
         q = q.filter((Player.player_id.like(like)) | (Player.username.like(like)) | (Player.role_name.like(like)) | (Player.server_name.like(like)))
@@ -693,8 +756,10 @@ def apply_paid_recharge(db: Session, player_id: int, agent_id: int | None, amoun
         agent.total_turnover = Decimal(agent.total_turnover or 0) + amount
 
 @app.get("/api/orders/platform")
-def platform_orders(db: Session = Depends(get_db), _=Depends(current_admin)):
-    rows = db.query(PlatformCoinOrder).order_by(PlatformCoinOrder.id.desc()).all()
+def platform_orders(db: Session = Depends(get_db), principal=Depends(require_permission("orders.view"))):
+    q = db.query(PlatformCoinOrder)
+    if principal.actor_type == "agent": q = q.filter(PlatformCoinOrder.agent_id.in_(scoped_agent_ids(db, principal)))
+    rows = q.order_by(PlatformCoinOrder.id.desc()).all()
     return [{"id": x.id, "order_no": x.order_no, "player_id": x.player_id, "agent_id": x.agent_id, "amount": money(x.amount),
              "platform_coin": x.platform_coin, "payment_channel": x.payment_channel, "pay_status": x.pay_status, "created_at": dt(x.created_at), "paid_at": dt(x.paid_at)} for x in rows]
 
@@ -710,8 +775,10 @@ def create_platform_order(body: PlatformOrderCreate, db: Session = Depends(get_d
     return {"id": row.id, "message": "平台币订单创建成功"}
 
 @app.get("/api/orders/mall")
-def mall_orders(db: Session = Depends(get_db), _=Depends(current_admin)):
-    rows = db.query(MallOrder).order_by(MallOrder.id.desc()).all()
+def mall_orders(db: Session = Depends(get_db), principal=Depends(require_permission("orders.view"))):
+    q = db.query(MallOrder)
+    if principal.actor_type == "agent": q = q.filter(MallOrder.agent_id.in_(scoped_agent_ids(db, principal)))
+    rows = q.order_by(MallOrder.id.desc()).all()
     return [{"id": x.id, "order_no": x.order_no, "player_id": x.player_id, "agent_id": x.agent_id, "product_id": x.product_id, "quantity": x.quantity,
              "amount": money(x.amount), "pay_status": x.pay_status, "delivery_status": x.delivery_status, "created_at": dt(x.created_at), "paid_at": dt(x.paid_at)} for x in rows]
 
@@ -731,8 +798,10 @@ def create_mall_order(body: MallOrderCreate, db: Session = Depends(get_db), _=De
     return {"id": row.id, "message": "商城订单创建成功"}
 
 @app.get("/api/shipments")
-def shipments(db: Session = Depends(get_db), _=Depends(current_admin)):
-    orders = db.query(MallOrder).order_by(MallOrder.id.desc()).all()
+def shipments(db: Session = Depends(get_db), principal=Depends(require_permission("shipments.view"))):
+    q = db.query(MallOrder)
+    if principal.actor_type == "agent": q = q.filter(MallOrder.agent_id.in_(scoped_agent_ids(db, principal)))
+    orders = q.order_by(MallOrder.id.desc()).all()
     result = []
     for o in orders:
         s = db.query(Shipment).filter(Shipment.mall_order_id == o.id).first()
@@ -759,7 +828,7 @@ def create_shipment(body: ShipmentCreate, db: Session = Depends(get_db), _=Depen
 
 # ---------- 商品管理 ----------
 @app.get("/api/products")
-def products(category: str = "", db: Session = Depends(get_db), _=Depends(current_admin)):
+def products(category: str = "", db: Session = Depends(get_db), _=Depends(require_permission("products.view"))):
     q = db.query(Product)
     if category: q = q.filter(Product.category == category)
     rows = q.order_by(Product.id.desc()).all()
@@ -775,7 +844,7 @@ def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends
 
 # ---------- 兑换码管理 ----------
 @app.get("/api/redemption-batches")
-def redemption_batches(db: Session = Depends(get_db), _=Depends(current_admin)):
+def redemption_batches(db: Session = Depends(get_db), _=Depends(require_permission("cdk.view"))):
     rows = db.query(RedemptionBatch).order_by(RedemptionBatch.id.desc()).all()
     return [{"id": x.id, "name": x.name, "total_count": x.total_count, "redeemed_count": x.redeemed_count,
              "unused_count": x.total_count - x.redeemed_count, "enabled": x.enabled, "created_at": dt(x.created_at)} for x in rows]
@@ -811,7 +880,7 @@ def redeem(body: RedeemIn, db: Session = Depends(get_db), _=Depends(current_admi
 
 # ---------- 累充管理 ----------
 @app.get("/api/recharge-rules")
-def recharge_rules(db: Session = Depends(get_db), _=Depends(current_admin)):
+def recharge_rules(db: Session = Depends(get_db), _=Depends(require_permission("recharge.view"))):
     rows = db.query(RechargeRule).order_by(RechargeRule.threshold_amount.asc()).all()
     return [{"id": x.id, "name": x.name, "threshold_amount": money(x.threshold_amount), "reward_content": x.reward_content, "enabled": x.enabled, "created_at": dt(x.created_at)} for x in rows]
 
@@ -821,8 +890,12 @@ def create_recharge_rule(body: RechargeRuleCreate, db: Session = Depends(get_db)
     return {"id": row.id, "message": "累充规则创建成功"}
 
 @app.get("/api/claims")
-def claims(db: Session = Depends(get_db), _=Depends(current_admin)):
-    rows = db.query(ClaimRecord).order_by(ClaimRecord.id.desc()).all()
+def claims(db: Session = Depends(get_db), principal=Depends(require_permission("claims.view"))):
+    q = db.query(ClaimRecord)
+    if principal.actor_type == "agent":
+        player_ids = [x[0] for x in db.query(Player.id).filter(Player.agent_id.in_(scoped_agent_ids(db, principal))).all()]
+        q = q.filter(ClaimRecord.player_id.in_(player_ids)) if player_ids else q.filter(text("1=0"))
+    rows = q.order_by(ClaimRecord.id.desc()).all()
     return [{"id": x.id, "player_id": x.player_id, "rule_id": x.rule_id, "status": x.status, "claimed_at": dt(x.claimed_at)} for x in rows]
 
 @app.post("/api/claims")
@@ -850,15 +923,22 @@ def send_mail(body: MailCreate, db: Session = Depends(get_db), admin=Depends(cur
 
 # ---------- 智能辅助 ----------
 @app.get("/api/intelligence/alerts")
-def intelligence_alerts(db: Session = Depends(get_db), _=Depends(current_admin)):
+def intelligence_alerts(db: Session = Depends(get_db), principal=Depends(require_permission("dashboard.view"))):
     alerts = []
-    failed_shipments = db.query(MallOrder).filter(MallOrder.delivery_status == "failed").count()
+    ids = scoped_agent_ids(db, principal)
+    failed_q = db.query(MallOrder).filter(MallOrder.delivery_status == "failed")
+    if principal.actor_type == "agent": failed_q = failed_q.filter(MallOrder.agent_id.in_(ids))
+    failed_shipments = failed_q.count()
     if failed_shipments: alerts.append({"level": "high", "type": "shipment", "message": f"有 {failed_shipments} 笔商城订单发货失败，需要处理"})
     low_stock = db.query(Product).filter(Product.enabled.is_(True), Product.stock <= 5).count()
     if low_stock: alerts.append({"level": "medium", "type": "stock", "message": f"有 {low_stock} 个商品库存低于或等于 5"})
-    pending_settle = db.query(Settlement).filter(Settlement.status == "pending").count()
+    pending_q = db.query(Settlement).filter(Settlement.status == "pending")
+    if principal.actor_type == "agent": pending_q = pending_q.filter(Settlement.agent_id.in_(ids))
+    pending_settle = pending_q.count()
     if pending_settle: alerts.append({"level": "medium", "type": "settlement", "message": f"有 {pending_settle} 笔渠道结算待处理"})
-    suspicious = db.query(Player.last_login_ip, func.count(Player.id)).filter(Player.last_login_ip.isnot(None)).group_by(Player.last_login_ip).having(func.count(Player.id) >= 5).all()
+    suspicious_q = db.query(Player.last_login_ip, func.count(Player.id)).filter(Player.last_login_ip.isnot(None))
+    if principal.actor_type == "agent": suspicious_q = suspicious_q.filter(Player.agent_id.in_(ids))
+    suspicious = suspicious_q.group_by(Player.last_login_ip).having(func.count(Player.id) >= 5).all()
     for ip, count in suspicious: alerts.append({"level": "medium", "type": "risk", "message": f"IP {ip} 关联 {count} 个玩家账号，建议复核"})
     if not alerts: alerts.append({"level": "ok", "type": "system", "message": "当前未发现需要优先处理的异常"})
     return alerts

@@ -42,8 +42,19 @@ async function api(path, options={}){
 }
 function logout(){ token='';actorType='admin';currentUser=null;localStorage.removeItem('cps_token');localStorage.removeItem('cps_actor_type');$('#app').classList.add('hidden');$('#login').classList.remove('hidden'); }
 $('#logoutBtn').onclick=logout;
-$('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=actorType==='agent'?'agents':'dashboard';await showApp();}catch(err){$('#loginError').textContent=err.message}};
-function applyRoleUI(){document.querySelectorAll('[data-admin-only]').forEach(el=>el.classList.toggle('hidden',actorType==='agent'));}
+$('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=firstAllowedView();await showApp();}catch(err){$('#loginError').textContent=err.message}};
+function hasPermission(code){return Boolean(currentUser?.permissions?.includes(code));}
+const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',platformOrders:'orders.view',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view'};
+function canView(view){const code=viewPermissions[view];return !code||hasPermission(code);}
+function firstAllowedView(){return Object.keys(viewPermissions).find(canView)||'dashboard';}
+function applyRoleUI(){
+  document.querySelectorAll('[data-permission]').forEach(el=>el.classList.toggle('hidden',!hasPermission(el.dataset.permission)));
+  document.querySelectorAll('.nav-section').forEach(section=>{
+    const own=section.dataset.permission;
+    const children=[...section.querySelectorAll('[data-view]')].filter(x=>!x.classList.contains('hidden'));
+    section.classList.toggle('hidden',(own&&!hasPermission(own))||children.length===0);
+  });
+}
 function roleDisplayName(user){
   if(user?.actor_type==='admin' && user?.role==='superadmin') return '超级管理员';
   if(user?.actor_type==='admin') return '管理员';
@@ -56,7 +67,7 @@ function updateIdentityBadge(){
 }
 async function showApp(){
   if(!currentUser){ currentUser=await api('/api/auth/me'); actorType=currentUser.actor_type||'admin'; localStorage.setItem('cps_actor_type',actorType); }
-  applyRoleUI();updateIdentityBadge();$('#login').classList.add('hidden');$('#app').classList.remove('hidden');syncNavToView(currentView);loadView(currentView);
+  applyRoleUI();updateIdentityBadge();if(!canView(currentView))currentView=firstAllowedView();$('#login').classList.add('hidden');$('#app').classList.remove('hidden');syncNavToView(currentView);loadView(currentView);
 }
 
 const navRoot = $('#nav');
@@ -79,7 +90,7 @@ navRoot.addEventListener('click', e=>{
   }
 
   const viewBtn=e.target.closest('[data-view]');
-  if(!viewBtn || !navRoot.contains(viewBtn)) return;
+  if(!viewBtn || !navRoot.contains(viewBtn) || viewBtn.classList.contains('hidden') || !canView(viewBtn.dataset.view)) return;
   navViews.forEach(x=>x.classList.remove('active'));
   viewBtn.classList.add('active');
   const section=viewBtn.closest('.nav-section');
@@ -107,24 +118,24 @@ function badge(v){const s=String(v??'');const c=['paid','sent','success','active
 function table(rows, cols){if(!rows?.length)return '<div class="empty">暂无数据</div>';return `<table><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${c[2]?c[2](r[c[1]],r):esc(r[c[1]])}</td>`).join('')}</tr>`).join('')}</tbody></table>`}
 function panel(title, body, actions=''){return `<div class="panel"><div class="panel-head"><h3>${title}</h3><div class="actions">${actions}</div></div>${body}</div>`}
 
-async function loadView(view){const [t,s]=titles[view]||['',''];$('#pageTitle').textContent=t;$('#pageSub').textContent=s;$('#content').innerHTML='<div class="panel"><div class="empty">加载中...</div></div>';try{
+async function loadView(view){if(!canView(view)){currentView=firstAllowedView();return loadView(currentView)}const [t,s]=titles[view]||['',''];$('#pageTitle').textContent=t;$('#pageSub').textContent=s;$('#content').innerHTML='<div class="panel"><div class="empty">加载中...</div></div>';try{
  if(view==='dashboard') return renderDashboard();
  if(view==='agents') return renderAgents();
- if(view==='settlements') return renderList('/api/settlements',settleCols,'结算记录',()=>openForm('生成结算单',forms.settlement));
- if(view==='players') return renderList('/api/players',playerCols,'玩家数据库',()=>openForm('新增玩家',forms.player));
- if(view==='platformOrders') return renderList('/api/orders/platform',platformCols,'平台币订单',()=>openForm('新增平台币订单',forms.platform));
- if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单',()=>openForm('新增商城订单',forms.mall));
- if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',()=>openForm('更新发货',forms.shipment));
+ if(view==='settlements') return renderList('/api/settlements',settleCols,'结算记录',hasPermission('settlements.manage')?()=>openForm('生成结算单',forms.settlement):null);
+ if(view==='players') return renderList('/api/players',playerCols,'玩家列表',hasPermission('players.manage')?()=>openForm('新增玩家',forms.player):null);
+ if(view==='platformOrders') return renderList('/api/orders/platform',platformCols,'平台币订单',hasPermission('orders.manage')?()=>openForm('新增平台币订单',forms.platform):null);
+ if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单',hasPermission('orders.manage')?()=>openForm('新增商城订单',forms.mall):null);
+ if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',hasPermission('shipments.manage')?()=>openForm('更新发货',forms.shipment):null);
  if(view==='gifts') return renderProducts('gift'); if(view==='products') return renderProducts('product');
  if(view==='cdk') return renderCDK();
- if(view==='rechargeRules') return renderList('/api/recharge-rules',ruleCols,'累充规则',()=>openForm('新增累充规则',forms.rule));
- if(view==='claims') return renderList('/api/claims',claimCols,'领取记录',()=>openForm('新增领取记录',forms.claim));
+ if(view==='rechargeRules') return renderList('/api/recharge-rules',ruleCols,'累充列表',hasPermission('recharge.manage')?()=>openForm('新增累充规则',forms.rule):null);
+ if(view==='claims') return renderList('/api/claims',claimCols,'领取记录',hasPermission('claims.manage')?()=>openForm('新增领取记录',forms.claim):null);
  if(view==='sendMail') return renderSendMail(); if(view==='mailRecords') return renderList('/api/mails',mailCols,'发送记录');
  }catch(e){$('#content').innerHTML=`<div class="panel"><div class="empty error">${esc(e.message)}</div></div>`}}
 
 async function renderDashboard(){const [d,a]=await Promise.all([api('/api/dashboard'),api('/api/intelligence/alerts')]);$('#content').innerHTML=`<div class="metrics">
  ${[['代理数量',d.agents],['玩家数量',d.players],['今日流水','¥ '+d.today_turnover.toFixed(2)],['待发货/异常',d.pending_shipments],['平台币订单',d.platform_orders],['商城订单',d.mall_orders],['未兑换CDK',d.cdk_unused],['已兑换CDK',d.cdk_redeemed]].map(x=>`<div class="metric"><div class="label">${x[0]}</div><strong>${x[1]}</strong></div>`).join('')}
- </div>${panel('智能运营提醒',`<div class="alerts">${a.map(x=>`<div class="alert ${x.level}">${esc(x.message)}</div>`).join('')}</div>`,`<button class="btn" onclick="rebuildTurnover()">重算代理流水</button>`)}`}
+ </div>${panel('智能运营提醒',`<div class="alerts">${a.map(x=>`<div class="alert ${x.level}">${esc(x.message)}</div>`).join('')}</div>`,hasPermission('system.rebuild')?`<button class="btn" onclick="rebuildTurnover()">重算代理流水</button>`:'')}`}
 window.rebuildTurnover=async()=>{try{alert((await api('/api/agents/rebuild-turnover',{method:'POST'})).message);loadView('dashboard')}catch(e){alert(e.message)}};
 
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
@@ -224,11 +235,11 @@ window.openAgentEdit=async(agentPk)=>{
   }catch(e){alert(e.message)}
 };
 
-async function renderProducts(cat){const rows=await api('/api/products?category='+cat);$('#content').innerHTML=panel(cat==='gift'?'礼包列表':'商品列表',table(rows,productCols),'<button class="btn primary" id="addBtn">＋ 新增</button>');$('#addBtn').onclick=()=>openForm(cat==='gift'?'新增礼包':'新增商品',{...forms.product,defaults:{category:cat}})}
-async function renderCDK(){const rows=await api('/api/redemption-batches');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>');$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}
+async function renderProducts(cat){const rows=await api('/api/products?category='+cat);const manage=hasPermission('products.manage');$('#content').innerHTML=panel(cat==='gift'?'礼包列表':'商品列表',table(rows,productCols),manage?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(manage)$('#addBtn').onclick=()=>openForm(cat==='gift'?'新增礼包':'新增商品',{...forms.product,defaults:{category:cat}})}
+async function renderCDK(){const rows=await api('/api/redemption-batches');const manage=hasPermission('cdk.manage');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>':'');if(manage){$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
 
-const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',agentStatusBadge],['操作','id',(_,r)=>`<button class="btn compact" onclick="openAgentEdit(${Number(r.id)})">编辑</button>`]];
+const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',agentStatusBadge],['操作','id',(_,r)=>hasPermission('channels.edit_basic')||hasPermission('channels.edit_full')?`<button class="btn compact" onclick="openAgentEdit(${Number(r.id)})">编辑</button>`:'-']];
 const playerCols=[['玩家ID','player_id'],['账号','username'],['角色名','role_name'],['区服','server_name'],['代理PK','agent_id'],['今日充值','today_recharge'],['总充值','total_recharge'],['最后登录','last_login_at'],['登录IP','last_login_ip']];
 const platformCols=[['订单号','order_no'],['玩家PK','player_id'],['代理PK','agent_id'],['金额','amount'],['平台币','platform_coin'],['支付渠道','payment_channel'],['支付状态','pay_status',badge],['创建时间','created_at']];
 const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','product_id'],['数量','quantity'],['金额','amount'],['支付','pay_status',badge],['发货','delivery_status',badge],['创建时间','created_at']];
