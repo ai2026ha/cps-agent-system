@@ -1,8 +1,9 @@
 import os
 import secrets
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +25,24 @@ from .security import hash_password, verify_password, create_token, current_admi
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+BUSINESS_TZ = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Shanghai"))
+
+
+def business_today() -> date:
+    return datetime.now(BUSINESS_TZ).date()
+
+
+def business_date_bounds(start_date: date | None, end_date: date | None):
+    """把业务时区自然日边界转换为数据库使用的 UTC naive datetime。"""
+    start_dt = None
+    end_dt = None
+    if start_date:
+        local_start = datetime.combine(start_date, time.min, tzinfo=BUSINESS_TZ)
+        start_dt = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+    if end_date:
+        local_end = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=BUSINESS_TZ)
+        end_dt = local_end.astimezone(timezone.utc).replace(tzinfo=None)
+    return start_dt, end_dt
 
 
 def money(v):
@@ -97,10 +116,47 @@ def ensure_agent_hierarchy_columns():
         conn.execute(text("UPDATE agents SET subagent_limit = 0 WHERE agent_level >= 3"))
 
 
+def ensure_agent_public_identity_format():
+    """把历史代理统一迁移为 A1/A2/A3...，并让邀请码始终等于代理ID。
+
+    A 后面的数字直接采用 agents 主键，因此天然唯一；数据库内其它业务表都通过
+    agents.id 外键关联，不依赖旧的 AGxxxxxxxx 字符串，迁移不会破坏订单/玩家归属。
+    """
+    inspector = inspect(engine)
+    if "agents" not in inspector.get_table_names():
+        return
+    with engine.begin() as conn:
+        rows = conn.execute(text("SELECT id, agent_id, invite_code FROM agents ORDER BY id")).mappings().all()
+        if not rows:
+            return
+        needs_migration = any(
+            str(r["agent_id"] or "") != f"A{int(r['id'])}" or str(r["invite_code"] or "") != f"A{int(r['id'])}"
+            for r in rows
+        )
+        if not needs_migration:
+            return
+
+        # 两阶段更新，避免历史数据里恰好存在 A1/A2 等值时触发 unique 冲突。
+        prefix = "TMP" + secrets.token_hex(4).upper()
+        for r in rows:
+            temp_value = f"{prefix}{int(r['id'])}"
+            conn.execute(
+                text("UPDATE agents SET agent_id = :v, invite_code = :v WHERE id = :id"),
+                {"v": temp_value, "id": int(r["id"])},
+            )
+        for r in rows:
+            public_id = f"A{int(r['id'])}"
+            conn.execute(
+                text("UPDATE agents SET agent_id = :v, invite_code = :v WHERE id = :id"),
+                {"v": public_id, "id": int(r["id"])},
+            )
+
+
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
     ensure_agent_hierarchy_columns()
+    ensure_agent_public_identity_format()
     seed_admin()
 
 @app.get("/healthz")
@@ -148,7 +204,7 @@ def auth_me(principal=Depends(current_user), db: Session = Depends(get_db)):
             "username": principal.username,
             "role": principal.role,
             "actor_type": principal.actor_type,
-            "agent_id": principal.agent_id,
+            "agent_id": agent.agent_id,
             "agent_level": agent.agent_level,
             "subagent_limit": agent.subagent_limit,
         }
@@ -180,24 +236,8 @@ def dashboard(db: Session = Depends(get_db), _=Depends(current_admin)):
     }
 
 # ---------- 渠道管理 ----------
-def generate_unique_agent_id(db: Session) -> str:
-    # 对外代理ID由系统生成，避免人工重复、串号或借此篡改上下级关系。
-    # 形式示例：AG48273165。唯一性同时由数据库 unique 约束兜底。
-    for _ in range(100):
-        public_id = "AG" + "".join(secrets.choice("0123456789") for _ in range(8))
-        if not db.query(Agent).filter(Agent.agent_id == public_id).first():
-            return public_id
-    raise HTTPException(500, "代理ID生成失败，请重试")
-
-
-def generate_unique_invite_code(db: Session, length: int = 8) -> str:
-    # 去掉 0/O、1/I 等容易看错的字符，邀请码由后端生成且数据库唯一。
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    for _ in range(100):
-        code = "".join(secrets.choice(alphabet) for _ in range(length))
-        if not db.query(Agent).filter(Agent.invite_code == code).first():
-            return code
-    raise HTTPException(500, "邀请码生成失败，请重试")
+def agent_identity_from_pk(agent_pk: int) -> str:
+    return f"A{agent_pk}"
 
 
 def agent_level_name(level: int | None) -> str:
@@ -214,7 +254,7 @@ def serialize_agent(a: Agent, db: Session):
         "parent_agent_id": a.parent.agent_id if a.parent else None,
         "parent_agent_display": a.parent.agent_id if a.parent else "超管",
         "agent_level": int(a.agent_level or 1), "agent_level_name": agent_level_name(a.agent_level),
-        "subagent_limit": limit, "subagent_count": used, "subagent_remaining": max(limit - used, 0),
+        "subagent_limit": limit, "subagent_count": used,
         "today_turnover": money(a.today_turnover), "yesterday_turnover": money(a.yesterday_turnover),
         "total_turnover": money(a.total_turnover), "commission_rate": float(a.commission_rate or 0),
         "status": a.status, "created_at": dt(a.created_at),
@@ -268,9 +308,8 @@ def agent_capabilities(db: Session = Depends(get_db), principal=Depends(current_
 
 
 def agent_turnover_between(db: Session, agent_pk: int, start_date: date | None = None, end_date: date | None = None) -> Decimal:
-    """按自然日区间汇总代理已支付流水，结束日期包含当天。"""
-    start_dt = datetime.combine(start_date, time.min) if start_date else None
-    end_dt = datetime.combine(date.fromordinal(end_date.toordinal() + 1), time.min) if end_date else None
+    """按业务时区自然日区间汇总代理已支付流水，结束日期包含当天。"""
+    start_dt, end_dt = business_date_bounds(start_date, end_date)
     p = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(
         PlatformCoinOrder.agent_id == agent_pk, PlatformCoinOrder.pay_status == "paid"
     )
@@ -292,6 +331,7 @@ def list_agents(
     agent_account: str = "",
     public_agent_id: str = "",
     parent: str = "",
+    turnover_period: str = "",
     turnover_start: date | None = Query(default=None),
     turnover_end: date | None = Query(default=None),
     db: Session = Depends(get_db),
@@ -301,6 +341,21 @@ def list_agents(
     q = db.query(Agent)
     if principal.actor_type == "agent":
         q = q.filter(Agent.parent_id == principal.agent_pk)
+
+    turnover_period = turnover_period.strip().lower()
+    if turnover_period not in {"", "today", "yesterday", "custom"}:
+        raise HTTPException(400, "流水查询类型无效")
+    if turnover_period == "today":
+        turnover_start = turnover_end = business_today()
+    elif turnover_period == "yesterday":
+        yesterday = business_today() - timedelta(days=1)
+        turnover_start = turnover_end = yesterday
+    elif turnover_period == "custom":
+        if not turnover_start or not turnover_end:
+            raise HTTPException(400, "自定义流水查询需要选择开始日期和结束日期")
+    elif turnover_start or turnover_end:
+        # 兼容 V9-V11 已经存在的查询链接。
+        turnover_period = "custom"
 
     if turnover_start and turnover_end and turnover_end < turnover_start:
         raise HTTPException(400, "流水查询结束日期不能早于开始日期")
@@ -332,8 +387,9 @@ def list_agents(
     result = []
     for a in q.order_by(Agent.id.desc()).all():
         row = serialize_agent(a, db)
-        if turnover_start or turnover_end:
+        if turnover_period:
             row["period_turnover"] = money(agent_turnover_between(db, a.id, turnover_start, turnover_end))
+            row["turnover_period"] = turnover_period
             row["turnover_start"] = str(turnover_start) if turnover_start else None
             row["turnover_end"] = str(turnover_end) if turnover_end else None
         result.append(row)
@@ -368,20 +424,29 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Dep
     if db.query(Agent).filter(Agent.username == body.username).first():
         raise HTTPException(409, "代理登录账号已存在")
 
-    agent_id = generate_unique_agent_id(db)
-    invite_code = generate_unique_invite_code(db)
+    # 先用一次性临时值插入以取得数据库主键，再把公开代理ID和邀请码统一设置为 A{主键}。
+    # 这样即使并发创建，也不会出现两个请求同时拿到同一个 A 编号。
+    temp_identity = "TMP" + secrets.token_hex(10).upper()
     row = Agent(
-        agent_id=agent_id,
+        agent_id=temp_identity,
         username=body.username,
         password_hash=hash_password(body.password),
         agent_name=body.agent_name,
-        invite_code=invite_code,
+        invite_code=temp_identity,
         parent_id=parent_id,
         agent_level=body.agent_level,
         subagent_limit=0 if body.agent_level == 3 else body.subagent_limit,
         commission_rate=body.commission_rate,
     )
-    db.add(row); db.commit(); db.refresh(row)
+    db.add(row)
+    db.flush()
+    public_identity = agent_identity_from_pk(row.id)
+    if db.query(Agent).filter(Agent.id != row.id, Agent.agent_id == public_identity).first():
+        db.rollback()
+        raise HTTPException(500, "代理ID生成冲突，请重试")
+    row.agent_id = public_identity
+    row.invite_code = public_identity
+    db.commit(); db.refresh(row)
     return {
         "id": row.id,
         "agent_id": row.agent_id,

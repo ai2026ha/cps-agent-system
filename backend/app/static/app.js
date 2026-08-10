@@ -3,7 +3,7 @@ let token = localStorage.getItem('cps_token') || '';
 let actorType = localStorage.getItem('cps_actor_type') || 'admin';
 let currentView = actorType === 'agent' ? 'agents' : 'dashboard';
 let currentUser = null;
-let agentSearch = {agent_account:'', public_agent_id:'', turnover_start:'', turnover_end:'', parent:''};
+let agentSearch = {agent_account:'', public_agent_id:'', turnover_period:'', turnover_start:'', turnover_end:'', parent:''};
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','按周期计算代理佣金'],
@@ -136,20 +136,33 @@ function agentSearchQuery(){
   return qs?`?${qs}`:'';
 }
 function agentSearchBar(){
+  const mode=agentSearch.turnover_period||'';
+  const custom=mode==='custom';
   return `<div class="agent-search-bar">
     <div class="query-field"><label>代理账号查询</label><input id="agentAccountQuery" value="${esc(agentSearch.agent_account)}" placeholder="输入代理登录账号"></div>
-    <div class="query-field"><label>代理ID查询</label><input id="agentIdQuery" value="${esc(agentSearch.public_agent_id)}" placeholder="例如 AG12345678"></div>
-    <div class="query-field query-date"><label>代理流水自定义日期查询</label><div class="date-range"><input id="turnoverStartQuery" type="date" value="${esc(agentSearch.turnover_start)}"><span>至</span><input id="turnoverEndQuery" type="date" value="${esc(agentSearch.turnover_end)}"></div></div>
+    <div class="query-field"><label>代理ID查询</label><input id="agentIdQuery" value="${esc(agentSearch.public_agent_id)}" placeholder="例如 A1"></div>
+    <div class="query-field query-turnover"><label>流水查询</label>
+      <div class="turnover-choice">
+        <button type="button" class="turnover-mode-btn ${mode==='yesterday'?'active':''}" data-turnover-mode="yesterday">昨日</button>
+        <button type="button" class="turnover-mode-btn ${mode==='today'?'active':''}" data-turnover-mode="today">今日</button>
+        <button type="button" class="turnover-mode-btn ${mode==='custom'?'active':''}" data-turnover-mode="custom">自定义时间</button>
+      </div>
+      <div id="customTurnoverRange" class="date-range custom-turnover-range ${custom?'':'hidden'}">
+        <input id="turnoverStartQuery" type="date" value="${esc(agentSearch.turnover_start)}"><span>至</span><input id="turnoverEndQuery" type="date" value="${esc(agentSearch.turnover_end)}">
+      </div>
+    </div>
     <div class="query-field"><label>上级代理查询</label><input id="parentAgentQuery" value="${esc(agentSearch.parent)}" placeholder="上级代理ID/账号/名称"></div>
     <div class="query-actions"><button class="btn primary" id="agentQueryBtn">查询</button><button class="btn" id="agentResetBtn">重置</button></div>
   </div>`;
 }
 function readAgentSearch(){
+  const mode=document.querySelector('.turnover-mode-btn.active')?.dataset.turnoverMode||'';
   return {
     agent_account:$('#agentAccountQuery')?.value.trim()||'',
     public_agent_id:$('#agentIdQuery')?.value.trim()||'',
-    turnover_start:$('#turnoverStartQuery')?.value||'',
-    turnover_end:$('#turnoverEndQuery')?.value||'',
+    turnover_period:mode,
+    turnover_start:mode==='custom'?($('#turnoverStartQuery')?.value||''):'',
+    turnover_end:mode==='custom'?($('#turnoverEndQuery')?.value||''):'',
     parent:$('#parentAgentQuery')?.value.trim()||''
   };
 }
@@ -159,16 +172,26 @@ async function renderAgents(){
     ? `<div class="quota-card"><strong>当前身份：超级管理员</strong><span>可开通：一级代理</span><span>一级代理数量：${caps.subagent_count}</span></div>`
     : `<div class="quota-card"><strong>当前等级：${esc(caps.current_level_name)}</strong><span>${caps.allowed_child_level_name?`可开通：${esc(caps.allowed_child_level_name)}`:'已到最高代理等级'}</span><span>直属下级：${caps.subagent_count}/${caps.subagent_limit}</span><span>剩余名额：${caps.subagent_remaining}</span></div>`;
   const action=caps.can_create?'<button class="btn primary" id="addBtn">＋ 新增代理</button>':`<button class="btn" disabled title="${esc(caps.reason)}">${esc(caps.reason)}</button>`;
-  const hasPeriod=Boolean(agentSearch.turnover_start||agentSearch.turnover_end);
-  const cols=hasPeriod?[...agentCols.slice(0,9),['查询区间流水','period_turnover',v=>`¥ ${Number(v||0).toFixed(2)}`],...agentCols.slice(9)]:agentCols;
+  const hasPeriod=Boolean(agentSearch.turnover_period);
+  const cols=hasPeriod?[...agentCols.slice(0,8),['查询流水','period_turnover',v=>`¥ ${Number(v||0).toFixed(2)}`],...agentCols.slice(8)]:agentCols;
   const scopeNote=caps.current_level===0?'<div class="query-scope-note">超级管理员查询范围：全部一级、二级、三级代理；代理账号登录后仅查询自己的直属下级。</div>':'';
   $('#content').innerHTML=quota+panel('下级渠道',agentSearchBar()+scopeNote+`<div class="table-scroll">${table(rows,cols)}</div>`,action);
   $('#agentQueryBtn').onclick=async()=>{
     const next=readAgentSearch();
+    if(next.turnover_period==='custom'&&(!next.turnover_start||!next.turnover_end)){alert('自定义流水查询需要选择开始日期和结束日期');return;}
     if(next.turnover_start&&next.turnover_end&&next.turnover_end<next.turnover_start){alert('流水查询结束日期不能早于开始日期');return;}
     agentSearch=next;await renderAgents();
   };
-  $('#agentResetBtn').onclick=async()=>{agentSearch={agent_account:'',public_agent_id:'',turnover_start:'',turnover_end:'',parent:''};await renderAgents();};
+  $('#agentResetBtn').onclick=async()=>{agentSearch={agent_account:'',public_agent_id:'',turnover_period:'',turnover_start:'',turnover_end:'',parent:''};await renderAgents();};
+  document.querySelectorAll('.turnover-mode-btn').forEach(btn=>btn.onclick=()=>{
+    const wasActive=btn.classList.contains('active');
+    document.querySelectorAll('.turnover-mode-btn').forEach(x=>x.classList.remove('active'));
+    if(!wasActive)btn.classList.add('active');
+    const mode=wasActive?'':btn.dataset.turnoverMode;
+    const custom=$('#customTurnoverRange');
+    if(custom)custom.classList.toggle('hidden',mode!=='custom');
+    if(mode!=='custom'){const s=$('#turnoverStartQuery'),e=$('#turnoverEndQuery');if(s)s.value='';if(e)e.value='';}
+  });
   ['agentAccountQuery','agentIdQuery','parentAgentQuery'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter')$('#agentQueryBtn').click()})});
   if(caps.can_create) $('#addBtn').onclick=()=>openForm('新增代理',buildAgentForm(caps));
 }
@@ -176,7 +199,7 @@ async function renderProducts(cat){const rows=await api('/api/products?category=
 async function renderCDK(){const rows=await api('/api/redemption-batches');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>');$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
 
-const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['下级代理上限','subagent_limit'],['已开通下级','subagent_count'],['剩余名额','subagent_remaining'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',badge]];
+const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['下级代理上限','subagent_limit'],['已开通下级','subagent_count'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',badge]];
 const playerCols=[['玩家ID','player_id'],['账号','username'],['角色名','role_name'],['区服','server_name'],['代理PK','agent_id'],['今日充值','today_recharge'],['总充值','total_recharge'],['最后登录','last_login_at'],['登录IP','last_login_ip']];
 const platformCols=[['订单号','order_no'],['玩家PK','player_id'],['代理PK','agent_id'],['金额','amount'],['平台币','platform_coin'],['支付渠道','payment_channel'],['支付状态','pay_status',badge],['创建时间','created_at']];
 const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','product_id'],['数量','quantity'],['金额','amount'],['支付','pay_status',badge],['发货','delivery_status',badge],['创建时间','created_at']];
@@ -199,10 +222,10 @@ function buildAgentForm(caps){
  const isThird=allowed===3;
  return {
   path:'/api/agents',
-  note:`代理ID、邀请码和上级归属均由系统自动处理。当前${esc(caps.current_level_name)}只能开通${agentLevelText(allowed)}。${isThird?'三级代理为末级，不能再开通下级。':'“可开通下级代理数量”是该新代理未来可以创建的直属下级上限。'} 佣金比例填写百分比，例如 50 表示 50%。`,
-  defaults:{agent_level:'',subagent_limit:isThird?0:1},
+  note:`代理ID由系统按 A1/A2/A3… 自动生成，邀请码直接采用代理ID，上级归属也由系统自动处理。当前${esc(caps.current_level_name)}只能开通${agentLevelText(allowed)}。${isThird?'三级代理为末级，不能再开通下级。':'“可开通下级代理数量”是该新代理未来可以创建的直属下级上限。'} 佣金比例填写百分比，例如 50 表示 50%。`,
+  defaults:{username:'',password:'',agent_name:'',agent_level:'',subagent_limit:isThird?0:1,commission_rate:''},
   fields:[
-   ['username','登录账号'],['password','登录密码','password'],['agent_name','代理名称'],
+   ['username','登录账号','text',true,{autocomplete:'off'}],['password','登录密码','password',true,{autocomplete:'new-password'}],['agent_name','代理名称'],
    ['agent_level','代理等级','select',true,{options}],
    ['subagent_limit','可开通下级代理数量','number',true,{min:0,max:9999,step:1,readonly:isThird,placeholder:isThird?'三级代理固定为 0':'例如：10'}],
    ['commission_rate','佣金比例(%)','number',false,{min:0,max:100,step:0.01,placeholder:'例如：50 表示 50%'}]
@@ -238,6 +261,7 @@ function inputAttrs(meta,type){
  if(meta?.max!==undefined)attrs.push(`max="${meta.max}"`);
  if(meta?.placeholder)attrs.push(`placeholder="${esc(meta.placeholder)}"`);
  if(meta?.readonly)attrs.push('readonly');
+ if(meta?.autocomplete)attrs.push(`autocomplete="${esc(meta.autocomplete)}"`);
  return attrs.join(' ');
 }
 function fieldControl(name,type,val,required,meta){
@@ -248,5 +272,5 @@ function fieldControl(name,type,val,required,meta){
  }
  return `<input name="${name}" type="${type}" value="${esc(val)}" ${required?'required':''} ${inputAttrs(meta,type)}/>`;
 }
-function openForm(title,cfg){$('#modalTitle').textContent=title;const defaults=cfg.defaults||{};$('#modalForm').innerHTML=`${cfg.note?`<div class="form-hint">${esc(cfg.note)}</div>`:''}<div class="form-grid">${cfg.fields.map(f=>{const [name,label,type='text',required=true,meta=null]=f;const val=defaults[name]??'';return `<div class="${type==='textarea'?'full':''}"><label>${label}</label>${fieldControl(name,type,val,required,meta)}</div>`}).join('')}<div class="form-actions"><button type="button" class="btn" id="cancelForm">取消</button><button class="btn primary">提交</button></div></div>`;$('#modal').classList.remove('hidden');$('#cancelForm').onclick=closeModal;$('#modalForm').onsubmit=async e=>{e.preventDefault();let obj={};new FormData(e.target).forEach((v,k)=>{if(v==='')return;const f=cfg.fields.find(x=>x[0]===k);obj[k]=f?.[2]==='number'||f?.[2]==='select'?Number(v):v});try{if(cfg.transform)obj=cfg.transform(obj);let path=cfg.path;if(title==='生成兑换码'){path=`/api/redemption-batches/${obj.batch_id}/generate`;delete obj.batch_id}const r=await api(path,{method:'POST',body:JSON.stringify(obj)});alert(r.message||`成功${r.generated?`，已生成 ${r.generated} 个`:''}`);closeModal();loadView(currentView)}catch(err){alert(err.message)}}}
+function openForm(title,cfg){$('#modalTitle').textContent=title;const defaults=cfg.defaults||{};$('#modalForm').setAttribute('autocomplete','off');$('#modalForm').innerHTML=`${cfg.note?`<div class="form-hint">${esc(cfg.note)}</div>`:''}<div class="form-grid">${cfg.fields.map(f=>{const [name,label,type='text',required=true,meta=null]=f;const val=defaults[name]??'';return `<div class="${type==='textarea'?'full':''}"><label>${label}</label>${fieldControl(name,type,val,required,meta)}</div>`}).join('')}<div class="form-actions"><button type="button" class="btn" id="cancelForm">取消</button><button class="btn primary">提交</button></div></div>`;$('#modal').classList.remove('hidden');$('#cancelForm').onclick=closeModal;$('#modalForm').onsubmit=async e=>{e.preventDefault();let obj={};new FormData(e.target).forEach((v,k)=>{if(v==='')return;const f=cfg.fields.find(x=>x[0]===k);obj[k]=f?.[2]==='number'||f?.[2]==='select'?Number(v):v});try{if(cfg.transform)obj=cfg.transform(obj);let path=cfg.path;if(title==='生成兑换码'){path=`/api/redemption-batches/${obj.batch_id}/generate`;delete obj.batch_id}const r=await api(path,{method:'POST',body:JSON.stringify(obj)});alert(r.message||`成功${r.generated?`，已生成 ${r.generated} 个`:''}`);closeModal();loadView(currentView)}catch(err){alert(err.message)}}}
 function closeModal(){$('#modal').classList.add('hidden')}$('#closeModal').onclick=closeModal;$('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal()};
