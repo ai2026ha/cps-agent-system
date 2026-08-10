@@ -14,11 +14,11 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
-    AdminUser, Agent, Player, Product, PlatformCoinOrder, MallOrder, Shipment,
+    AdminUser, Agent, Player, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, MailRecord,
 )
 from .schemas import (
-    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, ProductCreate, PlatformOrderCreate, MallOrderCreate,
+    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformOrderCreate, MallOrderCreate,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, MailCreate,
 )
@@ -227,6 +227,35 @@ def dt(v):
     return v.isoformat(sep=" ", timespec="seconds") if v else None
 
 
+def real_paid_platform_turnover(
+    db: Session,
+    *,
+    agent_ids: list[int] | None = None,
+    player_ids: list[int] | None = None,
+    start_dt: datetime | None = None,
+    end_dt: datetime | None = None,
+) -> Decimal:
+    """统一流水口径：仅统计真实支付成功的平台币订单金额。
+
+    真实支付订单必须同时满足 pay_status='paid' 且 paid_at 不为空。
+    超管手工发放/收回平台币只写 PlayerCoinLedger，不进入订单表，因此永远不会
+    被本函数计入流水，也不会产生代理分佣。商城订单同样不计入流水。
+    """
+    q = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(
+        PlatformCoinOrder.pay_status == "paid",
+        PlatformCoinOrder.paid_at.is_not(None),
+    )
+    if agent_ids is not None:
+        q = q.filter(PlatformCoinOrder.agent_id.in_(agent_ids))
+    if player_ids is not None:
+        q = q.filter(PlatformCoinOrder.player_id.in_(player_ids))
+    if start_dt is not None:
+        q = q.filter(PlatformCoinOrder.paid_at >= start_dt)
+    if end_dt is not None:
+        q = q.filter(PlatformCoinOrder.paid_at < end_dt)
+    return Decimal(q.scalar() or 0)
+
+
 # ---------- 统一后台权限模型（V20） ----------
 # 所有账号共用同一个登录入口和后台地址；登录后按角色/代理等级返回权限清单。
 # 菜单边界：
@@ -236,7 +265,7 @@ def dt(v):
 PERMISSION_MATRIX = {
     "superadmin": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "channels.edit_full",
-        "settlements.view", "settlements.manage", "players.view",
+        "settlements.view", "settlements.manage", "players.view", "players.manage",
         "orders.view", "orders.manage", "shipments.view", "shipments.manage",
         "products.view", "products.manage", "cdk.view", "cdk.manage",
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
@@ -376,6 +405,83 @@ def ensure_agent_hierarchy_columns():
         conn.execute(text("UPDATE agents SET subagent_limit = 0 WHERE agent_level >= 3"))
 
 
+def ensure_player_admin_columns():
+    """兼容已上线数据库：补充玩家状态与平台币余额字段。
+
+    首次增加平台币余额字段时，会用历史已支付平台币订单回填余额。后续启动不会
+    重算，因此不会覆盖超管手工发放/收回后的实际余额。
+    """
+    inspector = inspect(engine)
+    if "players" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("players")}
+    added_balance = "platform_coin_balance" not in columns
+    with engine.begin() as conn:
+        if "status" not in columns:
+            conn.execute(text("ALTER TABLE players ADD COLUMN status VARCHAR(20) DEFAULT 'active'"))
+        if added_balance:
+            conn.execute(text("ALTER TABLE players ADD COLUMN platform_coin_balance BIGINT DEFAULT 0"))
+        conn.execute(text("UPDATE players SET status = 'active' WHERE status IS NULL OR status = ''"))
+        conn.execute(text("UPDATE players SET platform_coin_balance = 0 WHERE platform_coin_balance IS NULL"))
+        if added_balance and "platform_coin_orders" in inspector.get_table_names():
+            rows = conn.execute(text("SELECT player_id, COALESCE(SUM(platform_coin), 0) AS coins FROM platform_coin_orders WHERE pay_status = 'paid' GROUP BY player_id")).mappings().all()
+            for row in rows:
+                conn.execute(
+                    text("UPDATE players SET platform_coin_balance = :coins WHERE id = :player_id"),
+                    {"coins": int(row["coins"] or 0), "player_id": int(row["player_id"])},
+                )
+
+
+def sync_real_payment_aggregates():
+    """把历史缓存统计纠正为“真实已支付平台币订单”口径。
+
+    旧版本曾把已支付商城订单加入代理流水/玩家充值。升级时统一重算代理流水与
+    玩家充值金额，但绝不重算 platform_coin_balance，因此超管手工发放/收回的
+    平台币余额会原样保留。
+    """
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "platform_coin_orders" not in tables:
+        return
+
+    # 兼容早期版本：已支付订单若缺 paid_at，用创建时间回填一次。之后所有统计
+    # 都严格依赖 paid_at，避免仅修改状态但没有支付时间的数据被误算。
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE platform_coin_orders SET paid_at = created_at "
+            "WHERE pay_status = 'paid' AND paid_at IS NULL"
+        ))
+
+    db = SessionLocal()
+    try:
+        today = business_today()
+        yesterday = today - timedelta(days=1)
+        today_start, tomorrow_start = business_date_bounds(today, today)
+        yesterday_start, _ = business_date_bounds(yesterday, yesterday)
+
+        if "agents" in tables:
+            for agent in db.query(Agent).all():
+                ids = [agent.id]
+                agent.today_turnover = real_paid_platform_turnover(
+                    db, agent_ids=ids, start_dt=today_start, end_dt=tomorrow_start
+                )
+                agent.yesterday_turnover = real_paid_platform_turnover(
+                    db, agent_ids=ids, start_dt=yesterday_start, end_dt=today_start
+                )
+                agent.total_turnover = real_paid_platform_turnover(db, agent_ids=ids)
+
+        if "players" in tables:
+            for player in db.query(Player).all():
+                ids = [player.id]
+                player.today_recharge = real_paid_platform_turnover(
+                    db, player_ids=ids, start_dt=today_start, end_dt=tomorrow_start
+                )
+                player.total_recharge = real_paid_platform_turnover(db, player_ids=ids)
+        db.commit()
+    finally:
+        db.close()
+
+
 def ensure_agent_public_identity_format():
     """把历史代理统一迁移为 A1/A2/A3...，并让邀请码始终等于代理ID。
 
@@ -416,7 +522,9 @@ def ensure_agent_public_identity_format():
 def startup():
     Base.metadata.create_all(bind=engine)
     ensure_agent_hierarchy_columns()
+    ensure_player_admin_columns()
     ensure_agent_public_identity_format()
+    sync_real_payment_aggregates()
     seed_admin()
 
 @app.get("/healthz")
@@ -486,21 +594,11 @@ def dashboard(db: Session = Depends(get_db), principal=Depends(require_permissio
         return int(q.scalar() or 0)
 
     def turnover_between(start_dt=None, end_dt=None):
-        """数据总览流水：只统计已支付的平台币订单。
-
-        今日/昨日按实际支付时间归档；兼容历史数据里 paid_at 为空的已支付订单，
-        此时退回 created_at 作为时间口径。商城订单不计入数据总览流水。
-        """
-        platform_q = scope_order_query(
-            db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.pay_status == "paid"),
-            PlatformCoinOrder,
+        """数据总览流水：统一只统计真实支付成功的平台币订单。"""
+        scope_ids = agent_ids if principal.actor_type == "agent" else None
+        return real_paid_platform_turnover(
+            db, agent_ids=scope_ids, start_dt=start_dt, end_dt=end_dt
         )
-        paid_time = func.coalesce(PlatformCoinOrder.paid_at, PlatformCoinOrder.created_at)
-        if start_dt is not None:
-            platform_q = platform_q.filter(paid_time >= start_dt)
-        if end_dt is not None:
-            platform_q = platform_q.filter(paid_time < end_dt)
-        return Decimal(platform_q.scalar() or 0)
 
     total_turnover = turnover_between()
     yesterday_turnover = turnover_between(yesterday_start, today_start)
@@ -577,6 +675,14 @@ def agent_level_name(level: int | None) -> str:
 def serialize_agent(a: Agent, db: Session):
     used = db.query(Agent).filter(Agent.parent_id == a.id).count()
     limit = int(a.subagent_limit or 0)
+    today = business_today()
+    yesterday = today - timedelta(days=1)
+    today_start, tomorrow_start = business_date_bounds(today, today)
+    yesterday_start, _ = business_date_bounds(yesterday, yesterday)
+    direct_ids = [a.id]
+    today_turnover = real_paid_platform_turnover(db, agent_ids=direct_ids, start_dt=today_start, end_dt=tomorrow_start)
+    yesterday_turnover = real_paid_platform_turnover(db, agent_ids=direct_ids, start_dt=yesterday_start, end_dt=today_start)
+    total_turnover = real_paid_platform_turnover(db, agent_ids=direct_ids)
     return {
         "id": a.id, "agent_id": a.agent_id, "username": a.username, "agent_name": a.agent_name,
         "invite_code": a.invite_code, "parent_id": a.parent_id,
@@ -585,8 +691,8 @@ def serialize_agent(a: Agent, db: Session):
         "parent_agent_display": a.parent.agent_id if a.parent else "超管",
         "agent_level": int(a.agent_level or 1), "agent_level_name": agent_level_name(a.agent_level),
         "subagent_limit": limit, "subagent_count": used,
-        "today_turnover": money(a.today_turnover), "yesterday_turnover": money(a.yesterday_turnover),
-        "total_turnover": money(a.total_turnover), "commission_rate": float(a.commission_rate or 0),
+        "today_turnover": money(today_turnover), "yesterday_turnover": money(yesterday_turnover),
+        "total_turnover": money(total_turnover), "commission_rate": float(a.commission_rate or 0),
         "status": a.status, "registration_path": f"/register/{a.invite_code}", "created_at": dt(a.created_at),
     }
 
@@ -638,21 +744,11 @@ def agent_capabilities(db: Session = Depends(get_db), principal=Depends(require_
 
 
 def agent_turnover_between(db: Session, agent_pk: int, start_date: date | None = None, end_date: date | None = None) -> Decimal:
-    """按业务时区自然日区间汇总代理已支付流水，结束日期包含当天。"""
+    """按业务时区自然日区间统计真实已支付平台币流水，结束日期包含当天。"""
     start_dt, end_dt = business_date_bounds(start_date, end_date)
-    p = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(
-        PlatformCoinOrder.agent_id == agent_pk, PlatformCoinOrder.pay_status == "paid"
+    return real_paid_platform_turnover(
+        db, agent_ids=[agent_pk], start_dt=start_dt, end_dt=end_dt
     )
-    m = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(
-        MallOrder.agent_id == agent_pk, MallOrder.pay_status == "paid"
-    )
-    if start_dt:
-        p = p.filter(PlatformCoinOrder.created_at >= start_dt)
-        m = m.filter(MallOrder.created_at >= start_dt)
-    if end_dt:
-        p = p.filter(PlatformCoinOrder.created_at < end_dt)
-        m = m.filter(MallOrder.created_at < end_dt)
-    return Decimal(p.scalar() or 0) + Decimal(m.scalar() or 0)
 
 
 @app.get("/api/agents")
@@ -949,20 +1045,18 @@ def subagents(agent_pk: int, db: Session = Depends(get_db), principal=Depends(re
 
 @app.post("/api/agents/rebuild-turnover")
 def rebuild_turnover(db: Session = Depends(get_db), _=Depends(current_admin)):
-    today = date.today(); today_start = datetime.combine(today, time.min)
-    yesterday_start = datetime.combine(date.fromordinal(today.toordinal()-1), time.min)
+    # 与数据总览、结算完全同口径：仅真实已支付的平台币订单。
+    today = business_today()
+    yesterday = today - timedelta(days=1)
+    today_start, tomorrow_start = business_date_bounds(today, today)
+    yesterday_start, _ = business_date_bounds(yesterday, yesterday)
     for a in db.query(Agent).all():
-        def total_between(start=None, end=None):
-            p = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.agent_id == a.id, PlatformCoinOrder.pay_status == "paid")
-            m = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(MallOrder.agent_id == a.id, MallOrder.pay_status == "paid")
-            if start: p = p.filter(PlatformCoinOrder.created_at >= start); m = m.filter(MallOrder.created_at >= start)
-            if end: p = p.filter(PlatformCoinOrder.created_at < end); m = m.filter(MallOrder.created_at < end)
-            return Decimal(p.scalar() or 0) + Decimal(m.scalar() or 0)
-        a.today_turnover = total_between(today_start)
-        a.yesterday_turnover = total_between(yesterday_start, today_start)
-        a.total_turnover = total_between()
+        ids = [a.id]
+        a.today_turnover = real_paid_platform_turnover(db, agent_ids=ids, start_dt=today_start, end_dt=tomorrow_start)
+        a.yesterday_turnover = real_paid_platform_turnover(db, agent_ids=ids, start_dt=yesterday_start, end_dt=today_start)
+        a.total_turnover = real_paid_platform_turnover(db, agent_ids=ids)
     db.commit()
-    return {"message": "代理流水已重算"}
+    return {"message": "代理流水已按真实支付平台币订单重算"}
 
 @app.get("/api/settlements")
 def list_settlements(db: Session = Depends(get_db), principal=Depends(require_permission("settlements.view"))):
@@ -977,11 +1071,10 @@ def create_settlement(body: SettlementCreate, db: Session = Depends(get_db), _=D
     agent = db.get(Agent, body.agent_id)
     if not agent: raise HTTPException(404, "代理不存在")
     if body.period_end < body.period_start: raise HTTPException(400, "结算结束日期不能早于开始日期")
-    start = datetime.combine(body.period_start, time.min)
-    end = datetime.combine(date.fromordinal(body.period_end.toordinal()+1), time.min)
-    p = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.agent_id == agent.id, PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.created_at >= start, PlatformCoinOrder.created_at < end).scalar()
-    m = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(MallOrder.agent_id == agent.id, MallOrder.pay_status == "paid", MallOrder.created_at >= start, MallOrder.created_at < end).scalar()
-    turnover = Decimal(p or 0) + Decimal(m or 0)
+    start, end = business_date_bounds(body.period_start, body.period_end)
+    turnover = real_paid_platform_turnover(
+        db, agent_ids=[agent.id], start_dt=start, end_dt=end
+    )
     amount = turnover * Decimal(agent.commission_rate or 0)
     row = Settlement(settlement_no="ST" + datetime.utcnow().strftime("%Y%m%d%H%M%S") + secrets.token_hex(2).upper(), agent_id=agent.id,
                      period_start=body.period_start, period_end=body.period_end, turnover=turnover,
@@ -1070,32 +1163,171 @@ def register_player(invite_code: str, body: PlayerRegister, db: Session = Depend
 
 
 @app.get("/api/players")
-def list_players(keyword: str = "", db: Session = Depends(get_db), principal=Depends(require_permission("players.view"))):
+def list_players(
+    account: str = "",
+    parent: str = "",
+    keyword: str = "",
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("players.view")),
+):
     q = db.query(Player)
     if principal.actor_type == "agent":
         q = q.filter(Player.agent_id.in_(scoped_agent_ids(db, principal)))
+
+    account = account.strip()
+    parent = parent.strip()
+    keyword = keyword.strip()
+    if account:
+        q = q.filter(Player.username.like(f"%{account}%"))
     if keyword:
         like = f"%{keyword}%"
         q = q.filter((Player.player_id.like(like)) | (Player.username.like(like)) | (Player.role_name.like(like)) | (Player.server_name.like(like)))
+    if parent:
+        normalized = parent.lower()
+        if normalized in {"超管", "超级管理员", "superadmin", "admin", "总平台"}:
+            q = q.filter(Player.agent_id.is_(None))
+        else:
+            like = f"%{parent}%"
+            agent_rows = db.query(Agent.id).filter(
+                (Agent.agent_id.like(like)) | (Agent.username.like(like)) | (Agent.agent_name.like(like))
+            ).all()
+            agent_ids = [row[0] for row in agent_rows]
+            q = q.filter(Player.agent_id.in_(agent_ids)) if agent_ids else q.filter(text("1=0"))
+
     rows = q.order_by(Player.id.desc()).all()
     agent_ids = {p.agent_id for p in rows if p.agent_id is not None}
-    agents = {a.id: a.agent_id for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).all()} if agent_ids else {}
+    agents = {
+        a.id: {"agent_id": a.agent_id, "username": a.username, "agent_name": a.agent_name}
+        for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).all()
+    } if agent_ids else {}
     return [{
-        "id": p.id, "player_id": p.player_id, "username": p.username, "role_name": p.role_name, "server_name": p.server_name,
-        "agent_id": p.agent_id, "agent_public_id": agents.get(p.agent_id) if p.agent_id is not None else "超管",
-        "today_recharge": money(p.today_recharge), "total_recharge": money(p.total_recharge),
-        "last_login_at": dt(p.last_login_at), "last_login_ip": p.last_login_ip, "created_at": dt(p.created_at),
+        "id": p.id,
+        "player_id": p.player_id,
+        "username": p.username,
+        "role_name": p.role_name,
+        "server_name": p.server_name,
+        "agent_id": p.agent_id,
+        "agent_public_id": agents.get(p.agent_id, {}).get("agent_id") if p.agent_id is not None else "超管",
+        "agent_account": agents.get(p.agent_id, {}).get("username") if p.agent_id is not None else "admin",
+        "agent_name": agents.get(p.agent_id, {}).get("agent_name") if p.agent_id is not None else "超级管理员",
+        "today_recharge": money(p.today_recharge),
+        "total_recharge": money(p.total_recharge),
+        "platform_coin_balance": int(p.platform_coin_balance or 0),
+        "status": p.status or "active",
+        "last_login_at": dt(p.last_login_at),
+        "last_login_ip": p.last_login_ip,
+        "created_at": dt(p.created_at),
     } for p in rows]
 
+
+def player_owner_options(db: Session, current_agent_id: int | None = None):
+    options = [{"value": "SUPERADMIN", "label": "超管"}]
+    rows = db.query(Agent).order_by(Agent.agent_level.asc(), Agent.id.asc()).all()
+    for agent in rows:
+        if agent.status != "active" and agent.id != current_agent_id:
+            continue
+        options.append({
+            "value": agent.agent_id,
+            "label": f"{agent.agent_id}｜{agent.agent_name}｜{agent.username}",
+        })
+    return options
+
+
+@app.get("/api/players/{player_pk}/edit")
+def player_edit_info(
+    player_pk: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("players.manage")),
+):
+    player = db.get(Player, player_pk)
+    if not player:
+        raise HTTPException(404, "玩家不存在")
+    owner = db.get(Agent, player.agent_id) if player.agent_id else None
+    return {
+        "id": player.id,
+        "player_id": player.player_id,
+        "username": player.username,
+        "status": player.status or "active",
+        "owner_agent_id": owner.agent_id if owner else "SUPERADMIN",
+        "owner_display": owner.agent_id if owner else "超管",
+        "platform_coin_balance": int(player.platform_coin_balance or 0),
+        "owner_options": player_owner_options(db, player.agent_id),
+    }
+
+
+@app.patch("/api/players/{player_pk}")
+def update_player(
+    player_pk: int,
+    body: PlayerAdminUpdate,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("players.manage")),
+):
+    # players.manage 只分配给超级管理员。普通代理即使绕过前端也不能修改玩家。
+    player = db.get(Player, player_pk)
+    if not player:
+        raise HTTPException(404, "玩家不存在")
+
+    fields = body.model_fields_set
+    if "password" in fields and body.password:
+        player.password_hash = hash_password(body.password)
+    if "status" in fields:
+        if body.status not in {"active", "disabled"}:
+            raise HTTPException(400, "玩家状态仅支持 active / disabled")
+        player.status = body.status
+    if "owner_agent_id" in fields:
+        owner_code = (body.owner_agent_id or "SUPERADMIN").strip()
+        if owner_code.upper() == "SUPERADMIN" or owner_code in {"超管", "超级管理员"}:
+            player.agent_id = None
+        else:
+            owner = db.query(Agent).filter(Agent.agent_id == owner_code).first()
+            if not owner:
+                raise HTTPException(404, "目标归属代理不存在")
+            if owner.status != "active":
+                raise HTTPException(400, "目标归属代理已被封禁")
+            player.agent_id = owner.id
+
+    if "coin_action" in fields and body.coin_action:
+        if body.coin_action not in {"issue", "reclaim"}:
+            raise HTTPException(400, "平台币操作仅支持发放或收回")
+        amount = int(body.coin_amount or 0)
+        if amount <= 0:
+            raise HTTPException(400, "请输入大于 0 的平台币数量")
+        current = int(player.platform_coin_balance or 0)
+        delta = amount if body.coin_action == "issue" else -amount
+        if current + delta < 0:
+            raise HTTPException(400, f"平台币余额不足，当前余额为 {current}")
+        player.platform_coin_balance = current + delta
+        db.flush()
+        db.add(PlayerCoinLedger(
+            player_id=player.id,
+            action=body.coin_action,
+            delta=delta,
+            balance_after=int(player.platform_coin_balance),
+            operator=principal.username,
+            note="超管后台手工发放" if body.coin_action == "issue" else "超管后台手工收回",
+        ))
+
+    db.commit(); db.refresh(player)
+    return {
+        "message": "玩家资料修改成功",
+        "id": player.id,
+        "player_id": player.player_id,
+        "status": player.status,
+        "platform_coin_balance": int(player.platform_coin_balance or 0),
+    }
+
 # ---------- 订单管理 ----------
-def apply_paid_recharge(db: Session, player_id: int, agent_id: int | None, amount: Decimal):
+def apply_paid_platform_recharge(db: Session, player_id: int, agent_id: int | None, amount: Decimal):
+    """仅真实已支付的平台币订单调用。手工发币/商城订单禁止调用。"""
     player = db.get(Player, player_id)
-    if not player: raise HTTPException(404, "玩家不存在")
+    if not player:
+        raise HTTPException(404, "玩家不存在")
     player.today_recharge = Decimal(player.today_recharge or 0) + amount
     player.total_recharge = Decimal(player.total_recharge or 0) + amount
     if agent_id:
         agent = db.get(Agent, agent_id)
-        if not agent: raise HTTPException(404, "代理不存在")
+        if not agent:
+            raise HTTPException(404, "代理不存在")
         agent.today_turnover = Decimal(agent.today_turnover or 0) + amount
         agent.total_turnover = Decimal(agent.total_turnover or 0) + amount
 
@@ -1114,7 +1346,16 @@ def create_platform_order(body: PlatformOrderCreate, db: Session = Depends(get_d
     if body.agent_id and not db.get(Agent, body.agent_id): raise HTTPException(404, "代理不存在")
     row = PlatformCoinOrder(**body.model_dump(), paid_at=datetime.utcnow() if body.pay_status == "paid" else None)
     db.add(row)
-    if body.pay_status == "paid": apply_paid_recharge(db, body.player_id, body.agent_id, Decimal(body.amount))
+    if body.pay_status == "paid":
+        apply_paid_platform_recharge(db, body.player_id, body.agent_id, Decimal(body.amount))
+        player = db.get(Player, body.player_id)
+        player.platform_coin_balance = int(player.platform_coin_balance or 0) + int(body.platform_coin or 0)
+        db.flush()
+        db.add(PlayerCoinLedger(
+            player_id=player.id, action="recharge", delta=int(body.platform_coin or 0),
+            balance_after=int(player.platform_coin_balance), operator="system",
+            note=f"平台币订单 {body.order_no}",
+        ))
     db.commit(); db.refresh(row)
     return {"id": row.id, "message": "平台币订单创建成功"}
 
@@ -1137,7 +1378,7 @@ def create_mall_order(body: MallOrderCreate, db: Session = Depends(get_db), _=De
     db.add(row)
     if body.pay_status == "paid":
         product.stock -= body.quantity
-        apply_paid_recharge(db, body.player_id, body.agent_id, Decimal(body.amount))
+        # 商城订单不属于平台币充值流水，也不增加玩家累计充值/代理分佣。
     db.commit(); db.refresh(row)
     return {"id": row.id, "message": "商城订单创建成功"}
 

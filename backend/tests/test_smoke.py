@@ -10,7 +10,7 @@ os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "ChangeMe123!"
 
 from fastapi.testclient import TestClient
-from app.main import app
+from app.main import app, business_today
 
 
 def login(c, username, password):
@@ -267,7 +267,7 @@ def test_agent_query_bar_filters_and_custom_turnover():
         assert yesterday_period.status_code == 200, yesterday_period.text
         assert yesterday_period.json()[0]['period_turnover'] == 0
 
-        today = str(date.today())
+        today = str(business_today())
         custom_period = c.get('/api/agents', headers=auth(admin), params={
             'public_agent_id': child_public_id,
             'turnover_period': 'custom',
@@ -579,3 +579,199 @@ def test_v29_superadmin_and_agent_registration_links():
         agent_me = c.get('/api/auth/me', headers=auth(agent_token))
         assert agent_me.status_code == 200
         assert agent_me.json()['registration_path'] == f'/register/{agent_id}'
+
+
+def test_player_queries_and_superadmin_only_edit_controls():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        l1 = create_agent(c, admin, 'player_owner_agent', '玩家归属代理', 1, 3)
+        assert l1.status_code == 200, l1.text
+        agent_public_id = l1.json()['agent_id']
+        agent_pk = l1.json()['id']
+        agent_token = login(c, 'player_owner_agent', 'AgentPass123!')
+
+        reg = c.post(f'/api/public/registration/{agent_public_id}', json={
+            'username': 'editable_player_001',
+            'password': 'PlayerPass123!',
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        # 玩家列表查询：账号查询 + 上级代理查询。
+        by_account = c.get('/api/players', headers=auth(admin), params={'account': 'editable_player'})
+        assert by_account.status_code == 200, by_account.text
+        assert any(x['id'] == player_pk for x in by_account.json())
+
+        by_parent = c.get('/api/players', headers=auth(admin), params={'parent': agent_public_id})
+        assert by_parent.status_code == 200, by_parent.text
+        assert any(x['id'] == player_pk for x in by_parent.json())
+
+        by_parent_account = c.get('/api/players', headers=auth(admin), params={'parent': 'player_owner_agent'})
+        assert by_parent_account.status_code == 200, by_parent_account.text
+        assert any(x['id'] == player_pk for x in by_parent_account.json())
+
+        # 普通代理只能查看，不能修改玩家任何信息，也不能获取编辑资料。
+        forbidden_info = c.get(f'/api/players/{player_pk}/edit', headers=auth(agent_token))
+        assert forbidden_info.status_code == 403
+        forbidden_patch = c.patch(f'/api/players/{player_pk}', headers=auth(agent_token), json={
+            'status': 'disabled',
+        })
+        assert forbidden_patch.status_code == 403
+
+        # 超管可封禁、修改归属、修改密码、发放/收回平台币。
+        info = c.get(f'/api/players/{player_pk}/edit', headers=auth(admin))
+        assert info.status_code == 200, info.text
+        assert info.json()['owner_agent_id'] == agent_public_id
+        assert info.json()['platform_coin_balance'] == 0
+
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'password': 'NewPlayerPass123!',
+            'status': 'disabled',
+            'owner_agent_id': 'SUPERADMIN',
+            'coin_action': 'issue',
+            'coin_amount': 500,
+        })
+        assert issue.status_code == 200, issue.text
+        assert issue.json()['platform_coin_balance'] == 500
+        assert issue.json()['status'] == 'disabled'
+
+        direct = c.get('/api/players', headers=auth(admin), params={'parent': '超管', 'account': 'editable_player'})
+        assert direct.status_code == 200, direct.text
+        row = next(x for x in direct.json() if x['id'] == player_pk)
+        assert row['agent_public_id'] == '超管'
+        assert row['platform_coin_balance'] == 500
+        assert row['status'] == 'disabled'
+
+        reclaim = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'status': 'active',
+            'owner_agent_id': agent_public_id,
+            'coin_action': 'reclaim',
+            'coin_amount': 200,
+        })
+        assert reclaim.status_code == 200, reclaim.text
+        assert reclaim.json()['platform_coin_balance'] == 300
+
+        too_much = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'reclaim',
+            'coin_amount': 999,
+        })
+        assert too_much.status_code == 400
+        assert '余额不足' in too_much.json()['detail']
+
+        # 已支付平台币订单会真实增加玩家平台币余额。
+        paid = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'PLAYERCOINORDER001',
+            'player_id': player_pk,
+            'agent_id': agent_pk,
+            'amount': 10,
+            'platform_coin': 100,
+            'payment_channel': 'manual',
+            'pay_status': 'paid',
+        })
+        assert paid.status_code == 200, paid.text
+        after_order = c.get('/api/players', headers=auth(admin), params={'account': 'editable_player'})
+        row = next(x for x in after_order.json() if x['id'] == player_pk)
+        assert row['platform_coin_balance'] == 400
+
+
+def test_v31_all_turnover_uses_real_paid_platform_orders_only():
+    """V31: 手工发币与商城订单都不能进入任何流水/分佣口径。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v31_turnover_agent', 'V31真实流水代理', 1, 3, 0.25)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent = agent_resp.json()
+        agent_pk = agent['id']
+        agent_id = agent['agent_id']
+
+        reg = c.post(f'/api/public/registration/{agent_id}', json={
+            'username': 'v31_turnover_player',
+            'password': 'PlayerPass123!',
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        before = c.get('/api/dashboard', headers=auth(admin)).json()
+
+        # 超管手工发放平台币只改余额，不得增加充值、流水或分佣。
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'issue',
+            'coin_amount': 5000,
+        })
+        assert issue.status_code == 200, issue.text
+        after_issue = c.get('/api/dashboard', headers=auth(admin)).json()
+        assert after_issue['total_turnover'] == before['total_turnover']
+        assert after_issue['today_turnover'] == before['today_turnover']
+
+        player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v31_turnover_player'}).json() if x['id'] == player_pk)
+        assert player_row['platform_coin_balance'] == 5000
+        assert player_row['total_recharge'] == 0
+        assert player_row['today_recharge'] == 0
+
+        agent_row = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': agent_id}).json()[0]
+        assert agent_row['total_turnover'] == 0
+        assert agent_row['today_turnover'] == 0
+
+        # 已支付商城订单也不属于平台币真实充值流水。
+        product = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V31-TURNOVER-PRODUCT-001',
+            'name': 'V31流水隔离商品',
+            'category': 'product',
+            'price': 66.66,
+            'stock': 5,
+            'description': 'mall should not count as turnover',
+        })
+        assert product.status_code == 200, product.text
+        mall = c.post('/api/orders/mall', headers=auth(admin), json={
+            'order_no': 'V31-MALL-PAID-001',
+            'player_id': player_pk,
+            'agent_id': agent_pk,
+            'product_id': product.json()['id'],
+            'quantity': 1,
+            'amount': 66.66,
+            'pay_status': 'paid',
+        })
+        assert mall.status_code == 200, mall.text
+
+        after_mall = c.get('/api/dashboard', headers=auth(admin)).json()
+        assert after_mall['total_turnover'] == before['total_turnover']
+        player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v31_turnover_player'}).json() if x['id'] == player_pk)
+        assert player_row['total_recharge'] == 0
+
+        # 只有真实已支付的平台币订单进入流水。
+        paid = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'V31-PLATFORM-PAID-001',
+            'player_id': player_pk,
+            'agent_id': agent_pk,
+            'amount': 120.50,
+            'platform_coin': 12050,
+            'payment_channel': 'alipay',
+            'pay_status': 'paid',
+        })
+        assert paid.status_code == 200, paid.text
+
+        final_dashboard = c.get('/api/dashboard', headers=auth(admin)).json()
+        assert round(final_dashboard['total_turnover'] - before['total_turnover'], 2) == 120.50
+        assert round(final_dashboard['today_turnover'] - before['today_turnover'], 2) == 120.50
+
+        agent_row = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': agent_id}).json()[0]
+        assert agent_row['total_turnover'] == 120.50
+        assert agent_row['today_turnover'] == 120.50
+
+        player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v31_turnover_player'}).json() if x['id'] == player_pk)
+        assert player_row['total_recharge'] == 120.50
+        assert player_row['today_recharge'] == 120.50
+        assert player_row['platform_coin_balance'] == 17050
+
+        # 结算也必须只使用这 120.50 的真实平台币流水。
+        today = str(business_today())
+        settlement = c.post('/api/settlements', headers=auth(admin), json={
+            'agent_id': agent_pk,
+            'period_start': today,
+            'period_end': today,
+        })
+        assert settlement.status_code == 200, settlement.text
+        assert settlement.json()['commission_amount'] == 30.125
+        rows = c.get('/api/settlements', headers=auth(admin)).json()
+        row = next(x for x in rows if x['id'] == settlement.json()['id'])
+        assert row['turnover'] == 120.50
