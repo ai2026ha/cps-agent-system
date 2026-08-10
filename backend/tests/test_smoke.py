@@ -12,7 +12,7 @@ os.environ["ADMIN_PASSWORD"] = "ChangeMe123!"
 os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 
 from fastapi.testclient import TestClient
-from app.main import app, business_today
+from app.main import app, business_today, sync_real_payment_aggregates
 from app.database import SessionLocal
 from app.models import Player, PlatformCoinOrder, PlayerCoinLedger
 
@@ -532,9 +532,9 @@ def test_dashboard_turnover_counts_only_paid_platform_coin_orders():
 
         product = c.post('/api/products', headers=auth(admin), json={
             'sku': 'V23-FLOW-PRODUCT-001',
-            'name': 'V23流水测试商品',
-            'category': 'product',
-            'price': 67.89,
+            'name': 'V23流水测试礼包',
+            'category': 'gift',
+            'price': 68,
             'stock': 10,
             'description': 'dashboard turnover scope test',
         })
@@ -561,14 +561,10 @@ def test_dashboard_turnover_counts_only_paid_platform_coin_orders():
         })
         assert pending_platform.status_code == 200, pending_platform.text
 
-        paid_mall = c.post('/api/orders/mall', headers=auth(admin), json={
-            'order_no': 'V23-MALL-PAID-001',
-            'player_id': player_pk,
-            'product_id': product_pk,
-            'quantity': 1,
-            'amount': 67.89,
-            'pay_status': 'paid',
-        })
+        player_login = c.post('/api/player/auth/login', json={'username': 'v23_flow_player', 'password': 'PlayerPass123!'})
+        assert player_login.status_code == 200, player_login.text
+        player_token = player_login.json()['access_token']
+        paid_mall = c.post(f'/api/player/mall/purchase/{product_pk}', headers=auth(player_token), json={'quantity': 1})
         assert paid_mall.status_code == 200, paid_mall.text
 
         after = c.get('/api/dashboard', headers=auth(admin))
@@ -749,28 +745,24 @@ def test_v31_all_turnover_uses_real_paid_platform_orders_only():
         # 已支付商城订单也不属于平台币真实充值流水。
         product = c.post('/api/products', headers=auth(admin), json={
             'sku': 'V31-TURNOVER-PRODUCT-001',
-            'name': 'V31流水隔离商品',
-            'category': 'product',
-            'price': 66.66,
+            'name': 'V31流水隔离礼包',
+            'category': 'gift',
+            'price': 67,
             'stock': 5,
             'description': 'mall should not count as turnover',
         })
         assert product.status_code == 200, product.text
-        mall = c.post('/api/orders/mall', headers=auth(admin), json={
-            'order_no': 'V31-MALL-PAID-001',
-            'player_id': player_pk,
-            'agent_id': agent_pk,
-            'product_id': product.json()['id'],
-            'quantity': 1,
-            'amount': 66.66,
-            'pay_status': 'paid',
-        })
+        player_login = c.post('/api/player/auth/login', json={'username': 'v31_turnover_player', 'password': 'PlayerPass123!'})
+        assert player_login.status_code == 200, player_login.text
+        mall = c.post(f"/api/player/mall/purchase/{product.json()['id']}", headers=auth(player_login.json()['access_token']), json={'quantity': 1})
         assert mall.status_code == 200, mall.text
 
         after_mall = c.get('/api/dashboard', headers=auth(admin)).json()
         assert after_mall['total_turnover'] == before['total_turnover']
         player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v31_turnover_player'}).json() if x['id'] == player_pk)
-        assert player_row['total_recharge'] == 0
+        # V54：累计充值只来自商城消费；真实平台币充值不会增加该累计值。
+        assert player_row['total_recharge'] == 67
+        assert player_row['today_recharge'] == 0
 
         # 只有真实已支付的平台币订单进入流水。
         paid = platform_payment(c, {
@@ -793,9 +785,9 @@ def test_v31_all_turnover_uses_real_paid_platform_orders_only():
         assert agent_row['today_turnover'] == 120.50
 
         player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v31_turnover_player'}).json() if x['id'] == player_pk)
-        assert player_row['total_recharge'] == 120.50
+        assert player_row['total_recharge'] == 67
         assert player_row['today_recharge'] == 120.50
-        assert player_row['platform_coin_balance'] == 17050
+        assert player_row['platform_coin_balance'] == 16983
 
         # 结算也必须只使用这 120.50 的真实平台币流水。
         today = str(business_today())
@@ -1298,9 +1290,9 @@ def test_v46_platform_orders_are_payment_generated_searchable_and_no_manual_add(
         player_rows = c.get('/api/players', headers=auth(admin), params={'account': 'v46_order_player'}).json()
         p = next(x for x in player_rows if x['username'] == 'v46_order_player')
         assert p['platform_coin_balance'] == 10000
-        assert p['total_recharge'] == 100.0
+        assert p['total_recharge'] == 0
 
-        # 模拟“支付已成功，但实际发货失败”的状态：补发只恢复发货，不重复增加流水/充值统计。
+        # 模拟“支付已成功，但实际发货失败”的状态：补发只恢复发货，不重复增加流水，也不增加累计充值。
         turnover_before_resend = c.get('/api/dashboard', headers=auth(admin)).json()['total_turnover']
         db = SessionLocal()
         try:
@@ -1323,7 +1315,7 @@ def test_v46_platform_orders_are_payment_generated_searchable_and_no_manual_add(
         assert resend.status_code == 200, resend.text
         after = c.get('/api/players', headers=auth(admin), params={'account': 'v46_order_player'}).json()[0]
         assert after['platform_coin_balance'] == 10000
-        assert after['total_recharge'] == 100.0
+        assert after['total_recharge'] == 0
         assert c.get('/api/dashboard', headers=auth(admin)).json()['total_turnover'] == turnover_before_resend
 
         # 补发成功以后再次点击会被拒绝，避免重复到账。
@@ -1396,7 +1388,7 @@ def test_v47_superadmin_payment_test_full_flow_and_rbac():
         assert rows[0]['status'] == 'paid'
         player = c.get('/api/players', headers=auth(admin), params={'account': 'v47_test_player'}).json()[0]
         assert player['platform_coin_balance'] == 100
-        assert player['total_recharge'] == 1.0
+        assert player['total_recharge'] == 0
 
         # 测试页不能拿正式订单号直接伪造测试支付。
         formal = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
@@ -1645,3 +1637,237 @@ def test_v51_platform_orders_default_all_and_created_at_desc():
         assert rows.status_code == 200, rows.text
         data = rows.json()
         assert [x['order_no'] for x in data[:2]] == ['V51-NEWER', 'V51-OLDER']
+
+
+def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_order():
+    """V52：注册后进入玩家中心；玩家用平台币买礼包自动生成商城订单，后台禁止手工造单。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    register_html = (static_dir / 'register.html').read_text(encoding='utf-8')
+    center_html = (static_dir / 'player_center.html').read_text(encoding='utf-8')
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    assert "player_center_path||'/player'" in register_html
+    assert '玩家中心' in center_html and '/api/player/mall/purchase/' in center_html
+    assert "renderList('/api/orders/mall',mallCols,'商城订单');" in app_js
+    assert "['累计充值','total_recharge']" in app_js
+    assert '新增商城订单' not in app_js.split("if(view==='mallOrders')", 1)[1].split("if(view==='shipments')", 1)[0]
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v52_mall_agent', 'V52商城代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_id = agent_resp.json()['agent_id']
+
+        reg = c.post(f'/api/public/registration/{agent_id}', json={
+            'username': 'v52_mall_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        assert reg.json()['player_center_path'] == '/player'
+        player_pk = reg.json()['id']
+        page = c.get('/player')
+        assert page.status_code == 200
+        assert '玩家登录' in page.text and '礼包商城' in page.text
+
+        player_login = c.post('/api/player/auth/login', json={
+            'username': 'v52_mall_player', 'password': 'PlayerPass123!'
+        })
+        assert player_login.status_code == 200, player_login.text
+        player_token = player_login.json()['access_token']
+        assert player_login.json()['actor_type'] == 'player'
+
+        # 玩家 token 与代理后台 token 隔离。
+        denied = c.get('/api/dashboard', headers=auth(player_token))
+        assert denied.status_code == 403
+
+        # 超管给测试玩家准备平台币；这仍然不是充值流水。
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'issue', 'coin_amount': 1000
+        })
+        assert issue.status_code == 200, issue.text
+        before_turnover = c.get('/api/dashboard', headers=auth(admin)).json()['total_turnover']
+
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V52-GIFT-001', 'name': 'V52网页礼包', 'category': 'gift',
+            'price': 250, 'stock': 3, 'description': '玩家中心测试礼包'
+        })
+        assert gift.status_code == 200, gift.text
+        gift_id = gift.json()['id']
+        # 普通 product 分类不应出现在玩家中心礼包商城。
+        other = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V52-PRODUCT-001', 'name': '非礼包商品', 'category': 'product',
+            'price': 99, 'stock': 3, 'description': ''
+        })
+        assert other.status_code == 200
+
+        products = c.get('/api/player/mall/products', headers=auth(player_token))
+        assert products.status_code == 200, products.text
+        assert any(x['id'] == gift_id and x['coin_price'] == 250 for x in products.json())
+        assert all(x['name'] != '非礼包商品' for x in products.json())
+
+        buy = c.post(f'/api/player/mall/purchase/{gift_id}', headers=auth(player_token), json={'quantity': 2})
+        assert buy.status_code == 200, buy.text
+        assert buy.json()['platform_coin_balance'] == 500
+        assert buy.json()['order_no'].startswith('MO')
+        order_no = buy.json()['order_no']
+
+        me = c.get('/api/player/me', headers=auth(player_token))
+        assert me.status_code == 200
+        assert me.json()['platform_coin_balance'] == 500
+
+        # V53：商城消费增加累计充值奖励进度，但不增加今日真实充值。
+        player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v52_mall_player'}).json() if x['id'] == player_pk)
+        assert player_row['total_recharge'] == 500
+        assert player_row['today_recharge'] == 0
+
+        own_orders = c.get('/api/player/mall/orders', headers=auth(player_token))
+        assert own_orders.status_code == 200
+        own = next(x for x in own_orders.json() if x['order_no'] == order_no)
+        assert own['product_name'] == 'V52网页礼包'
+        assert own['quantity'] == 2
+        assert own['coin_amount'] == 500
+        assert own['pay_status'] == 'paid'
+        assert own['delivery_status'] == 'waiting'
+
+        admin_orders = c.get('/api/orders/mall', headers=auth(admin))
+        assert admin_orders.status_code == 200, admin_orders.text
+        admin_order = next(x for x in admin_orders.json() if x['order_no'] == order_no)
+        assert admin_order['player_account'] == 'v52_mall_player'
+        assert admin_order['product_name'] == 'V52网页礼包'
+        assert admin_order['coin_amount'] == 500
+
+        manual = c.post('/api/orders/mall', headers=auth(admin), json={
+            'order_no': 'MANUAL-V52', 'player_id': player_pk, 'product_id': gift_id,
+            'quantity': 1, 'amount': 250, 'pay_status': 'paid'
+        })
+        assert manual.status_code == 405
+        assert '后台禁止手工添加' in manual.json()['detail']
+
+        # 商城消费会增加累充奖励进度，但不进入真实支付流水/佣金。
+        after_turnover = c.get('/api/dashboard', headers=auth(admin)).json()['total_turnover']
+        assert after_turnover == before_turnover
+
+        rule = c.post('/api/recharge-rules', headers=auth(admin), json={
+            'name': 'V53商城累充500', 'threshold_amount': 500, 'reward_content': 'V53测试奖励'
+        })
+        assert rule.status_code == 200, rule.text
+        claim = c.post('/api/claims', headers=auth(admin), json={
+            'player_id': player_pk, 'rule_id': rule.json()['id']
+        })
+        assert claim.status_code == 200, claim.text
+
+        db = SessionLocal()
+        try:
+            ledger = db.query(PlayerCoinLedger).filter(
+                PlayerCoinLedger.player_id == player_pk,
+                PlayerCoinLedger.action == 'mall_purchase',
+                PlayerCoinLedger.note.like(f'%{order_no}%'),
+            ).first()
+            assert ledger is not None
+            assert ledger.delta == -500
+        finally:
+            db.close()
+
+
+def test_v54_real_platform_payment_does_not_increase_cumulative_recharge_but_mall_spend_does():
+    """V54：真实平台币充值只计流水/分佣；累计充值只由网页商城实际消费增加。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v54_agent', 'V54代理', 1, 2, 0.2)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent = agent_resp.json()
+        reg = c.post(f"/api/public/registration/{agent['agent_id']}", json={
+            'username': 'v54_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        paid = platform_payment(c, {
+            'order_no': 'V54-PAID-001', 'player_id': player_pk, 'agent_id': agent['id'],
+            'amount': 88, 'platform_coin': 8800, 'payment_channel': 'wechat', 'pay_status': 'paid',
+        })
+        assert paid.status_code == 200, paid.text
+        after_paid = c.get('/api/players', headers=auth(admin), params={'account': 'v54_player'}).json()[0]
+        assert after_paid['today_recharge'] == 88.0
+        assert after_paid['total_recharge'] == 0
+        agent_row = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': agent['agent_id']}).json()[0]
+        assert agent_row['total_turnover'] == 88.0
+
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V54-GIFT-001', 'name': 'V54消费礼包', 'category': 'gift',
+            'price': 600, 'stock': 5, 'description': ''
+        })
+        assert gift.status_code == 200, gift.text
+        plogin = c.post('/api/player/auth/login', json={'username': 'v54_player', 'password': 'PlayerPass123!'})
+        assert plogin.status_code == 200, plogin.text
+        buy = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(plogin.json()['access_token']), json={'quantity': 2})
+        assert buy.status_code == 200, buy.text
+        after_buy = c.get('/api/players', headers=auth(admin), params={'account': 'v54_player'}).json()[0]
+        assert after_buy['total_recharge'] == 1200
+        # 商城消费不增加真实支付流水。
+        agent_row2 = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': agent['agent_id']}).json()[0]
+        assert agent_row2['total_turnover'] == 88.0
+
+        # 模拟从 V53 升级：历史 total_recharge 曾把真实充值也算进去；启动校准后必须只剩商城消费。
+        db = SessionLocal()
+        try:
+            legacy = db.get(Player, player_pk)
+            legacy.total_recharge = 9999
+            db.commit()
+        finally:
+            db.close()
+        sync_real_payment_aggregates()
+        corrected = c.get('/api/players', headers=auth(admin), params={'account': 'v54_player'}).json()[0]
+        assert corrected['total_recharge'] == 1200
+
+
+def test_v55_manual_coin_compensation_after_real_payment_never_duplicates_turnover_commission_or_cumulative():
+    """V55：真实充值已计一次流水/分佣后，手工补偿平台币只能恢复余额，绝不二次计账。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v55_agent', 'V55补偿代理', 1, 2, 0.3)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent = agent_resp.json()
+        reg = c.post(f"/api/public/registration/{agent['agent_id']}", json={
+            'username': 'v55_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        paid = platform_payment(c, {
+            'order_no': 'V55-PAID-001', 'player_id': player_pk, 'agent_id': agent['id'],
+            'amount': 100, 'platform_coin': 10000, 'payment_channel': 'wechat', 'pay_status': 'paid',
+        })
+        assert paid.status_code == 200, paid.text
+
+        before_dash = c.get('/api/dashboard', headers=auth(admin)).json()
+        before_agent = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': agent['agent_id']}).json()[0]
+        before_player = c.get('/api/players', headers=auth(admin), params={'account': 'v55_player'}).json()[0]
+        assert before_agent['total_turnover'] == 100.0
+        assert before_player['total_recharge'] == 0
+
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'issue', 'coin_amount': 1500
+        })
+        assert issue.status_code == 200, issue.text
+
+        after_dash = c.get('/api/dashboard', headers=auth(admin)).json()
+        after_agent = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': agent['agent_id']}).json()[0]
+        after_player = c.get('/api/players', headers=auth(admin), params={'account': 'v55_player'}).json()[0]
+
+        assert after_dash['total_turnover'] == before_dash['total_turnover']
+        assert after_dash['today_turnover'] == before_dash['today_turnover']
+        assert after_agent['total_turnover'] == before_agent['total_turnover']
+        assert after_agent['today_turnover'] == before_agent['today_turnover']
+        assert after_player['total_recharge'] == before_player['total_recharge'] == 0
+        assert after_player['today_recharge'] == before_player['today_recharge'] == 100.0
+        assert after_player['platform_coin_balance'] == before_player['platform_coin_balance'] + 1500
+
+        db = SessionLocal()
+        try:
+            manual = (db.query(PlayerCoinLedger)
+                .filter(PlayerCoinLedger.player_id == player_pk, PlayerCoinLedger.action == 'issue')
+                .order_by(PlayerCoinLedger.id.desc()).first())
+            assert manual is not None
+            assert manual.delta == 1500
+            assert '不计流水' in (manual.note or '')
+        finally:
+            db.close()

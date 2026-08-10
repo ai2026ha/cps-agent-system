@@ -18,7 +18,7 @@ let paymentTestState = {players:[], selectedAccount:'', order:null};
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
- players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','商城购买订单记录'],
+ players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','玩家中心使用平台币购买礼包后自动生成的订单记录'],
  shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], cdk:['兑换码列表','CDK 批次与兑换统计'],
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
 };
@@ -168,7 +168,7 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='players') return renderPlayers();
  if(view==='platformOrders') return renderPlatformOrders();
  if(view==='paymentTest') return renderPaymentTest();
- if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单',hasPermission('orders.manage')?()=>openForm('新增商城订单',forms.mall):null);
+ if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单');
  if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',hasPermission('shipments.manage')?()=>openForm('更新发货',forms.shipment):null);
  if(view==='gifts') return renderProducts('gift'); if(view==='products') return renderProducts('product');
  if(view==='cdk') return renderCDK();
@@ -430,7 +430,7 @@ function paymentTestOrderCard(){
   </div>`;
 }
 function paymentTestPage(){
- return `<div class="payment-test-warning"><strong>支付测试会写入真实业务数据库。</strong> 点击“模拟支付成功”后会真实增加玩家平台币余额、累计充值、代理流水与佣金。只用于测试账号/测试金额，正式运营数据不要使用此功能造单。</div>
+ return `<div class="payment-test-warning"><strong>支付测试会写入真实业务数据库。</strong> 点击“模拟支付成功”后会真实增加玩家平台币余额、真实支付流水与代理佣金，但不会增加累计充值；累计充值只由网页商城消费增加。只用于测试账号/测试金额，正式运营数据不要使用此功能造单。</div>
  <div class="payment-test-grid">
    <div class="payment-test-card">
      <h4>1. 选择玩家</h4>
@@ -681,14 +681,14 @@ window.openPlayerEdit=async(playerPk)=>{
      path:`/api/players/${playerPk}`,
      method:'PATCH',
      pendingText:'保存中…',
-     note:`玩家账号：${data.username} ｜ 当前归属：${data.owner_display||'超管'} ｜ 当前平台币余额：${Number(data.platform_coin_balance||0).toLocaleString()}。修改密码留空、归属保持默认、平台币操作留空均表示不修改。`,
+     note:`玩家账号：${data.username} ｜ 当前归属：${data.owner_display||'超管'} ｜ 当前平台币余额：${Number(data.platform_coin_balance||0).toLocaleString()}。修改密码留空、归属保持默认、平台币操作留空均表示不修改。手工发放/收回仅调整余额，不计真实流水、代理分佣或累计充值。`,
      defaults:{password:'',status:data.status||'active',owner_agent_id:'',coin_action:'',coin_amount:''},
      fields:[
        ['password','修改密码','password',false,{autocomplete:'new-password',placeholder:'留空则不修改；至少 8 位'}],
        ['owner_agent_id','修改归属','search-select',false,{options:data.owner_options||[],valueType:'string',emptyLabel:'保持当前归属（不修改）',searchPlaceholder:'搜索代理ID / 账号 / 名称'}],
        ['status','账号状态','select',true,{options:[{value:'active',label:'正常'},{value:'disabled',label:'封禁'}]}],
-       ['coin_action','平台币操作','select',false,{options:[{value:'',label:'不操作'},{value:'issue',label:'发放平台币'},{value:'reclaim',label:'收回平台币'}]}],
-       ['coin_amount','平台币数量','number',false,{min:1,max:2000000000,step:1,placeholder:'仅在发放/收回时填写'}]
+       ['coin_action','平台币操作','select',false,{options:[{value:'',label:'不操作'},{value:'issue',label:'手工补偿/发放平台币'},{value:'reclaim',label:'收回平台币'}]}],
+       ['coin_amount','平台币数量','number',false,{min:1,max:2000000000,step:1,placeholder:'仅调整余额，不计流水/分佣/累计充值'}]
      ],
      transform:obj=>{
        const out={status:obj.status};
@@ -705,7 +705,7 @@ window.openPlayerEdit=async(playerPk)=>{
  }catch(e){showToast(e.message,'error',4200)}
 };
 
-async function renderProducts(cat){const rows=await api('/api/products?category='+cat);const manage=hasPermission('products.manage');$('#content').innerHTML=panel(cat==='gift'?'礼包列表':'商品列表',table(rows,productCols),manage?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(manage)$('#addBtn').onclick=()=>openForm(cat==='gift'?'新增礼包':'新增商品',{...forms.product,defaults:{category:cat}})}
+async function renderProducts(cat){const rows=await api('/api/products?category='+cat);const manage=hasPermission('products.manage');const cols=cat==='gift'?productCols.map(c=>c[1]==='price'?['平台币售价','price']:c):productCols;$('#content').innerHTML=panel(cat==='gift'?'礼包列表':'商品列表',table(rows,cols),manage?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(manage)$('#addBtn').onclick=()=>{const cfg={...forms.product,defaults:{category:cat}};if(cat==='gift')cfg.fields=forms.product.fields.map(f=>f[0]==='price'?['price','平台币售价','number',true,{min:1,step:1,placeholder:'请输入整数平台币价格'}]:f);openForm(cat==='gift'?'新增礼包':'新增商品',cfg)}}
 async function renderCDK(){const rows=await api('/api/redemption-batches');const manage=hasPermission('cdk.manage');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>':'');if(manage){$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
 
@@ -739,7 +739,7 @@ const agentCols=[
    return `<div class="table-action-buttons">${copy}${edit}</div>`;
  }]
 ];
-const playerBaseCols=[['玩家ID','player_id'],['账号','username'],['角色','characters',playerCharactersCell],['所属代理','agent_public_id'],['平台币余额','platform_coin_balance'],['今日充值','today_recharge'],['总充值','total_recharge'],['状态','status',playerStatusBadge],['注册时间(北京时间)','created_at'],['最后登录(北京时间)','last_login_at'],['登录IP','last_login_ip']];
+const playerBaseCols=[['玩家ID','player_id'],['账号','username'],['角色','characters',playerCharactersCell],['所属代理','agent_public_id'],['平台币余额','platform_coin_balance'],['今日充值','today_recharge'],['累计充值','total_recharge'],['状态','status',playerStatusBadge],['注册时间(北京时间)','created_at'],['最后登录(北京时间)','last_login_at'],['登录IP','last_login_ip']];
 function playerColumns(){return hasPermission('players.manage')?[...playerBaseCols,['操作','id',(_,r)=>`<button class="btn compact" onclick="openPlayerEdit(${Number(r.id)})">编辑</button>`]]:playerBaseCols}
 function platformPaymentMethodText(v){return ({wechat:'微信',alipay:'支付宝'})[String(v||'').toLowerCase()]||'历史/未知'}
 function platformOrderStatusBadge(v){
@@ -764,7 +764,7 @@ const platformCols=[
  ['支付方式','payment_method',platformPaymentMethodText],['状态','status',platformOrderStatusBadge],['发货','delivery_status',platformDeliveryBadge],
  ['创建时间','created_at'],['支付时间','paid_at'],['操作','id',platformResendCell]
 ];
-const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','product_id'],['数量','quantity'],['金额','amount'],['支付','pay_status',badge],['发货','delivery_status',badge],['创建时间','created_at']];
+const mallCols=[['订单号','order_no'],['玩家账号','player_account'],['礼包名称','product_name'],['数量','quantity'],['平台币','coin_amount',v=>Number(v||0).toLocaleString()],['支付','pay_status',v=>v==='paid'?'<span class="badge ok">已支付</span>':badge(v)],['发货','delivery_status',v=>badge(({waiting:'待发货',sent:'已发货',success:'成功',failed:'失败'})[v]||v)],['创建时间','created_at']];
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
 const productCols=[['SKU','sku'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
 const cdkCols=[['CDK名称','name'],['总数','total_count'],['未兑换数','unused_count'],['已兑换数','redeemed_count'],['状态','enabled',v=>badge(v?'active':'disabled')],['创建时间','created_at']];

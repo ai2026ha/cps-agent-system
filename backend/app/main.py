@@ -6,7 +6,7 @@ from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, Depends, HTTPException, Query, Header
+from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, text
@@ -18,11 +18,11 @@ from .models import (
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, MailRecord,
 )
 from .schemas import (
-    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate,
+    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, MailCreate,
 )
-from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user
+from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -271,6 +271,41 @@ def real_paid_platform_turnover(
     if end_dt is not None:
         q = q.filter(PlatformCoinOrder.paid_at < end_dt)
     return Decimal(q.scalar() or 0)
+
+
+def paid_mall_cumulative_recharge(
+    db: Session,
+    *,
+    player_ids: list[int] | None = None,
+    start_dt: datetime | None = None,
+    end_dt: datetime | None = None,
+) -> Decimal:
+    """累计充值奖励附加值：统计玩家已支付的商城礼包消费。
+
+    商城订单仍然绝不进入渠道流水或代理佣金；这里只用于玩家累计充值奖励进度。
+    MallOrder.amount 在当前业务中保存玩家购买礼包实际消耗的平台币数值。
+    """
+    q = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(
+        MallOrder.pay_status == "paid",
+        MallOrder.paid_at.is_not(None),
+    )
+    if player_ids is not None:
+        q = q.filter(MallOrder.player_id.in_(player_ids))
+    if start_dt is not None:
+        q = q.filter(MallOrder.paid_at >= start_dt)
+    if end_dt is not None:
+        q = q.filter(MallOrder.paid_at < end_dt)
+    return Decimal(q.scalar() or 0)
+
+
+def player_cumulative_recharge_total(db: Session, player_ids: list[int]) -> Decimal:
+    """累计充值奖励进度只统计已支付商城礼包消费。
+
+    V54 起，真实支付的平台币充值只进入真实流水/分佣口径，不再增加累计充值奖励进度。
+    手工发放/收回平台币同样不增加累计充值；只有玩家在网页商城实际消耗平台币购买礼包，
+    才会增加该累计值。
+    """
+    return paid_mall_cumulative_recharge(db, player_ids=player_ids)
 
 
 # ---------- 统一后台权限模型（V20） ----------
@@ -535,11 +570,11 @@ def player_character_payloads(db: Session, player_ids: list[int]) -> dict[int, l
 
 
 def sync_real_payment_aggregates():
-    """把历史缓存统计纠正为“真实已支付平台币订单”口径。
+    """统一历史统计口径。
 
-    旧版本曾把已支付商城订单加入代理流水/玩家充值。升级时统一重算代理流水与
-    玩家充值金额，但绝不重算 platform_coin_balance，因此超管手工发放/收回的
-    平台币余额会原样保留。
+    代理流水仍只来自真实已支付的平台币充值订单；玩家“今日充值”仍只反映真实
+    支付充值。玩家“累计充值”作为奖励进度，只统计已支付商城礼包消费。
+    真实平台币充值、手工发放/收回平台币都不增加累计充值奖励进度。
     """
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
@@ -578,7 +613,7 @@ def sync_real_payment_aggregates():
                 player.today_recharge = real_paid_platform_turnover(
                     db, player_ids=ids, start_dt=today_start, end_dt=tomorrow_start
                 )
-                player.total_recharge = real_paid_platform_turnover(db, player_ids=ids)
+                player.total_recharge = player_cumulative_recharge_total(db, ids)
         db.commit()
     finally:
         db.close()
@@ -644,6 +679,15 @@ def index():
 def player_registration_page(invite_code: str):
     # 邀请码/代理ID由页面内的公开 API 再次校验，这里只负责返回注册页面。
     return FileResponse(STATIC_DIR / "register.html")
+
+@app.get("/player")
+def player_center_page():
+    """玩家中心：注册成功后进入这里登录并使用平台币购买网页商城礼包。"""
+    return FileResponse(STATIC_DIR / "player_center.html")
+
+@app.get("/player/login")
+def player_center_login_page():
+    return FileResponse(STATIC_DIR / "player_center.html")
 
 @app.post("/api/auth/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
@@ -1412,6 +1456,170 @@ def register_player(invite_code: str, body: PlayerRegister, db: Session = Depend
         "agent_name": agent.agent_name if agent else "总平台直属",
         "channel_type": "agent" if agent else "superadmin",
         "message": "注册成功",
+        "player_center_path": "/player",
+    }
+
+
+def request_client_ip(request: Request) -> str | None:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip()
+    if forwarded:
+        return forwarded[:64]
+    return request.client.host[:64] if request.client and request.client.host else None
+
+
+def mall_order_no() -> str:
+    local_now = datetime.now(BUSINESS_TZ)
+    return f"MO{local_now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}"
+
+
+def product_platform_coin_price(product: Product) -> int:
+    """网页商城礼包使用 Product.price 作为平台币售价，必须是正整数。"""
+    value = Decimal(product.price or 0)
+    if value <= 0:
+        raise HTTPException(400, "礼包平台币价格必须大于 0")
+    if value != value.to_integral_value():
+        raise HTTPException(400, "礼包平台币价格必须设置为整数")
+    return int(value)
+
+
+@app.post("/api/player/auth/login")
+def player_login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+    player = db.query(Player).filter(Player.username == body.username.strip()).first()
+    if not player or player.status != "active" or not verify_password(body.password, player.password_hash):
+        raise HTTPException(401, "玩家账号或密码错误")
+    player.last_login_at = utc_now_naive()
+    player.last_login_ip = request_client_ip(request)
+    db.commit(); db.refresh(player)
+    return {
+        "access_token": create_token(player.username, "player", actor_type="player", actor_id=player.id),
+        "token_type": "bearer",
+        "actor_type": "player",
+        "player_id": player.player_id,
+        "username": player.username,
+        "platform_coin_balance": int(player.platform_coin_balance or 0),
+    }
+
+
+@app.get("/api/player/me")
+def player_me(player: Player = Depends(current_player), db: Session = Depends(get_db)):
+    owner = db.get(Agent, player.agent_id) if player.agent_id else None
+    chars = player_character_payloads(db, [player.id]).get(player.id, [])
+    return {
+        "player_id": player.player_id,
+        "username": player.username,
+        "status": player.status,
+        "platform_coin_balance": int(player.platform_coin_balance or 0),
+        "agent_id": owner.agent_id if owner else "超管",
+        "agent_name": owner.agent_name if owner else "总平台主管",
+        "characters": chars,
+        "last_login_at": dt(player.last_login_at),
+    }
+
+
+@app.get("/api/player/mall/products")
+def player_mall_products(player: Player = Depends(current_player), db: Session = Depends(get_db)):
+    # 玩家中心只销售后台“礼包列表”中已启用的礼包。
+    rows = db.query(Product).filter(Product.category == "gift", Product.enabled.is_(True)).order_by(Product.id.desc()).all()
+    result = []
+    for row in rows:
+        try:
+            coin_price = product_platform_coin_price(row)
+        except HTTPException:
+            continue
+        result.append({
+            "id": row.id,
+            "sku": row.sku,
+            "name": row.name,
+            "coin_price": coin_price,
+            "stock": int(row.stock or 0),
+            "description": row.description or "",
+            "available": int(row.stock or 0) > 0,
+        })
+    return result
+
+
+@app.get("/api/player/mall/orders")
+def player_mall_orders(player: Player = Depends(current_player), db: Session = Depends(get_db)):
+    rows = (
+        db.query(MallOrder, Product)
+        .join(Product, Product.id == MallOrder.product_id)
+        .filter(MallOrder.player_id == player.id)
+        .order_by(MallOrder.created_at.desc(), MallOrder.id.desc())
+        .all()
+    )
+    return [{
+        "id": order.id,
+        "order_no": order.order_no,
+        "product_name": product.name,
+        "quantity": int(order.quantity or 0),
+        "coin_amount": int(Decimal(order.amount or 0)),
+        "pay_status": order.pay_status,
+        "delivery_status": order.delivery_status,
+        "created_at": dt(order.created_at),
+        "paid_at": dt(order.paid_at),
+    } for order, product in rows]
+
+
+@app.post("/api/player/mall/purchase/{product_id}")
+def player_mall_purchase(
+    product_id: int,
+    body: PlayerMallPurchase,
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
+    """玩家使用平台币购买礼包，商城订单由玩家购买行为自动生成。"""
+    product = db.query(Product).filter(Product.id == product_id).with_for_update().first()
+    locked_player = db.query(Player).filter(Player.id == player.id).with_for_update().first()
+    if not product or product.category != "gift" or not product.enabled:
+        raise HTTPException(404, "礼包不存在或已下架")
+    if not locked_player or locked_player.status != "active":
+        raise HTTPException(403, "玩家账号当前不可购买")
+    quantity = int(body.quantity)
+    if int(product.stock or 0) < quantity:
+        raise HTTPException(400, "礼包库存不足")
+    unit_price = product_platform_coin_price(product)
+    total_coins = unit_price * quantity
+    balance = int(locked_player.platform_coin_balance or 0)
+    if balance < total_coins:
+        raise HTTPException(400, "平台币余额不足")
+
+    order_no = mall_order_no()
+    while db.query(MallOrder.id).filter(MallOrder.order_no == order_no).first():
+        order_no = mall_order_no()
+
+    locked_player.platform_coin_balance = balance - total_coins
+    # V53：商城礼包消费计入玩家“累计充值”奖励进度，但绝不进入渠道流水/佣金。
+    # 今日充值仍保持真实支付口径，因此这里只增加 total_recharge。
+    locked_player.total_recharge = Decimal(locked_player.total_recharge or 0) + Decimal(total_coins)
+    product.stock = int(product.stock or 0) - quantity
+    now_utc = utc_now_naive()
+    order = MallOrder(
+        order_no=order_no,
+        player_id=locked_player.id,
+        agent_id=locked_player.agent_id,
+        product_id=product.id,
+        quantity=quantity,
+        amount=Decimal(total_coins),
+        pay_status="paid",
+        delivery_status="waiting",
+        created_at=now_utc,
+        paid_at=now_utc,
+    )
+    db.add(order)
+    db.add(PlayerCoinLedger(
+        player_id=locked_player.id,
+        action="mall_purchase",
+        delta=-total_coins,
+        balance_after=int(locked_player.platform_coin_balance),
+        operator=locked_player.username,
+        note=f"商城订单 {order_no} · {product.name} x{quantity}",
+    ))
+    db.commit(); db.refresh(order); db.refresh(locked_player)
+    return {
+        "message": "购买成功，商城订单已生成",
+        "order_no": order.order_no,
+        "platform_coin_balance": int(locked_player.platform_coin_balance or 0),
+        "delivery_status": order.delivery_status,
     }
 
 
@@ -1573,7 +1781,7 @@ def update_player(
             delta=delta,
             balance_after=int(player.platform_coin_balance),
             operator=principal.username,
-            note="超管后台手工发放" if body.coin_action == "issue" else "超管后台手工收回",
+            note="超管后台手工补偿/发放（不计流水、分佣、累计充值）" if body.coin_action == "issue" else "超管后台手工收回（不计流水、分佣、累计充值）",
         ))
 
     db.commit(); db.refresh(player)
@@ -1587,12 +1795,15 @@ def update_player(
 
 # ---------- 订单管理 ----------
 def apply_paid_platform_recharge(db: Session, player_id: int, agent_id: int | None, amount: Decimal):
-    """仅真实已支付的平台币订单调用。手工发币/商城订单禁止调用。"""
+    """仅真实已支付的平台币订单调用。
+
+    V54：真实充值只计真实支付流水/代理分佣；today_recharge 继续作为“今日真实充值”展示字段。
+    真实充值绝不增加 total_recharge（累计充值奖励进度）。累计充值只由网页商城实际消费增加。
+    """
     player = db.get(Player, player_id)
     if not player:
         raise HTTPException(404, "玩家不存在")
     player.today_recharge = Decimal(player.today_recharge or 0) + amount
-    player.total_recharge = Decimal(player.total_recharge or 0) + amount
     if agent_id:
         agent = db.get(Agent, agent_id)
         if not agent:
@@ -1795,7 +2006,7 @@ def platform_payment_success(
     db: Session = Depends(get_db),
     _=Depends(require_payment_secret),
 ):
-    """支付成功回调：第一次成功回调才计流水/充值，并自动发放平台币。幂等处理重复回调。"""
+    """支付成功回调：第一次成功回调只计真实流水/分佣并自动发放平台币，不增加累计充值。幂等处理重复回调。"""
     row = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == body.order_no).first()
     if not row:
         raise HTTPException(404, "平台币订单不存在")
@@ -1949,26 +2160,34 @@ def disabled_manual_platform_order(_=Depends(require_permission("orders.manage")
 
 @app.get("/api/orders/mall")
 def mall_orders(db: Session = Depends(get_db), principal=Depends(require_permission("orders.view"))):
-    q = db.query(MallOrder)
-    if principal.actor_type == "agent": q = q.filter(MallOrder.agent_id.in_(scoped_agent_ids(db, principal)))
-    rows = q.order_by(MallOrder.id.desc()).all()
-    return [{"id": x.id, "order_no": x.order_no, "player_id": x.player_id, "agent_id": x.agent_id, "product_id": x.product_id, "quantity": x.quantity,
-             "amount": money(x.amount), "pay_status": x.pay_status, "delivery_status": x.delivery_status, "created_at": dt(x.created_at), "paid_at": dt(x.paid_at)} for x in rows]
+    q = (
+        db.query(MallOrder, Player, Product)
+        .join(Player, Player.id == MallOrder.player_id)
+        .join(Product, Product.id == MallOrder.product_id)
+    )
+    if principal.actor_type == "agent":
+        q = q.filter(MallOrder.agent_id.in_(scoped_agent_ids(db, principal)))
+    rows = q.order_by(MallOrder.created_at.desc(), MallOrder.id.desc()).all()
+    return [{
+        "id": order.id,
+        "order_no": order.order_no,
+        "player_id": order.player_id,
+        "player_account": player.username,
+        "agent_id": order.agent_id,
+        "product_id": order.product_id,
+        "product_name": product.name,
+        "quantity": int(order.quantity or 0),
+        "amount": money(order.amount),
+        "coin_amount": int(Decimal(order.amount or 0)),
+        "pay_status": order.pay_status,
+        "delivery_status": order.delivery_status,
+        "created_at": dt(order.created_at),
+        "paid_at": dt(order.paid_at),
+    } for order, player, product in rows]
 
 @app.post("/api/orders/mall")
-def create_mall_order(body: MallOrderCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
-    if db.query(MallOrder).filter(MallOrder.order_no == body.order_no).first(): raise HTTPException(409, "订单号已存在")
-    product = db.get(Product, body.product_id)
-    if not product: raise HTTPException(404, "商品不存在")
-    if product.stock < body.quantity: raise HTTPException(400, "库存不足")
-    if not db.get(Player, body.player_id): raise HTTPException(404, "玩家不存在")
-    row = MallOrder(**body.model_dump(), paid_at=datetime.utcnow() if body.pay_status == "paid" else None)
-    db.add(row)
-    if body.pay_status == "paid":
-        product.stock -= body.quantity
-        # 商城订单不属于平台币充值流水，也不增加玩家累计充值/代理分佣。
-    db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "商城订单创建成功"}
+def disabled_manual_mall_order(_=Depends(require_permission("orders.manage"))):
+    raise HTTPException(405, "商城订单由玩家中心使用平台币购买礼包后自动生成，后台禁止手工添加")
 
 @app.get("/api/shipments")
 def shipments(db: Session = Depends(get_db), principal=Depends(require_permission("shipments.view"))):
@@ -2010,8 +2229,16 @@ def products(category: str = "", db: Session = Depends(get_db), _=Depends(requir
 
 @app.post("/api/products")
 def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
-    if body.category not in ("gift", "product"): raise HTTPException(400, "category 只能是 gift 或 product")
-    if db.query(Product).filter(Product.sku == body.sku).first(): raise HTTPException(409, "SKU 已存在")
+    if body.category not in ("gift", "product"):
+        raise HTTPException(400, "category 只能是 gift 或 product")
+    if body.stock < 0:
+        raise HTTPException(400, "库存不能小于 0")
+    if body.category == "gift":
+        price = Decimal(body.price)
+        if price <= 0 or price != price.to_integral_value():
+            raise HTTPException(400, "网页商城礼包的平台币售价必须是大于 0 的整数")
+    if db.query(Product).filter(Product.sku == body.sku).first():
+        raise HTTPException(409, "SKU 已存在")
     row = Product(**body.model_dump()); db.add(row); db.commit(); db.refresh(row)
     return {"id": row.id, "message": "商品创建成功"}
 
