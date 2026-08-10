@@ -4,7 +4,7 @@ let actorType = localStorage.getItem('cps_actor_type') || 'admin';
 let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
-let playerSearch = {account:'', parent:''};
+let playerSearch = {account:'', role:'', parent:''};
 let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
@@ -326,6 +326,7 @@ window.copyRegistrationLink=async(agentId)=>{
 function playerSearchQuery(){
  const p=new URLSearchParams();
  if(playerSearch.account)p.set('account',playerSearch.account);
+ if(playerSearch.role)p.set('role',playerSearch.role);
  if(playerSearch.parent)p.set('parent',playerSearch.parent);
  const qs=p.toString();
  return qs?`?${qs}`:'';
@@ -333,15 +334,16 @@ function playerSearchQuery(){
 function playerSearchBar(){
  return `<div class="player-search-bar">
    <div class="query-field"><label>账号查询</label><input id="playerAccountQuery" value="${esc(playerSearch.account)}" placeholder="输入玩家账号"></div>
+   <div class="query-field"><label>角色查询</label><input id="playerRoleQuery" value="${esc(playerSearch.role)}" placeholder="输入角色名"></div>
    <div class="query-field"><label>上级代理查询</label><input id="playerParentQuery" value="${esc(playerSearch.parent)}" placeholder="代理ID/账号/名称"></div>
    <div class="query-actions"><button class="btn primary" id="playerQueryBtn">查询</button><button class="btn" id="playerResetBtn">重置</button></div>
  </div>`;
 }
 function bindPlayerSearch(){
- const run=()=>{playerSearch={account:$('#playerAccountQuery')?.value.trim()||'',parent:$('#playerParentQuery')?.value.trim()||''};renderPlayers()};
+ const run=()=>{playerSearch={account:$('#playerAccountQuery')?.value.trim()||'',role:$('#playerRoleQuery')?.value.trim()||'',parent:$('#playerParentQuery')?.value.trim()||''};renderPlayers()};
  $('#playerQueryBtn').onclick=run;
- $('#playerResetBtn').onclick=()=>{playerSearch={account:'',parent:''};renderPlayers()};
- ['#playerAccountQuery','#playerParentQuery'].forEach(sel=>{const el=$(sel);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
+ $('#playerResetBtn').onclick=()=>{playerSearch={account:'',role:'',parent:''};renderPlayers()};
+ ['#playerAccountQuery','#playerRoleQuery','#playerParentQuery'].forEach(sel=>{const el=$(sel);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
 }
 async function renderPlayers(){
  const rows=await api('/api/players'+playerSearchQuery());

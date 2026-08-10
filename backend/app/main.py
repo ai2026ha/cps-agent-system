@@ -1391,6 +1391,7 @@ def register_player(invite_code: str, body: PlayerRegister, db: Session = Depend
 @app.get("/api/players")
 def list_players(
     account: str = "",
+    role: str = "",
     parent: str = "",
     keyword: str = "",
     db: Session = Depends(get_db),
@@ -1401,10 +1402,15 @@ def list_players(
         q = q.filter(Player.agent_id.in_(scoped_agent_ids(db, principal)))
 
     account = account.strip()
+    role = role.strip()
     parent = parent.strip()
     keyword = keyword.strip()
     if account:
         q = q.filter(Player.username.like(f"%{account}%"))
+    if role:
+        role_like = f"%{role}%"
+        role_player_ids = db.query(PlayerCharacter.player_id).filter(PlayerCharacter.role_name.like(role_like))
+        q = q.filter(Player.id.in_(role_player_ids))
     if keyword:
         like = f"%{keyword}%"
         character_player_ids = db.query(PlayerCharacter.player_id).filter(

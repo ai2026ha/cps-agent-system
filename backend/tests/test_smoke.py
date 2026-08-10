@@ -874,6 +874,19 @@ def test_player_multiple_server_roles_are_bound_and_returned_as_character_list()
         assert 'role_name' not in row
         assert 'server_name' not in row
 
+        # V44: 角色查询需要匹配该玩家任意区服角色，而不只是主角色。
+        by_primary_role = c.get('/api/players', headers=auth(admin), params={'role': '剑心'})
+        assert by_primary_role.status_code == 200, by_primary_role.text
+        assert any(x['id'] == player_pk for x in by_primary_role.json())
+
+        by_secondary_role = c.get('/api/players', headers=auth(admin), params={'role': '星河'})
+        assert by_secondary_role.status_code == 200, by_secondary_role.text
+        assert any(x['id'] == player_pk for x in by_secondary_role.json())
+
+        missing_role = c.get('/api/players', headers=auth(admin), params={'role': '不存在的角色'})
+        assert missing_role.status_code == 200, missing_role.text
+        assert not any(x['id'] == player_pk for x in missing_role.json())
+
 
 
 def test_beijing_time_display_and_agent_login_timestamp():
@@ -1146,7 +1159,7 @@ def test_v42_settlement_frontend_has_date_range_horizontal_compact_and_seven_col
     assert "['佣金','commission_amount'" not in js
     assert 'padding:11px 7px' in css
     assert 'grid-template-columns:128px 14px 128px' in css
-    assert 'channel-settlement-v43' in html
+    assert 'player-role-search-v44' in html
 
 def test_v43_settlement_table_has_stable_fixed_horizontal_layout():
     """V43 渠道结算：总流水/日期查询切换时固定 7 列宽度，避免左右跳动。"""
@@ -1160,5 +1173,18 @@ def test_v43_settlement_table_has_stable_fixed_horizontal_layout():
     assert 'scrollbar-gutter:stable' in css
     for idx, width in [(1, '9%'), (2, '15%'), (3, '11%'), (4, '18%'), (5, '15%'), (6, '12%'), (7, '20%')]:
         assert f'th:nth-child({idx}),.settlement-table-scroll td:nth-child({idx}){{width:{width}' in css
-    assert 'channel-settlement-v43' in html
+    assert 'player-role-search-v44' in html
 
+
+
+def test_v44_player_role_search_frontend_and_api_contract():
+    """V44 玩家列表增加角色查询，并保持查询框紧凑。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    assert "let playerSearch = {account:'', role:'', parent:''};" in js
+    assert '<label>角色查询</label>' in js
+    assert 'id="playerRoleQuery"' in js
+    assert "p.set('role',playerSearch.role)" in js
+    assert "['#playerAccountQuery','#playerRoleQuery','#playerParentQuery']" in js
+    assert '.player-search-bar>.query-field{flex:0 0 190px;width:190px' in css
