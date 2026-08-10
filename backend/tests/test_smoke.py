@@ -71,3 +71,27 @@ def test_agent_id_invite_and_parent_are_automatic():
         assert len(rows.json()) == 1
         assert rows.json()[0]['agent_id'] == child_data['agent_id']
         assert rows.json()[0]['parent_agent_id'] == parent_data['agent_id']
+
+
+def test_commission_rate_is_internal_ratio_and_validated():
+    with TestClient(app) as c:
+        token = login(c, 'admin', 'ChangeMe123!')
+        ok = c.post('/api/agents', headers=auth(token), json={
+            'username': 'percent_agent',
+            'password': 'PercentPass123!',
+            'agent_name': '百分比代理',
+            'commission_rate': 0.5,
+        })
+        assert ok.status_code == 200, ok.text
+        rows = c.get('/api/agents', headers=auth(token))
+        assert rows.status_code == 200
+        row = next(x for x in rows.json() if x['username'] == 'percent_agent')
+        assert row['commission_rate'] == 0.5
+
+        bad = c.post('/api/agents', headers=auth(token), json={
+            'username': 'bad_percent_agent',
+            'password': 'PercentPass123!',
+            'agent_name': '错误比例代理',
+            'commission_rate': 50,
+        })
+        assert bad.status_code == 422

@@ -10,7 +10,7 @@ class AgentCreate(BaseModel):
     username: str
     password: str = Field(min_length=8)
     agent_name: str
-    commission_rate: Decimal = Decimal("0")
+    commission_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1)
 
 class PlayerCreate(BaseModel):
     player_id: str
