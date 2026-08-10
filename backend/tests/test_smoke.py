@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 TEST_DB = Path(__file__).resolve().parent.parent / "test_cps.db"
@@ -1009,3 +1010,127 @@ def test_v38_channel_daily_turnover_filters_sort_and_agent_scope():
         assert child_rows.status_code == 200, child_rows.text
         assert [x['username'] for x in child_rows.json()['rows']] == ['v38_l3', 'v38_l2']
         assert all(x['agent_id'] != l1_data['agent_id'] for x in child_rows.json()['rows'])
+
+
+def test_v41_channel_settlement_total_single_day_columns_and_level_scope():
+    """V41: 默认总流水；仅支持单日；等级筛选按当前账号可见的下级层级授权。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        l1 = create_agent(c, admin, 'v40_l1_agent', 'V40一级', 1, 2, 0.12)
+        assert l1.status_code == 200, l1.text
+        l1_data = l1.json()
+        l1_token = login(c, 'v40_l1_agent', 'AgentPass123!')
+
+        l2 = create_agent(c, l1_token, 'v40_l2_agent', 'V40二级', 2, 1, 0.20)
+        assert l2.status_code == 200, l2.text
+        l2_data = l2.json()
+        l2_token = login(c, 'v40_l2_agent', 'AgentPass123!')
+
+        l3 = create_agent(c, l2_token, 'v40_l3_agent', 'V40三级', 3, 0, 0.30)
+        assert l3.status_code == 200, l3.text
+        l3_data = l3.json()
+        l3_token = login(c, 'v40_l3_agent', 'AgentPass123!')
+
+        player = c.post(f"/api/public/registration/{l2_data['agent_id']}", json={
+            'username': 'v40_paid_player', 'password': 'PlayerPass123!'
+        })
+        assert player.status_code == 200, player.text
+        paid = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'V40-PAID-001', 'player_id': player.json()['id'], 'agent_id': l2_data['id'],
+            'amount': 88, 'platform_coin': 8800, 'payment_channel': 'test', 'pay_status': 'paid'
+        })
+        assert paid.status_code == 200, paid.text
+
+        # 日期默认留空：直接返回历史总流水。
+        total = c.get('/api/channel-settlements', headers=auth(admin), params={'account': 'v40_'})
+        assert total.status_code == 200, total.text
+        total_data = total.json()
+        assert total_data['period_type'] == 'total'
+        assert total_data['period_label'] == '全部时间'
+        assert total_data['date'] is None
+        rows = total_data['rows']
+        assert rows[0]['username'] == 'v40_l2_agent'
+        assert rows[0]['turnover'] == 88.0
+        assert rows[0]['period_label'] == '全部时间'
+        assert 'parent_agent_display' not in rows[0]
+
+        # 选择日期后只返回该北京时间自然日的流水。
+        today = business_today()
+        single = c.get('/api/channel-settlements', headers=auth(admin), params={
+            'account': 'v40_', 'date': str(today)
+        })
+        assert single.status_code == 200, single.text
+        single_data = single.json()
+        assert single_data['period_type'] == 'day'
+        assert single_data['date'] == str(today)
+        assert single_data['period_label'] == str(today)
+        assert single_data['rows'][0]['turnover'] == 88.0
+
+        # V40 明确取消日期区间；旧 V39 参数若形成真正区间必须拒绝。
+        yesterday = today - timedelta(days=1)
+        ranged = c.get('/api/channel-settlements', headers=auth(admin), params={
+            'start_date': str(yesterday), 'end_date': str(today)
+        })
+        assert ranged.status_code == 400
+        assert '仅支持单日查询' in ranged.json()['detail']
+
+        # 超管可以筛选全部三个代理等级。
+        for level, username in [(1, 'v40_l1_agent'), (2, 'v40_l2_agent'), (3, 'v40_l3_agent')]:
+            filtered = c.get('/api/channel-settlements', headers=auth(admin), params={
+                'account': 'v40_', 'agent_level': level
+            })
+            assert filtered.status_code == 200, filtered.text
+            assert [x['username'] for x in filtered.json()['rows']] == [username]
+
+        # 一级代理可按自己可见的二级、三级下级代理筛选。
+        l1_level2 = c.get('/api/channel-settlements', headers=auth(l1_token), params={
+            'account': 'v40_', 'agent_level': 2
+        })
+        assert l1_level2.status_code == 200, l1_level2.text
+        assert [x['username'] for x in l1_level2.json()['rows']] == ['v40_l2_agent']
+        l1_level3 = c.get('/api/channel-settlements', headers=auth(l1_token), params={
+            'account': 'v40_', 'agent_level': 3
+        })
+        assert l1_level3.status_code == 200, l1_level3.text
+        assert [x['username'] for x in l1_level3.json()['rows']] == ['v40_l3_agent']
+
+        # 二级代理只能选择三级代理；三级代理没有渠道结算权限。
+        l2_level3 = c.get('/api/channel-settlements', headers=auth(l2_token), params={
+            'account': 'v40_', 'agent_level': 3
+        })
+        assert l2_level3.status_code == 200, l2_level3.text
+        assert [x['username'] for x in l2_level3.json()['rows']] == ['v40_l3_agent']
+        l3_forbidden = c.get('/api/channel-settlements', headers=auth(l3_token))
+        assert l3_forbidden.status_code == 403
+
+
+def test_v41_settlement_frontend_is_single_date_compact_and_seven_columns():
+    """V41 前端：单日期选择、分层等级选项、7 列固定顺序、缓存版本更新。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+
+    assert "let settlementSearch = {account:'', public_agent_id:'', agent_level:'', date:''};" in js
+    assert 'settlementDateQuery' in js
+    assert 'settlementStartDateQuery' not in js
+    assert 'settlementEndDateQuery' not in js
+    assert "if(currentUser?.actor_type==='admin')return ['1','2','3'];" in js
+    assert "Number(currentUser?.agent_level)===1)return ['2','3'];" in js
+    assert "Number(currentUser?.agent_level)===2)return ['3'];" in js
+
+    expected_order = [
+        "['代理ID','agent_id']",
+        "['代理账号','username']",
+        "['代理等级','agent_level',agentLevelText]",
+        "['代理名称','agent_name']",
+        "[turnoverTitle,'turnover'",
+        "['佣金比例','commission_rate',percent]",
+        "['日期','period_label']",
+    ]
+    positions = [js.index(x) for x in expected_order]
+    assert positions == sorted(positions)
+    assert "['佣金','commission_amount'" not in js
+    assert 'padding:6px 5px' in css
+    assert 'channel-settlement-v41' in html
+

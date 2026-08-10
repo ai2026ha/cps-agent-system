@@ -1149,23 +1149,57 @@ def channel_daily_turnover(
     public_agent_id: str = "",
     agent_level: int | None = Query(default=None, ge=1, le=3),
     settlement_date: date | None = Query(default=None, alias="date"),
+    # 兼容 V39 旧前端参数。V40 只允许单日；如果旧前端提交同一天的
+    # start_date/end_date 仍可工作，提交真正的日期区间则明确拒绝。
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
     principal=Depends(require_permission("settlements.view")),
 ):
-    """按北京时间自然日展示代理真实支付流水。
+    """展示代理真实支付流水：默认总流水，仅支持北京时间单日筛选。
 
-    超管可查看全部代理；普通代理只查看自己代理树中的下级代理，不包含自己。
-    流水只统计 pay_status=paid 且 paid_at 非空的平台币订单，手工发放/收回、
-    商城订单以及未支付平台币订单都不会进入这里。
+    超管可查看全部代理，并可按一级/二级/三级筛选。普通代理只查看自己代理
+    树中的下级代理；等级筛选只能选择当前账号有权查看的下级代理等级。一级代理
+    可筛二级/三级，二级代理可筛三级；统计 pay_status=paid 且 paid_at 非空的平台币订单。
     """
-    selected_date = settlement_date or business_today()
-    start_dt, end_dt = business_date_bounds(selected_date, selected_date)
+    legacy_dates = [d for d in (start_date, end_date) if d is not None]
+    if legacy_dates:
+        if len(set(legacy_dates)) > 1:
+            raise HTTPException(400, "渠道结算仅支持单日查询，不支持日期区间")
+        legacy_date = legacy_dates[0]
+        if settlement_date is not None and settlement_date != legacy_date:
+            raise HTTPException(400, "渠道结算仅支持选择一个日期")
+        settlement_date = settlement_date or legacy_date
+
+    if principal.actor_type == "agent":
+        current_agent = db.get(Agent, principal.agent_pk)
+        current_level = int(current_agent.agent_level or 1) if current_agent else 3
+        allowed_filter_levels = {1: {2, 3}, 2: {3}, 3: set()}.get(current_level, set())
+        if agent_level is not None and agent_level not in allowed_filter_levels:
+            allowed_names = "、".join(agent_level_name(level) for level in sorted(allowed_filter_levels)) or "无下级代理"
+            raise HTTPException(403, f"当前账号等级查询只能选择{allowed_names}")
+
+    if settlement_date is not None:
+        start_dt, end_dt = business_date_bounds(settlement_date, settlement_date)
+        period_type = "day"
+        period_label = str(settlement_date)
+    else:
+        start_dt, end_dt = None, None
+        period_type = "total"
+        period_label = "全部时间"
 
     q = db.query(Agent)
     if principal.actor_type == "agent":
         visible_ids = scoped_agent_ids(db, principal, include_self=False)
         if not visible_ids:
-            return {"date": str(selected_date), "rows": []}
+            return {
+                "period_type": period_type,
+                "period_label": period_label,
+                "date": str(settlement_date) if settlement_date else None,
+                "start_date": str(settlement_date) if settlement_date else None,
+                "end_date": str(settlement_date) if settlement_date else None,
+                "rows": [],
+            }
         q = q.filter(Agent.id.in_(visible_ids))
 
     account = account.strip()
@@ -1181,18 +1215,21 @@ def channel_daily_turnover(
     agent_ids = [a.id for a in agents]
     turnover_map: dict[int, Decimal] = {}
     if agent_ids:
+        filters = [
+            PlatformCoinOrder.agent_id.in_(agent_ids),
+            PlatformCoinOrder.pay_status == "paid",
+            PlatformCoinOrder.paid_at.is_not(None),
+        ]
+        if start_dt is not None:
+            filters.append(PlatformCoinOrder.paid_at >= start_dt)
+        if end_dt is not None:
+            filters.append(PlatformCoinOrder.paid_at < end_dt)
         paid_rows = (
             db.query(
                 PlatformCoinOrder.agent_id,
                 func.coalesce(func.sum(PlatformCoinOrder.amount), 0),
             )
-            .filter(
-                PlatformCoinOrder.agent_id.in_(agent_ids),
-                PlatformCoinOrder.pay_status == "paid",
-                PlatformCoinOrder.paid_at.is_not(None),
-                PlatformCoinOrder.paid_at >= start_dt,
-                PlatformCoinOrder.paid_at < end_dt,
-            )
+            .filter(*filters)
             .group_by(PlatformCoinOrder.agent_id)
             .all()
         )
@@ -1209,15 +1246,24 @@ def channel_daily_turnover(
             "agent_name": agent.agent_name,
             "agent_level": int(agent.agent_level or 1),
             "agent_level_name": agent_level_name(agent.agent_level),
-            "parent_agent_display": agent.parent.agent_id if agent.parent else "超管",
-            "date": str(selected_date),
+            "period_type": period_type,
+            "period_label": period_label,
+            "date": str(settlement_date) if settlement_date else None,
             "turnover": money(turnover),
             "commission_rate": float(rate),
+            # 保留接口兼容字段；V40 渠道结算表不再展示佣金金额。
             "commission_amount": money(turnover * rate),
         })
 
     rows.sort(key=lambda row: (-Decimal(str(row["turnover"])), int(row["id"])))
-    return {"date": str(selected_date), "rows": rows}
+    return {
+        "period_type": period_type,
+        "period_label": period_label,
+        "date": str(settlement_date) if settlement_date else None,
+        "start_date": str(settlement_date) if settlement_date else None,
+        "end_date": str(settlement_date) if settlement_date else None,
+        "rows": rows,
+    }
 
 
 @app.get("/api/settlements")
