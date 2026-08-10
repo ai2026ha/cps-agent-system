@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
-    AdminUser, Agent, Player, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
+    AdminUser, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, MailRecord,
 )
 from .schemas import (
@@ -432,6 +432,63 @@ def ensure_player_admin_columns():
                 )
 
 
+def ensure_player_character_data():
+    """V34：把玩家角色改为一对多的“区服 + 角色名”绑定数据。
+
+    新表由 Base.metadata.create_all 自动创建。对于历史玩家，如果旧 players 表里的
+    role_name/server_name 已经是有效角色数据，则迁移为一条主角色记录。旧字段继续
+    保留仅用于兼容，不再作为玩家列表的展示数据源。
+    """
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "players" not in tables or "player_characters" not in tables:
+        return
+    db = SessionLocal()
+    try:
+        existing_player_ids = {row[0] for row in db.query(PlayerCharacter.player_id).distinct().all()}
+        legacy_players = db.query(Player).filter(~Player.id.in_(existing_player_ids)).all() if existing_player_ids else db.query(Player).all()
+        changed = False
+        for player in legacy_players:
+            role = (player.role_name or "").strip()
+            server = (player.server_name or "").strip()
+            if not role or not server or role == "未绑定" or server == "未绑定":
+                continue
+            db.add(PlayerCharacter(
+                player_id=player.id,
+                role_name=role,
+                server_name=server,
+                is_primary=True,
+                last_seen_at=player.last_login_at,
+            ))
+            changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
+def player_character_payloads(db: Session, player_ids: list[int]) -> dict[int, list[dict]]:
+    """批量读取玩家角色，主角色优先，其次按最近记录和主键排序。"""
+    if not player_ids:
+        return {}
+    rows = (
+        db.query(PlayerCharacter)
+        .filter(PlayerCharacter.player_id.in_(player_ids))
+        .order_by(PlayerCharacter.player_id.asc(), PlayerCharacter.is_primary.desc(), PlayerCharacter.id.asc())
+        .all()
+    )
+    result: dict[int, list[dict]] = {}
+    for row in rows:
+        result.setdefault(row.player_id, []).append({
+            "id": row.id,
+            "role_name": row.role_name,
+            "server_name": row.server_name,
+            "is_primary": bool(row.is_primary),
+            "last_seen_at": dt(row.last_seen_at),
+        })
+    return result
+
+
 def sync_real_payment_aggregates():
     """把历史缓存统计纠正为“真实已支付平台币订单”口径。
 
@@ -523,6 +580,7 @@ def startup():
     Base.metadata.create_all(bind=engine)
     ensure_agent_hierarchy_columns()
     ensure_player_admin_columns()
+    ensure_player_character_data()
     ensure_agent_public_identity_format()
     sync_real_payment_aggregates()
     seed_admin()
@@ -1183,7 +1241,14 @@ def list_players(
         q = q.filter(Player.username.like(f"%{account}%"))
     if keyword:
         like = f"%{keyword}%"
-        q = q.filter((Player.player_id.like(like)) | (Player.username.like(like)) | (Player.role_name.like(like)) | (Player.server_name.like(like)))
+        character_player_ids = db.query(PlayerCharacter.player_id).filter(
+            (PlayerCharacter.role_name.like(like)) | (PlayerCharacter.server_name.like(like))
+        )
+        q = q.filter(
+            (Player.player_id.like(like)) |
+            (Player.username.like(like)) |
+            (Player.id.in_(character_player_ids))
+        )
     if parent:
         normalized = parent.lower()
         if normalized in {"超管", "超级管理员", "superadmin", "admin", "总平台"}:
@@ -1202,12 +1267,13 @@ def list_players(
         a.id: {"agent_id": a.agent_id, "username": a.username, "agent_name": a.agent_name}
         for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).all()
     } if agent_ids else {}
+    character_map = player_character_payloads(db, [p.id for p in rows])
     return [{
         "id": p.id,
         "player_id": p.player_id,
         "username": p.username,
-        "role_name": p.role_name,
-        "server_name": p.server_name,
+        "characters": character_map.get(p.id, []),
+        "primary_role_name": (character_map.get(p.id, [{}])[0].get("role_name") if character_map.get(p.id) else "未绑定"),
         "agent_id": p.agent_id,
         "agent_public_id": agents.get(p.agent_id, {}).get("agent_id") if p.agent_id is not None else "超管",
         "agent_account": agents.get(p.agent_id, {}).get("username") if p.agent_id is not None else "admin",

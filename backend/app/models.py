@@ -54,6 +54,19 @@ class Player(Base):
     platform_coin_balance: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+class PlayerCharacter(Base):
+    __tablename__ = "player_characters"
+    __table_args__ = (
+        UniqueConstraint("player_id", "server_name", "role_name", name="uq_player_server_role"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    role_name: Mapped[str] = mapped_column(String(100), index=True)
+    server_name: Mapped[str] = mapped_column(String(100), index=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
 class PlayerCoinLedger(Base):
     __tablename__ = "player_coin_ledger"
     id: Mapped[int] = mapped_column(primary_key=True)

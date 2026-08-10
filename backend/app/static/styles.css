@@ -283,3 +283,21 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 
 /* V33: 超管更改代理/玩家归属使用可搜索下拉框；默认保持当前归属 */
 .search-select-control{display:grid;gap:7px}.search-select-control .search-select-input{height:38px;padding:8px 10px;border:1px solid #dce2ed;border-radius:9px;background:#fff}.search-select-control select{height:42px}.search-select-control .search-select-input:focus,.search-select-control select:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}.search-select-help{font-size:11px;line-height:1.4;color:#8a94a8}.search-select-filtering .search-select-help{color:#53627b}
+
+/* V34 玩家多区服角色：列表只显示角色名，展开后查看绑定区服与其它角色。 */
+.player-role-dropdown{position:relative;display:inline-block;min-width:118px;max-width:220px}
+.player-role-dropdown summary{list-style:none;display:inline-flex;align-items:center;gap:7px;min-height:30px;max-width:100%;padding:4px 8px;border:1px solid #e1e6ef;border-radius:8px;background:#fff;cursor:pointer;color:#172033;font-weight:700;line-height:1.2;user-select:none}
+.player-role-dropdown summary::-webkit-details-marker{display:none}
+.player-role-dropdown summary:hover{border-color:#bdc9dc;background:#f8faff}
+.player-role-current{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
+.player-role-chevron{font-size:14px;color:#76839a;transition:transform .15s ease;transform:translateY(-1px)}
+.player-role-dropdown[open] .player-role-chevron{transform:rotate(180deg) translateY(1px)}
+.player-role-menu{position:absolute;z-index:20;left:0;top:calc(100% + 5px);min-width:220px;max-width:300px;max-height:250px;overflow:auto;padding:6px;background:#fff;border:1px solid #e1e6ef;border-radius:10px;box-shadow:0 10px 28px rgba(27,39,65,.14)}
+.player-role-option{padding:8px 9px;border-radius:7px}
+.player-role-option+.player-role-option{border-top:1px solid #f0f2f6;border-top-left-radius:0;border-top-right-radius:0}
+.player-role-option:hover{background:#f7f9fc}
+.player-role-option-name{display:flex;align-items:center;gap:6px;color:#172033;font-size:13px;font-weight:700}
+.player-role-option-server{margin-top:3px;color:#7d889b;font-size:12px}
+.role-primary-tag{display:inline-flex;align-items:center;height:18px;padding:0 5px;border-radius:5px;background:#eaf2ff;color:#3568b8;font-size:10px;font-weight:800}
+.muted{color:#919bad}
+@media(max-width:720px){.player-role-menu{min-width:190px;max-width:240px}.player-role-current{max-width:120px}}

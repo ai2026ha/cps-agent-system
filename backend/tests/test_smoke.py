@@ -172,8 +172,8 @@ def test_player_registers_via_agent_link_and_is_auto_bound():
         assert players.status_code == 200, players.text
         row = next(x for x in players.json() if x['username'] == 'linked_player_001')
         assert row['agent_public_id'] == agent_public_id
-        assert row['role_name'] == '未绑定'
-        assert row['server_name'] == '未绑定'
+        assert row['primary_role_name'] == '未绑定'
+        assert row['characters'] == []
 
         # 后台不再允许手工新增玩家，统一从代理专属注册地址进入。
         manual = c.post('/api/players', headers=auth(admin), json={
@@ -831,3 +831,44 @@ def test_blank_parent_selection_keeps_existing_agent_and_player_ownership():
         assert move_player.status_code == 200, move_player.text
         player_info = c.get(f'/api/players/{player_pk}/edit', headers=auth(admin))
         assert player_info.json()['owner_agent_id'] == p2_id
+
+
+def test_player_multiple_server_roles_are_bound_and_returned_as_character_list():
+    """V34: 一个玩家账号可绑定多个区服角色，列表不再拆成角色名/区服两列。"""
+    from app.database import SessionLocal
+    from app.models import Player, PlayerCharacter
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent = create_agent(c, admin, 'multi_role_agent', '多角色代理', 1, 5, 0.1)
+        assert agent.status_code == 200, agent.text
+        agent_id = agent.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{agent_id}', json={
+            'username': 'multi_role_player',
+            'password': 'PlayerPass123!',
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        db = SessionLocal()
+        try:
+            player = db.get(Player, player_pk)
+            assert player is not None
+            db.add_all([
+                PlayerCharacter(player_id=player_pk, role_name='剑心', server_name='一区·龙城', is_primary=True),
+                PlayerCharacter(player_id=player_pk, role_name='星河', server_name='二区·天启', is_primary=False),
+                PlayerCharacter(player_id=player_pk, role_name='夜雨', server_name='三区·苍穹', is_primary=False),
+            ])
+            db.commit()
+        finally:
+            db.close()
+
+        rows = c.get('/api/players', headers=auth(admin), params={'account': 'multi_role_player'})
+        assert rows.status_code == 200, rows.text
+        row = rows.json()[0]
+        assert row['primary_role_name'] == '剑心'
+        assert [x['role_name'] for x in row['characters']] == ['剑心', '星河', '夜雨']
+        assert [x['server_name'] for x in row['characters']] == ['一区·龙城', '二区·天启', '三区·苍穹']
+        assert row['characters'][0]['is_primary'] is True
+        assert 'role_name' not in row
+        assert 'server_name' not in row
