@@ -57,9 +57,9 @@ def test_agent_id_invite_parent_level_and_limit_are_controlled():
         parent = create_agent(c, admin_token, 'parent_agent', '一级代理', 1, 2)
         assert parent.status_code == 200, parent.text
         parent_data = parent.json()
-        assert parent_data['agent_id'].startswith('AG')
-        assert len(parent_data['agent_id']) == 10
-        assert len(parent_data['invite_code']) == 8
+        assert parent_data['agent_id'].startswith('A')
+        assert parent_data['agent_id'][1:].isdigit()
+        assert parent_data['invite_code'] == parent_data['agent_id']
         assert parent_data['parent_agent_id'] is None
         assert parent_data['parent_agent_display'] == '超管'
         assert parent_data['agent_level'] == 1
@@ -69,11 +69,13 @@ def test_agent_id_invite_parent_level_and_limit_are_controlled():
         child = create_agent(c, parent_token, 'child_agent', '二级代理', 2, 1, 0.05)
         assert child.status_code == 200, child.text
         child_data = child.json()
-        assert child_data['agent_id'].startswith('AG')
+        assert child_data['agent_id'].startswith('A')
+        assert child_data['agent_id'][1:].isdigit()
         assert child_data['agent_id'] != parent_data['agent_id']
         assert child_data['parent_agent_id'] == parent_data['agent_id']
         assert child_data['agent_level'] == 2
         assert child_data['subagent_limit'] == 1
+        assert child_data['invite_code'] == child_data['agent_id']
         assert child_data['invite_code'] != parent_data['invite_code']
 
         rows = c.get('/api/agents', headers=auth(parent_token))
@@ -82,7 +84,7 @@ def test_agent_id_invite_parent_level_and_limit_are_controlled():
         assert row['agent_level_name'] == '二级代理'
         assert row['subagent_limit'] == 1
         assert row['subagent_count'] == 0
-        assert row['subagent_remaining'] == 1
+        assert 'subagent_remaining' not in row
 
 
 def test_three_level_chain_and_creation_permissions():
@@ -196,17 +198,143 @@ def test_agent_query_bar_filters_and_custom_turnover():
         })
         assert order.status_code == 200, order.text
 
-        today = str(date.today())
-        period = c.get('/api/agents', headers=auth(admin), params={
+        # 今日/昨日/自定义是 V12 的三种流水查询模式。
+        today_period = c.get('/api/agents', headers=auth(admin), params={
             'public_agent_id': child_public_id,
+            'turnover_period': 'today',
+        })
+        assert today_period.status_code == 200, today_period.text
+        assert today_period.json()[0]['period_turnover'] == 88.66
+        assert today_period.json()[0]['turnover_period'] == 'today'
+
+        yesterday_period = c.get('/api/agents', headers=auth(admin), params={
+            'public_agent_id': child_public_id,
+            'turnover_period': 'yesterday',
+        })
+        assert yesterday_period.status_code == 200, yesterday_period.text
+        assert yesterday_period.json()[0]['period_turnover'] == 0
+
+        today = str(date.today())
+        custom_period = c.get('/api/agents', headers=auth(admin), params={
+            'public_agent_id': child_public_id,
+            'turnover_period': 'custom',
             'turnover_start': today,
             'turnover_end': today,
         })
-        assert period.status_code == 200, period.text
-        assert period.json()[0]['period_turnover'] == 88.66
+        assert custom_period.status_code == 200, custom_period.text
+        assert custom_period.json()[0]['period_turnover'] == 88.66
+
+        missing_custom_range = c.get('/api/agents', headers=auth(admin), params={
+            'turnover_period': 'custom',
+        })
+        assert missing_custom_range.status_code == 400
 
         bad_range = c.get('/api/agents', headers=auth(admin), params={
+            'turnover_period': 'custom',
             'turnover_start': '2026-08-10',
             'turnover_end': '2026-08-09',
         })
         assert bad_range.status_code == 400
+
+
+def test_agent_edit_password_ban_commission_limit_and_reparent():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+
+        l1a = create_agent(c, admin, 'edit_l1a', '编辑一级A', 1, 3, 0.10)
+        l1b = create_agent(c, admin, 'edit_l1b', '编辑一级B', 1, 3, 0.12)
+        assert l1a.status_code == 200 and l1b.status_code == 200
+        l1a_data, l1b_data = l1a.json(), l1b.json()
+        l1a_token = login(c, 'edit_l1a', 'AgentPass123!')
+
+        l2 = create_agent(c, l1a_token, 'edit_l2', '编辑二级', 2, 2, 0.15)
+        assert l2.status_code == 200, l2.text
+        l2_data = l2.json()
+
+        rows = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': l2_data['agent_id']}).json()
+        target = rows[0]
+
+        options = c.get(f"/api/agents/{target['id']}/edit-options", headers=auth(admin))
+        assert options.status_code == 200, options.text
+        opt_data = options.json()
+        assert opt_data['can_change_parent'] is True
+        assert any(x['value'] == l1b_data['agent_id'] for x in opt_data['parent_options'])
+
+        updated = c.patch(f"/api/agents/{target['id']}", headers=auth(admin), json={
+            'password': 'NewAgentPass456!',
+            'status': 'active',
+            'commission_rate': 0.35,
+            'subagent_limit': 5,
+            'parent_agent_id': l1b_data['agent_id'],
+        })
+        assert updated.status_code == 200, updated.text
+        changed = updated.json()['agent']
+        assert changed['parent_agent_id'] == l1b_data['agent_id']
+        assert changed['commission_rate'] == 0.35
+        assert changed['subagent_limit'] == 5
+
+        # 密码已经真正更新。
+        assert c.post('/api/auth/login', json={'username': 'edit_l2', 'password': 'AgentPass123!'}).status_code == 401
+        assert c.post('/api/auth/login', json={'username': 'edit_l2', 'password': 'NewAgentPass456!'}).status_code == 200
+
+        # 原上级已无权编辑，新的直属上级可编辑，但不能自行更改归属。
+        old_parent_edit = c.patch(f"/api/agents/{target['id']}", headers=auth(l1a_token), json={'commission_rate': 0.2})
+        assert old_parent_edit.status_code == 403
+        l1b_token = login(c, 'edit_l1b', 'AgentPass123!')
+        child_options = c.get(f"/api/agents/{target['id']}/edit-options", headers=auth(l1b_token))
+        assert child_options.status_code == 200
+        child_opt = child_options.json()
+        assert child_opt['can_change_parent'] is False
+        assert child_opt['can_full_edit'] is False
+        assert child_opt['editable_fields'] == ['agent_name', 'commission_rate']
+
+        # 普通代理只能修改直属下级的代理名称与佣金比例。
+        limited_edit = c.patch(f"/api/agents/{target['id']}", headers=auth(l1b_token), json={
+            'agent_name': '新的二级代理名称',
+            'commission_rate': 0.22,
+        })
+        assert limited_edit.status_code == 200, limited_edit.text
+        limited_data = limited_edit.json()['agent']
+        assert limited_data['agent_name'] == '新的二级代理名称'
+        assert limited_data['commission_rate'] == 0.22
+
+        for forbidden_payload in [
+            {'parent_agent_id': l1a_data['agent_id']},
+            {'status': 'disabled'},
+            {'subagent_limit': 9},
+            {'password': 'AgentForbidden999!'},
+        ]:
+            denied = c.patch(f"/api/agents/{target['id']}", headers=auth(l1b_token), json=forbidden_payload)
+            assert denied.status_code == 403, (forbidden_payload, denied.text)
+            assert '只能修改直属下级的代理名称和佣金比例' in denied.json()['detail']
+
+        # 封禁后该代理后台立即不可登录；超管可以再解封。
+        banned = c.patch(f"/api/agents/{target['id']}", headers=auth(admin), json={'status': 'disabled'})
+        assert banned.status_code == 200
+        assert c.post('/api/auth/login', json={'username': 'edit_l2', 'password': 'NewAgentPass456!'}).status_code == 401
+        unbanned = c.patch(f"/api/agents/{target['id']}", headers=auth(admin), json={'status': 'active'})
+        assert unbanned.status_code == 200
+        assert c.post('/api/auth/login', json={'username': 'edit_l2', 'password': 'NewAgentPass456!'}).status_code == 200
+
+
+def test_edit_limit_cannot_be_below_opened_children_and_hierarchy_is_strict():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        l1 = create_agent(c, admin, 'limit_edit_l1', '限额一级', 1, 3)
+        assert l1.status_code == 200
+        l1_token = login(c, 'limit_edit_l1', 'AgentPass123!')
+        l2 = create_agent(c, l1_token, 'limit_edit_l2', '限额二级', 2, 2)
+        assert l2.status_code == 200
+        l2_token = login(c, 'limit_edit_l2', 'AgentPass123!')
+        l3 = create_agent(c, l2_token, 'limit_edit_l3', '限额三级', 3, 0)
+        assert l3.status_code == 200
+
+        l2_row = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': l2.json()['agent_id']}).json()[0]
+        too_low = c.patch(f"/api/agents/{l2_row['id']}", headers=auth(admin), json={'subagent_limit': 0})
+        assert too_low.status_code == 400
+        assert '不能小于已开通数量' in too_low.json()['detail']
+
+        # 二级代理不能直接改为归属超管。
+        bad_parent = c.patch(f"/api/agents/{l2_row['id']}", headers=auth(admin), json={'parent_agent_id': 'SUPERADMIN'})
+        assert bad_parent.status_code == 400
+        assert '必须归属一级代理' in bad_parent.json()['detail']

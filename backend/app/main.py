@@ -16,7 +16,7 @@ from .models import (
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, MailRecord,
 )
 from .schemas import (
-    LoginIn, AgentCreate, PlayerCreate, ProductCreate, PlatformOrderCreate, MallOrderCreate,
+    LoginIn, AgentCreate, AgentUpdate, PlayerCreate, ProductCreate, PlatformOrderCreate, MallOrderCreate,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, MailCreate,
 )
@@ -458,6 +458,152 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Dep
         "parent_agent_display": row.parent.agent_id if row.parent else "超管",
         "message": f"{agent_level_name(row.agent_level)}创建成功，代理ID：{row.agent_id}，邀请码：{row.invite_code}",
     }
+
+
+def can_manage_agent(db: Session, principal, target: Agent) -> bool:
+    """超管可管理全部代理；普通代理只能管理自己的直属下级。"""
+    if principal.actor_type == "admin":
+        return principal.role == "superadmin"
+    return target.parent_id == principal.agent_pk
+
+
+def assert_manage_agent(db: Session, principal, target: Agent):
+    if not can_manage_agent(db, principal, target):
+        raise HTTPException(403, "只能编辑自己有权限管理的代理")
+
+
+def would_create_parent_cycle(db: Session, target_pk: int, new_parent_pk: int) -> bool:
+    """防御性循环检测。三级层级正常情况下不会触发，但数据库异常时也必须拦截。"""
+    seen = set()
+    current = new_parent_pk
+    while current is not None and current not in seen:
+        if current == target_pk:
+            return True
+        seen.add(current)
+        row = db.get(Agent, current)
+        current = row.parent_id if row else None
+    return False
+
+
+def parent_candidates_for_agent(db: Session, target: Agent):
+    level = int(target.agent_level or 1)
+    if level == 1:
+        return [{"value": "SUPERADMIN", "label": "超管"}]
+    required_parent_level = level - 1
+    rows = db.query(Agent).filter(Agent.agent_level == required_parent_level).order_by(Agent.id.asc()).all()
+    result = []
+    for row in rows:
+        if row.id == target.id:
+            continue
+        used = db.query(Agent).filter(Agent.parent_id == row.id, Agent.id != target.id).count()
+        # 当前上级始终保留在选项中（即使它已被封禁）；其它上级必须是正常状态且还有名额。
+        if row.id != target.parent_id:
+            if row.status != "active" or used >= int(row.subagent_limit or 0):
+                continue
+        status_suffix = " · 已封禁" if row.status != "active" else ""
+        result.append({
+            "value": row.agent_id,
+            "label": f"{row.agent_id} · {row.agent_name} · {row.username}{status_suffix}",
+        })
+    return result
+
+
+@app.get("/api/agents/{agent_pk}/edit-options")
+def agent_edit_options(agent_pk: int, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+    target = db.get(Agent, agent_pk)
+    if not target:
+        raise HTTPException(404, "代理不存在")
+    assert_manage_agent(db, principal, target)
+    is_superadmin = principal.actor_type == "admin" and principal.role == "superadmin"
+    return {
+        "agent": serialize_agent(target, db),
+        "edit_mode": "superadmin" if is_superadmin else "direct_parent",
+        "can_full_edit": is_superadmin,
+        "can_change_parent": is_superadmin,
+        "editable_fields": (
+            ["agent_name", "commission_rate", "password", "status", "subagent_limit", "parent_agent_id"]
+            if is_superadmin else ["agent_name", "commission_rate"]
+        ),
+        "parent_options": parent_candidates_for_agent(db, target) if is_superadmin else [],
+    }
+
+
+@app.patch("/api/agents/{agent_pk}")
+def update_agent(agent_pk: int, body: AgentUpdate, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+    target = db.query(Agent).filter(Agent.id == agent_pk).with_for_update().first()
+    if not target:
+        raise HTTPException(404, "代理不存在")
+    assert_manage_agent(db, principal, target)
+
+    fields = body.model_fields_set
+    is_superadmin = principal.actor_type == "admin" and principal.role == "superadmin"
+    # 普通代理只能维护自己直属下级的代理名称与佣金比例。
+    # 密码、后台状态、下级额度、归属关系均为超管专属权限，后端必须强制拦截，不能只靠前端隐藏。
+    allowed_fields = (
+        {"agent_name", "commission_rate", "password", "status", "subagent_limit", "parent_agent_id"}
+        if is_superadmin else {"agent_name", "commission_rate"}
+    )
+    forbidden_fields = fields - allowed_fields
+    if forbidden_fields:
+        raise HTTPException(403, "普通代理只能修改直属下级的代理名称和佣金比例")
+
+    if "agent_name" in fields:
+        new_name = (body.agent_name or "").strip()
+        if not new_name:
+            raise HTTPException(400, "代理名称不能为空")
+        target.agent_name = new_name
+
+    if "password" in fields and body.password:
+        target.password_hash = hash_password(body.password)
+
+    if "status" in fields:
+        if body.status not in {"active", "disabled"}:
+            raise HTTPException(400, "后台状态只能选择正常或封禁")
+        target.status = body.status
+
+    if "commission_rate" in fields and body.commission_rate is not None:
+        target.commission_rate = body.commission_rate
+
+    if "subagent_limit" in fields and body.subagent_limit is not None:
+        level = int(target.agent_level or 1)
+        new_limit = int(body.subagent_limit)
+        opened = db.query(Agent).filter(Agent.parent_id == target.id).count()
+        if level >= 3 and new_limit != 0:
+            raise HTTPException(400, "三级代理为末级代理，可开通下级代理数量必须为 0")
+        if new_limit < opened:
+            raise HTTPException(400, f"可开通下级代理数量不能小于已开通数量 {opened}")
+        target.subagent_limit = 0 if level >= 3 else new_limit
+
+    if "parent_agent_id" in fields:
+        level = int(target.agent_level or 1)
+        requested = (body.parent_agent_id or "").strip().upper()
+        if level == 1:
+            if requested not in {"", "SUPERADMIN", "超管", "超级管理员"}:
+                raise HTTPException(400, "一级代理只能归属超管")
+            target.parent_id = None
+        else:
+            if requested in {"", "SUPERADMIN", "超管", "超级管理员"}:
+                raise HTTPException(400, f"{agent_level_name(level)}必须归属{agent_level_name(level - 1)}")
+            new_parent = db.query(Agent).filter(func.upper(Agent.agent_id) == requested).with_for_update().first()
+            if not new_parent:
+                raise HTTPException(404, "新的上级代理不存在")
+            if new_parent.id == target.id:
+                raise HTTPException(400, "代理不能归属自己")
+            if int(new_parent.agent_level or 1) != level - 1:
+                raise HTTPException(400, f"{agent_level_name(level)}只能归属{agent_level_name(level - 1)}")
+            if new_parent.status != "active":
+                raise HTTPException(400, "新的上级代理已封禁，不能接收下级")
+            if would_create_parent_cycle(db, target.id, new_parent.id):
+                raise HTTPException(400, "更改归属会形成循环关系")
+            if target.parent_id != new_parent.id:
+                used = db.query(Agent).filter(Agent.parent_id == new_parent.id, Agent.id != target.id).count()
+                if used >= int(new_parent.subagent_limit or 0):
+                    raise HTTPException(400, "新的上级代理可开通下级数量已满")
+                target.parent_id = new_parent.id
+
+    db.commit()
+    db.refresh(target)
+    return {"message": "代理资料修改成功", "agent": serialize_agent(target, db)}
 
 
 @app.get("/api/agents/{agent_pk}/subagents")

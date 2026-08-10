@@ -14,6 +14,14 @@ class AgentCreate(BaseModel):
     subagent_limit: int = Field(ge=0, le=9999)
     commission_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1)
 
+class AgentUpdate(BaseModel):
+    agent_name: str | None = Field(default=None, min_length=1, max_length=100)
+    password: str | None = Field(default=None, min_length=8)
+    status: str | None = None
+    commission_rate: Decimal | None = Field(default=None, ge=0, le=1)
+    subagent_limit: int | None = Field(default=None, ge=0, le=9999)
+    parent_agent_id: str | None = None
+
 class PlayerCreate(BaseModel):
     player_id: str
     username: str
