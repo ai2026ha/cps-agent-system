@@ -9,7 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .models import AdminUser, Agent
+from .models import AdminUser, Agent, Player
 
 ph = PasswordHasher()
 bearer = HTTPBearer(auto_error=False)
@@ -81,6 +81,9 @@ def current_user(
             agent_id=agent.agent_id,
         )
 
+    if actor_type == "player":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="玩家账号不能访问代理后台")
+
     admin = db.query(AdminUser).filter(AdminUser.username == username, AdminUser.enabled.is_(True)).first()
     if not admin:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="管理员不存在")
@@ -98,6 +101,22 @@ def current_admin(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="管理员不存在")
     return admin
 
+
+
+def current_player(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> Player:
+    """玩家中心独立鉴权，玩家 token 不能访问代理后台。"""
+    payload = _payload(credentials)
+    if payload.get("actor_type") != "player":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="请使用玩家账号登录")
+    username = payload.get("sub")
+    actor_id = payload.get("actor_id")
+    player = db.get(Player, actor_id) if actor_id else None
+    if not player or player.username != username or player.status != "active":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="玩家账号不存在或已停用")
+    return player
 
 def current_channel_user(principal: Principal = Depends(current_user)) -> Principal:
     """渠道管理允许平台管理员和代理账号访问。"""

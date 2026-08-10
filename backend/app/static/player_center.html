@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>玩家中心 · CPS</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#1b2740;background:#f4f7fb}button,input{font:inherit}.hidden{display:none!important}.shell{min-height:100vh}.login-wrap{min-height:100vh;display:grid;place-items:center;padding:24px}.login-card{width:min(440px,100%);background:#fff;border:1px solid #e2e7ef;border-radius:18px;box-shadow:0 18px 48px rgba(34,52,84,.12);padding:30px}.brand{display:flex;align-items:center;gap:11px;margin-bottom:24px}.logo{width:44px;height:44px;border-radius:12px;background:#1e3a70;color:#fff;display:grid;place-items:center;font-weight:800}.brand strong{font-size:20px}.brand small{display:block;color:#8a96aa;margin-top:2px}.notice{padding:11px 13px;border-radius:10px;background:#edf7f2;color:#167a57;border:1px solid #cfeadf;font-size:13px;margin-bottom:18px}h1{font-size:25px;margin:0 0 7px}.sub{margin:0 0 22px;color:#7a879c;font-size:14px}label{display:block;font-size:13px;font-weight:700;margin:14px 0 7px}input{width:100%;height:44px;border:1px solid #d8e0ec;border-radius:10px;padding:0 12px;outline:none;background:#fff}input:focus{border-color:#5c86e8;box-shadow:0 0 0 3px rgba(92,134,232,.12)}.primary{border:0;background:#1e3a70;color:#fff;border-radius:10px;height:44px;font-weight:700;cursor:pointer}.login-card .primary{width:100%;margin-top:22px}.primary:disabled,.buy-btn:disabled{opacity:.55;cursor:not-allowed}.msg{min-height:20px;margin-top:12px;font-size:13px;color:#c43c4c}.center{max-width:1280px;margin:0 auto;padding:24px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px}.topbar-brand{display:flex;align-items:center;gap:10px}.topbar-brand .logo{width:38px;height:38px}.topbar h2{font-size:20px;margin:0}.topbar p{margin:3px 0 0;color:#8995a8;font-size:12px}.top-actions{display:flex;gap:8px}.ghost{height:36px;padding:0 14px;border-radius:9px;border:1px solid #dce3ed;background:#fff;color:#4f5d73;cursor:pointer}.overview{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:12px;margin-bottom:18px}.stat{background:#fff;border:1px solid #e1e7ef;border-radius:13px;padding:15px 16px}.stat span{display:block;color:#8792a5;font-size:12px;margin-bottom:7px}.stat strong{font-size:19px}.coin strong{color:#c77711}.tabs{display:flex;gap:7px;margin:0 0 12px}.tab{border:1px solid #dce3ed;background:#fff;color:#59667a;height:38px;padding:0 17px;border-radius:9px;cursor:pointer}.tab.active{background:#1e3a70;color:#fff;border-color:#1e3a70}.panel{background:#fff;border:1px solid #e1e7ef;border-radius:14px;padding:18px}.panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:15px}.panel-head h3{margin:0 0 4px;font-size:17px}.panel-head p{margin:0;color:#8a96a8;font-size:12px}.products{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.product{border:1px solid #e1e7ef;border-radius:13px;padding:16px;background:#fbfcfe;display:flex;flex-direction:column;min-height:190px}.product .sku{font-size:11px;color:#9aa5b6;margin-bottom:7px}.product h4{font-size:17px;margin:0 0 7px}.desc{font-size:13px;color:#728096;line-height:1.55;flex:1;white-space:pre-wrap}.product-foot{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-top:16px}.price{font-size:13px;color:#8b95a6}.price strong{display:block;color:#c77711;font-size:20px;margin-top:2px}.stock{font-size:11px;color:#929daf}.buy-area{display:flex;align-items:center;gap:7px}.qty{width:58px;height:36px;padding:0 8px;border-radius:8px}.buy-btn{height:36px;border:0;border-radius:8px;background:#1e3a70;color:#fff;padding:0 13px;font-weight:700;cursor:pointer}.empty{padding:42px 20px;text-align:center;color:#94a0b1}.table-wrap{overflow:auto;border:1px solid #e7ebf1;border-radius:10px}table{width:100%;border-collapse:collapse;min-width:820px}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid #edf0f4;font-size:13px;white-space:nowrap}th{background:#f7f9fc;color:#657289;font-weight:700}tbody tr:last-child td{border-bottom:0}.badge{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:999px;background:#f0f3f7;color:#647086;font-size:12px}.badge.ok{background:#e8f7f0;color:#167554}.badge.warn{background:#fff4df;color:#98600c}.badge.bad{background:#fdebec;color:#b53545}.toast{position:fixed;right:22px;top:22px;z-index:20;background:#1d2a42;color:#fff;border-radius:10px;padding:11px 14px;box-shadow:0 12px 32px rgba(24,38,64,.2);font-size:13px}.loading{opacity:.6;pointer-events:none}@media(max-width:900px){.overview{grid-template-columns:1fr 1fr}.products{grid-template-columns:1fr 1fr}}@media(max-width:620px){.center{padding:14px}.overview,.products{grid-template-columns:1fr}.topbar{align-items:flex-start}.top-actions{flex-direction:column}.panel{padding:13px}.product-foot{align-items:flex-start;flex-direction:column}.buy-area{width:100%}.buy-btn{flex:1}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <section id="loginView" class="login-wrap">
+    <main class="login-card">
+      <div class="brand"><div class="logo">CPS</div><div><strong>玩家中心</strong><small>登录后使用平台币购买网页商城礼包</small></div></div>
+      <div id="registeredNotice" class="notice hidden">注册成功，请使用刚刚创建的玩家账号登录。</div>
+      <h1>玩家登录</h1><p class="sub">账号与注册时填写的玩家账号一致。</p>
+      <form id="loginForm" autocomplete="off">
+        <label>玩家账号</label><input id="loginUser" autocomplete="username" required placeholder="请输入玩家账号">
+        <label>登录密码</label><input id="loginPass" type="password" autocomplete="current-password" required placeholder="请输入登录密码">
+        <button id="loginBtn" class="primary" type="submit">登录玩家中心</button>
+      </form>
+      <div id="loginMsg" class="msg"></div>
+    </main>
+  </section>
+
+  <section id="centerView" class="center hidden">
+    <header class="topbar">
+      <div class="topbar-brand"><div class="logo">CPS</div><div><h2>玩家中心</h2><p>平台币商城 · 我的订单</p></div></div>
+      <div class="top-actions"><button id="refreshBtn" class="ghost">刷新</button><button id="logoutBtn" class="ghost">退出登录</button></div>
+    </header>
+    <div id="overview" class="overview"></div>
+    <nav class="tabs"><button class="tab active" data-tab="mall">网页商城</button><button class="tab" data-tab="orders">我的订单</button></nav>
+    <section id="mallPanel" class="panel"><div class="panel-head"><div><h3>礼包商城</h3><p>使用平台币直接购买；购买成功后自动生成商城订单。</p></div></div><div id="products" class="products"></div></section>
+    <section id="ordersPanel" class="panel hidden"><div class="panel-head"><div><h3>我的商城订单</h3><p>只显示当前玩家自己的购买记录。</p></div></div><div id="orders"></div></section>
+  </section>
+</div>
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+let token=localStorage.getItem('cps_player_token')||'', me=null, busy=false;
+const params=new URLSearchParams(location.search);
+if(params.get('registered')==='1') $('#registeredNotice').classList.remove('hidden');
+if(params.get('username')) $('#loginUser').value=params.get('username');
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function errorText(d){if(typeof d==='string')return d;if(Array.isArray(d))return d.map(x=>x.msg||'参数错误').join('；');return d?.message||d?.msg||'请求失败'}
+async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token)headers.Authorization=`Bearer ${token}`;const r=await fetch(path,{...options,headers});let d={};try{d=await r.json()}catch{}if(r.status===401&&path!='/api/player/auth/login'){logout(false);throw new Error('登录已失效，请重新登录')}if(!r.ok)throw new Error(errorText(d.detail));return d}
+function toast(text){const old=$('.toast');if(old)old.remove();const el=document.createElement('div');el.className='toast';el.textContent=text;document.body.appendChild(el);setTimeout(()=>el.remove(),2600)}
+function logout(reload=true){token='';me=null;localStorage.removeItem('cps_player_token');$('#centerView').classList.add('hidden');$('#loginView').classList.remove('hidden');if(reload)location.replace('/player')}
+function deliveryText(v){return ({waiting:'待发货',sent:'已发货',success:'成功',failed:'失败'})[v]||v||'-'}
+function deliveryBadge(v){const c=['sent','success'].includes(v)?'ok':v==='failed'?'bad':'warn';return `<span class="badge ${c}">${esc(deliveryText(v))}</span>`}
+function renderOverview(){const chars=me.characters||[];const role=chars.find(x=>x.is_primary)||chars[0];$('#overview').innerHTML=`<div class="stat coin"><span>平台币余额</span><strong>${Number(me.platform_coin_balance||0).toLocaleString()}</strong></div><div class="stat"><span>玩家账号</span><strong>${esc(me.username)}</strong></div><div class="stat"><span>玩家ID</span><strong>${esc(me.player_id)}</strong></div><div class="stat"><span>当前角色</span><strong>${role?esc(role.role_name):'未绑定'}</strong></div>`}
+async function loadProducts(){const rows=await api('/api/player/mall/products');const root=$('#products');if(!rows.length){root.innerHTML='<div class="empty" style="grid-column:1/-1">暂无可购买礼包</div>';return}root.innerHTML=rows.map(x=>`<article class="product"><div class="sku">${esc(x.sku)}</div><h4>${esc(x.name)}</h4><div class="desc">${esc(x.description||'暂无礼包说明')}</div><div class="product-foot"><div><div class="price">平台币售价<strong>${Number(x.coin_price).toLocaleString()}</strong></div><div class="stock">库存：${Number(x.stock).toLocaleString()}</div></div><div class="buy-area"><input class="qty" data-qty="${x.id}" type="number" min="1" max="99" value="1"><button class="buy-btn" data-buy="${x.id}" ${x.available?'':'disabled'}>${x.available?'购买':'已售罄'}</button></div></div></article>`).join('');$$('[data-buy]').forEach(btn=>btn.onclick=()=>purchase(Number(btn.dataset.buy),btn))}
+async function loadOrders(){const rows=await api('/api/player/mall/orders');const root=$('#orders');if(!rows.length){root.innerHTML='<div class="empty">暂无商城订单</div>';return}root.innerHTML=`<div class="table-wrap"><table><thead><tr><th>订单号</th><th>礼包</th><th>数量</th><th>平台币</th><th>支付</th><th>发货</th><th>创建时间</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.order_no)}</td><td>${esc(x.product_name)}</td><td>${x.quantity}</td><td>${Number(x.coin_amount).toLocaleString()}</td><td><span class="badge ok">已支付</span></td><td>${deliveryBadge(x.delivery_status)}</td><td>${esc(x.created_at||'-')}</td></tr>`).join('')}</tbody></table></div>`}
+async function refreshAll(){me=await api('/api/player/me');renderOverview();await Promise.all([loadProducts(),loadOrders()])}
+async function purchase(id,btn){if(busy)return;const qty=Number($(`[data-qty="${id}"]`)?.value||1);if(!Number.isInteger(qty)||qty<1)return toast('请输入正确购买数量');if(!confirm(`确认购买 ${qty} 份礼包？平台币将立即扣除。`))return;busy=true;btn.disabled=true;btn.textContent='购买中…';try{const d=await api(`/api/player/mall/purchase/${id}`,{method:'POST',body:JSON.stringify({quantity:qty})});toast(`${d.message}：${d.order_no}`);await refreshAll()}catch(e){toast(e.message)}finally{busy=false;btn.disabled=false;btn.textContent='购买'}}
+$('#loginForm').onsubmit=async e=>{e.preventDefault();const btn=$('#loginBtn');$('#loginMsg').textContent='';btn.disabled=true;btn.textContent='登录中…';try{const d=await api('/api/player/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value.trim(),password:$('#loginPass').value})});token=d.access_token;localStorage.setItem('cps_player_token',token);await enterCenter()}catch(err){$('#loginMsg').textContent=err.message;btn.disabled=false;btn.textContent='登录玩家中心'}};
+async function enterCenter(){try{await refreshAll();$('#loginView').classList.add('hidden');$('#centerView').classList.remove('hidden');history.replaceState({},'',location.pathname)}catch(e){logout(false);$('#loginMsg').textContent=e.message}}
+$$('.tab').forEach(btn=>btn.onclick=()=>{$$('.tab').forEach(x=>x.classList.toggle('active',x===btn));$('#mallPanel').classList.toggle('hidden',btn.dataset.tab!=='mall');$('#ordersPanel').classList.toggle('hidden',btn.dataset.tab!=='orders');if(btn.dataset.tab==='orders')loadOrders().catch(e=>toast(e.message))});
+$('#logoutBtn').onclick=()=>logout(true);$('#refreshBtn').onclick=()=>refreshAll().then(()=>toast('已刷新')).catch(e=>toast(e.message));
+if(token)enterCenter();
+</script>
+</body>
+</html>

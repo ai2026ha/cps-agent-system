@@ -58,6 +58,7 @@ class PlatformPaymentSuccess(BaseModel):
     order_no: str = Field(min_length=1, max_length=64)
 
 class MallOrderCreate(BaseModel):
+    """历史后台手工商城订单结构，仅保留兼容；V52 起接口禁止人工造单。"""
     order_no: str
     player_id: int
     agent_id: int | None = None
@@ -65,6 +66,9 @@ class MallOrderCreate(BaseModel):
     quantity: int = 1
     amount: Decimal
     pay_status: str = "paid"
+
+class PlayerMallPurchase(BaseModel):
+    quantity: int = Field(default=1, ge=1, le=99)
 
 class ShipmentCreate(BaseModel):
     mall_order_id: int
