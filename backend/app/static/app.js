@@ -247,7 +247,8 @@ async function refreshSystemMetrics(){
    }
  }catch(e){
    const updated=document.getElementById('systemMetricsUpdated');
-   if(updated)updated.textContent='监控暂时不可用';
+   if(updated)updated.textContent=`监控暂时不可用${e?.message?`：${e.message}`:''}`;
+   console.error('system metrics failed',e);
  }finally{systemMetricsLoading=false}
 }
 function startSystemMetricsPolling(){

@@ -220,3 +220,25 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
   .overview-metric-icon{width:30px;height:30px;border-radius:8px}
   .overview-metric-icon svg{width:17px;height:17px}
 }
+
+/* V25: 超管数据总览下方实时系统资源监控；保持整体紧凑风格 */
+.system-monitor{background:#fff;border:1px solid #e7ebf2;border-radius:13px;box-shadow:0 4px 20px #1d31500a;padding:13px 16px 15px}
+.system-monitor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid #edf0f5}
+.system-monitor-head h3{margin:0;color:#1d2a44;font-size:15px}
+.system-monitor-head p{margin:3px 0 0;color:#8a94a8;font-size:11.5px}
+.system-monitor-updated{flex:0 0 auto;color:#8792a7;font-size:11.5px;line-height:20px;white-space:nowrap}
+.system-monitor-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.system-resource{min-width:0;padding:11px 13px;border:1px solid #e8ecf3;border-radius:10px;background:#fafbfe}
+.system-resource-top{display:grid;grid-template-columns:32px minmax(0,1fr);align-items:center;gap:9px}
+.system-resource-icon{width:30px;height:30px;border-radius:8px;display:grid;place-items:center}
+.system-resource-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.system-resource-label{color:#707d94;font-size:12.5px;font-weight:650;line-height:1.2}
+.system-resource strong{display:block;margin-top:2px;color:#17233d;font-size:20px;line-height:1.15;letter-spacing:-.2px}
+.system-resource-bar{height:5px;margin-top:9px;border-radius:999px;background:#e8edf4;overflow:hidden}
+.system-resource-bar i{display:block;width:0;height:100%;border-radius:inherit;transition:width .35s ease}
+.system-resource-detail{margin-top:6px;color:#8a94a8;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.resource-cpu .system-resource-icon{color:#2563eb;background:#eaf2ff}.resource-cpu .system-resource-bar i{background:#2563eb}
+.resource-memory .system-resource-icon{color:#7c3aed;background:#f1eafe}.resource-memory .system-resource-bar i{background:#7c3aed}
+.resource-disk .system-resource-icon{color:#d97706;background:#fff2dd}.resource-disk .system-resource-bar i{background:#d97706}
+@media(max-width:900px){.system-monitor-grid{grid-template-columns:1fr}}
+@media(max-width:720px){.system-monitor{padding:12px 13px 13px}.system-monitor-head{gap:10px}.system-monitor-updated{font-size:11px}.system-resource{padding:10px 12px}}

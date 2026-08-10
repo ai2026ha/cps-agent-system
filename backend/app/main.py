@@ -1,5 +1,7 @@
 import os
 import secrets
+import shutil
+import time as time_module
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -45,6 +47,178 @@ def business_date_bounds(start_date: date | None, end_date: date | None):
     return start_dt, end_dt
 
 
+
+def _read_text_file(path: str) -> str | None:
+    try:
+        return Path(path).read_text().strip()
+    except (OSError, ValueError):
+        return None
+
+
+def _allowed_cpu_count() -> float:
+    """返回当前容器/进程允许使用的 CPU 核数，至少为 1。"""
+    try:
+        status = _read_text_file('/proc/self/status') or ''
+        for line in status.splitlines():
+            if line.startswith('Cpus_allowed_list:'):
+                spec = line.split(':', 1)[1].strip()
+                total = 0
+                for part in spec.split(','):
+                    if not part:
+                        continue
+                    if '-' in part:
+                        a, b = part.split('-', 1)
+                        total += int(b) - int(a) + 1
+                    else:
+                        total += 1
+                if total > 0:
+                    return float(total)
+    except Exception:
+        pass
+    return float(max(os.cpu_count() or 1, 1))
+
+
+def _cpu_capacity() -> float:
+    """优先读取 cgroup CPU 配额，让 Render/Docker 百分比更接近实例真实上限。"""
+    cpu_max = _read_text_file('/sys/fs/cgroup/cpu.max')
+    if cpu_max:
+        parts = cpu_max.split()
+        if len(parts) >= 2 and parts[0] != 'max':
+            try:
+                quota, period = float(parts[0]), float(parts[1])
+                if quota > 0 and period > 0:
+                    return max(quota / period, 0.01)
+            except ValueError:
+                pass
+    return _allowed_cpu_count()
+
+
+def _read_cgroup_cpu_seconds() -> float | None:
+    stat = _read_text_file('/sys/fs/cgroup/cpu.stat')
+    if stat:
+        for line in stat.splitlines():
+            key, *values = line.split()
+            if key == 'usage_usec' and values:
+                try:
+                    return float(values[0]) / 1_000_000.0
+                except ValueError:
+                    return None
+    # cgroup v1 fallback
+    raw = _read_text_file('/sys/fs/cgroup/cpuacct/cpuacct.usage')
+    if raw:
+        try:
+            return float(raw) / 1_000_000_000.0
+        except ValueError:
+            return None
+    return None
+
+
+def _read_proc_cpu_snapshot() -> tuple[float, float] | None:
+    stat = _read_text_file('/proc/stat')
+    if not stat:
+        return None
+    first = stat.splitlines()[0].split()
+    if not first or first[0] != 'cpu':
+        return None
+    try:
+        values = [float(x) for x in first[1:]]
+    except ValueError:
+        return None
+    total = sum(values)
+    idle = (values[3] if len(values) > 3 else 0) + (values[4] if len(values) > 4 else 0)
+    return total, idle
+
+
+def _cpu_percent(sample_seconds: float = 0.10) -> float | None:
+    """短采样获取实时 CPU 使用率；优先按容器 CPU 配额归一化。"""
+    c1 = _read_cgroup_cpu_seconds()
+    if c1 is not None:
+        t1 = time_module.monotonic()
+        time_module.sleep(sample_seconds)
+        c2 = _read_cgroup_cpu_seconds()
+        t2 = time_module.monotonic()
+        if c2 is not None and t2 > t1:
+            pct = (c2 - c1) / (t2 - t1) / _cpu_capacity() * 100.0
+            return round(min(max(pct, 0.0), 100.0), 1)
+
+    p1 = _read_proc_cpu_snapshot()
+    if p1 is None:
+        return None
+    time_module.sleep(sample_seconds)
+    p2 = _read_proc_cpu_snapshot()
+    if p2 is None:
+        return None
+    total_delta = p2[0] - p1[0]
+    idle_delta = p2[1] - p1[1]
+    if total_delta <= 0:
+        return None
+    pct = (total_delta - idle_delta) / total_delta * 100.0
+    return round(min(max(pct, 0.0), 100.0), 1)
+
+
+def _memory_metrics() -> tuple[float | None, int | None, int | None]:
+    """返回 (百分比, 已用字节, 总字节)，优先使用 cgroup 容器内存限制。"""
+    current = _read_text_file('/sys/fs/cgroup/memory.current')
+    maximum = _read_text_file('/sys/fs/cgroup/memory.max')
+    if current and maximum and maximum != 'max':
+        try:
+            used = int(current)
+            total = int(maximum)
+            if total > 0:
+                return round(min(max(used / total * 100.0, 0.0), 100.0), 1), used, total
+        except ValueError:
+            pass
+
+    # cgroup v1 fallback
+    current = _read_text_file('/sys/fs/cgroup/memory/memory.usage_in_bytes')
+    maximum = _read_text_file('/sys/fs/cgroup/memory/memory.limit_in_bytes')
+    if current and maximum:
+        try:
+            used = int(current)
+            total = int(maximum)
+            # 某些无上限环境会返回极大的哨兵值，遇到这种情况退回 /proc/meminfo。
+            if 0 < total < 1 << 60:
+                return round(min(max(used / total * 100.0, 0.0), 100.0), 1), used, total
+        except ValueError:
+            pass
+
+    meminfo = _read_text_file('/proc/meminfo')
+    if meminfo:
+        values = {}
+        for line in meminfo.splitlines():
+            if ':' not in line:
+                continue
+            key, value = line.split(':', 1)
+            try:
+                values[key] = int(value.strip().split()[0]) * 1024
+            except (ValueError, IndexError):
+                continue
+        total = values.get('MemTotal')
+        available = values.get('MemAvailable')
+        if total and available is not None:
+            used = max(total - available, 0)
+            return round(min(max(used / total * 100.0, 0.0), 100.0), 1), used, total
+    return None, None, None
+
+
+def _disk_metrics() -> tuple[float | None, int | None, int | None]:
+    try:
+        root = os.path.abspath(os.sep)
+        usage = shutil.disk_usage(root)
+        pct = usage.used / usage.total * 100.0 if usage.total else 0.0
+        return round(min(max(pct, 0.0), 100.0), 1), int(usage.used), int(usage.total)
+    except OSError:
+        return None, None, None
+
+
+def _to_mb(value: int | None) -> float | None:
+    return round(value / 1024 / 1024, 1) if value is not None else None
+
+
+def _to_gb(value: int | None) -> float | None:
+    return round(value / 1024 / 1024 / 1024, 2) if value is not None else None
+
+
 def money(v):
     return float(v or 0)
 
@@ -65,7 +239,7 @@ PERMISSION_MATRIX = {
         "orders.view", "orders.manage", "shipments.view", "shipments.manage",
         "products.view", "products.manage", "cdk.view", "cdk.manage",
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
-        "mail.view", "mail.send", "system.rebuild",
+        "mail.view", "mail.send", "system.rebuild", "system.metrics",
     },
     "agent_1": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
@@ -351,6 +525,33 @@ def dashboard(db: Session = Depends(get_db), principal=Depends(require_permissio
         "yesterday_commission": money(yesterday_turnover * rate),
         "today_commission": money(today_turnover * rate),
         "total_commission": money(total_turnover * rate),
+    }
+
+
+@app.get("/api/system/metrics")
+def system_metrics(principal=Depends(require_permission("system.metrics"))):
+    """超管实时资源监控。Render/Docker 下优先读取 cgroup；单项读取失败时其余指标仍返回。"""
+    try:
+        cpu = _cpu_percent()
+    except Exception:
+        cpu = None
+    try:
+        memory_pct, memory_used, memory_total = _memory_metrics()
+    except Exception:
+        memory_pct, memory_used, memory_total = None, None, None
+    try:
+        disk_pct, disk_used, disk_total = _disk_metrics()
+    except Exception:
+        disk_pct, disk_used, disk_total = None, None, None
+    return {
+        "cpu_percent": cpu,
+        "memory_percent": memory_pct,
+        "memory_used_mb": _to_mb(memory_used),
+        "memory_total_mb": _to_mb(memory_total),
+        "disk_percent": disk_pct,
+        "disk_used_gb": _to_gb(disk_used),
+        "disk_total_gb": _to_gb(disk_total),
+        "updated_at": datetime.now(BUSINESS_TZ).isoformat(timespec="seconds"),
     }
 
 # ---------- 渠道管理 ----------

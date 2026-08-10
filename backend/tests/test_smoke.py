@@ -39,11 +39,29 @@ def test_login_and_dashboard():
         token = login(c, 'admin', 'ChangeMe123!')
         r = c.get('/api/dashboard', headers=auth(token))
         assert r.status_code == 200
-        assert 'agents' in r.json()
+        dashboard = r.json()
+        assert dashboard['dashboard_type'] == 'superadmin'
+        for key in [
+            'total_registrations', 'yesterday_registrations', 'today_registrations',
+            'total_turnover', 'yesterday_turnover', 'today_turnover',
+            'pending_abnormal', 'redeemed_cdk',
+        ]:
+            assert key in dashboard
+        for key in ['commission_rate', 'yesterday_commission', 'today_commission', 'total_commission']:
+            assert key not in dashboard
         me = c.get('/api/auth/me', headers=auth(token))
         assert me.status_code == 200
         assert me.json()['actor_type'] == 'admin'
         assert me.json()['role'] == 'superadmin'
+        assert 'system.metrics' in me.json()['permissions']
+        metrics = c.get('/api/system/metrics', headers=auth(token))
+        assert metrics.status_code == 200, metrics.text
+        metric_data = metrics.json()
+        for key in ['cpu_percent', 'memory_percent', 'disk_percent', 'updated_at']:
+            assert key in metric_data
+        for key in ['cpu_percent', 'memory_percent', 'disk_percent']:
+            if metric_data[key] is not None:
+                assert 0 <= metric_data[key] <= 100
         caps = c.get('/api/agents/capabilities', headers=auth(token))
         assert caps.status_code == 200
         assert caps.json()['current_level_name'] == '超级管理员'
@@ -376,6 +394,8 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert 'orders.view' in l2_data['permissions']
         assert 'dashboard.view' in l2_data['permissions']
         assert 'products.view' not in l2_data['permissions']
+        assert 'system.metrics' not in l2_data['permissions']
+        assert c.get('/api/system/metrics', headers=auth(l2_token)).status_code == 403
 
         l3 = create_agent(c, l2_token, 'rbac_l3', 'RBAC三级', 3, 0, 0.05)
         assert l3.status_code == 200, l3.text
@@ -396,7 +416,14 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert c.get('/api/agents', headers=auth(l1_token)).status_code == 200
         assert c.get('/api/players', headers=auth(l1_token)).status_code == 200
         assert c.get('/api/orders/platform', headers=auth(l1_token)).status_code == 200
-        assert c.get('/api/dashboard', headers=auth(l1_token)).status_code == 200
+        l1_dashboard = c.get('/api/dashboard', headers=auth(l1_token))
+        assert l1_dashboard.status_code == 200
+        l1_dashboard_data = l1_dashboard.json()
+        assert l1_dashboard_data['dashboard_type'] == 'agent'
+        for key in ['commission_rate', 'yesterday_commission', 'today_commission', 'total_commission']:
+            assert key in l1_dashboard_data
+        assert 'pending_abnormal' not in l1_dashboard_data
+        assert 'redeemed_cdk' not in l1_dashboard_data
         assert c.get('/api/products', headers=auth(l1_token)).status_code == 403
         assert c.get('/api/redemption-batches', headers=auth(l1_token)).status_code == 403
         assert c.get('/api/recharge-rules', headers=auth(l1_token)).status_code == 403
@@ -413,3 +440,70 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert caps.status_code == 403
         denied_create = create_agent(c, l3_token, 'rbac_l4', '禁止新增', 3, 0)
         assert denied_create.status_code == 403
+
+
+def test_dashboard_turnover_counts_only_paid_platform_coin_orders():
+    """V23: 数据总览流水排除商城订单和未支付平台币订单。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        before = c.get('/api/dashboard', headers=auth(admin))
+        assert before.status_code == 200, before.text
+        before_data = before.json()
+
+        player = c.post('/api/players', headers=auth(admin), json={
+            'player_id': 'V23FLOWPLAYER001',
+            'username': 'v23_flow_player',
+            'password': 'PlayerPass123!',
+            'role_name': 'V23流水玩家',
+            'server_name': 'V23-S1',
+        })
+        assert player.status_code == 200, player.text
+        player_pk = player.json()['id']
+
+        product = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V23-FLOW-PRODUCT-001',
+            'name': 'V23流水测试商品',
+            'category': 'product',
+            'price': 67.89,
+            'stock': 10,
+            'description': 'dashboard turnover scope test',
+        })
+        assert product.status_code == 200, product.text
+        product_pk = product.json()['id']
+
+        paid_platform = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'V23-PLATFORM-PAID-001',
+            'player_id': player_pk,
+            'amount': 123.45,
+            'platform_coin': 12345,
+            'payment_channel': 'manual',
+            'pay_status': 'paid',
+        })
+        assert paid_platform.status_code == 200, paid_platform.text
+
+        pending_platform = c.post('/api/orders/platform', headers=auth(admin), json={
+            'order_no': 'V23-PLATFORM-PENDING-001',
+            'player_id': player_pk,
+            'amount': 999.00,
+            'platform_coin': 99900,
+            'payment_channel': 'manual',
+            'pay_status': 'pending',
+        })
+        assert pending_platform.status_code == 200, pending_platform.text
+
+        paid_mall = c.post('/api/orders/mall', headers=auth(admin), json={
+            'order_no': 'V23-MALL-PAID-001',
+            'player_id': player_pk,
+            'product_id': product_pk,
+            'quantity': 1,
+            'amount': 67.89,
+            'pay_status': 'paid',
+        })
+        assert paid_mall.status_code == 200, paid_mall.text
+
+        after = c.get('/api/dashboard', headers=auth(admin))
+        assert after.status_code == 200, after.text
+        after_data = after.json()
+
+        assert round(after_data['total_turnover'] - before_data['total_turnover'], 2) == 123.45
+        assert round(after_data['today_turnover'] - before_data['today_turnover'], 2) == 123.45
