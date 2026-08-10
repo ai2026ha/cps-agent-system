@@ -1159,7 +1159,7 @@ def test_v42_settlement_frontend_has_date_range_horizontal_compact_and_seven_col
     assert "['佣金','commission_amount'" not in js
     assert 'padding:11px 7px' in css
     assert 'grid-template-columns:128px 14px 128px' in css
-    assert 'player-role-search-v44' in html
+    assert 'channel-row-spacing-v45' in html
 
 def test_v43_settlement_table_has_stable_fixed_horizontal_layout():
     """V43 渠道结算：总流水/日期查询切换时固定 7 列宽度，避免左右跳动。"""
@@ -1173,7 +1173,7 @@ def test_v43_settlement_table_has_stable_fixed_horizontal_layout():
     assert 'scrollbar-gutter:stable' in css
     for idx, width in [(1, '9%'), (2, '15%'), (3, '11%'), (4, '18%'), (5, '15%'), (6, '12%'), (7, '20%')]:
         assert f'th:nth-child({idx}),.settlement-table-scroll td:nth-child({idx}){{width:{width}' in css
-    assert 'player-role-search-v44' in html
+    assert 'channel-row-spacing-v45' in html
 
 
 
@@ -1188,3 +1188,15 @@ def test_v44_player_role_search_frontend_and_api_contract():
     assert "p.set('role',playerSearch.role)" in js
     assert "['#playerAccountQuery','#playerRoleQuery','#playerParentQuery']" in js
     assert '.player-search-bar>.query-field{flex:0 0 190px;width:190px' in css
+
+
+def test_v45_settlement_vertical_row_spacing_matches_agent_table():
+    """V45 渠道结算与下级渠道使用同一表头/数据行高度，横向紧凑 padding 保持不变。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    assert '.agent-table-scroll thead tr,\n.settlement-table-scroll thead tr{height:38px}' in css
+    assert '.agent-table-scroll tbody tr,\n.settlement-table-scroll tbody tr{height:52px}' in css
+    assert '.agent-table-scroll tbody td,\n.settlement-table-scroll tbody td{vertical-align:middle;padding-top:11px;padding-bottom:11px}' in css
+    assert 'padding:11px 7px' in css
+    assert 'channel-row-spacing-v45' in html
