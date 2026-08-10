@@ -4,6 +4,8 @@ let actorType = localStorage.getItem('cps_actor_type') || 'admin';
 let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
+let systemMetricsTimer = null;
+let systemMetricsLoading = false;
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','按周期计算代理佣金'],
@@ -72,7 +74,7 @@ async function api(path, options={}){
   if(!r.ok) throw new Error(formatApiError(data.detail));
   return data;
 }
-function logout(){ token='';actorType='admin';currentUser=null;localStorage.removeItem('cps_token');localStorage.removeItem('cps_actor_type');$('#app').classList.add('hidden');$('#login').classList.remove('hidden'); }
+function logout(){ stopSystemMetricsPolling();token='';actorType='admin';currentUser=null;localStorage.removeItem('cps_token');localStorage.removeItem('cps_actor_type');$('#app').classList.add('hidden');$('#login').classList.remove('hidden'); }
 $('#logoutBtn').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=firstAllowedView();await showApp();}catch(err){$('#loginError').textContent=err.message}};
 function hasPermission(code){return Boolean(currentUser?.permissions?.includes(code));}
@@ -150,7 +152,7 @@ function badge(v){const s=String(v??'');const c=['paid','sent','success','active
 function table(rows, cols){if(!rows?.length)return '<div class="empty">暂无数据</div>';return `<table><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${c[2]?c[2](r[c[1]],r):esc(r[c[1]])}</td>`).join('')}</tr>`).join('')}</tbody></table>`}
 function panel(title, body, actions=''){return `<div class="panel"><div class="panel-head"><h3>${title}</h3><div class="actions">${actions}</div></div>${body}</div>`}
 
-async function loadView(view){if(!canView(view)){currentView=firstAllowedView();return loadView(currentView)}const [t,s]=titles[view]||['',''];$('#pageTitle').textContent=t;$('#pageSub').textContent=s;$('#content').innerHTML='<div class="panel"><div class="empty">加载中...</div></div>';try{
+async function loadView(view){if(!canView(view)){currentView=firstAllowedView();return loadView(currentView)}if(view!=='dashboard')stopSystemMetricsPolling();const [t,s]=titles[view]||['',''];$('#pageTitle').textContent=t;$('#pageSub').textContent=s;$('#content').innerHTML='<div class="panel"><div class="empty">加载中...</div></div>';try{
  if(view==='dashboard') return renderDashboard();
  if(view==='agents') return renderAgents();
  if(view==='settlements') return renderList('/api/settlements',settleCols,'结算记录',hasPermission('settlements.manage')?()=>openForm('生成结算单',forms.settlement):null);
@@ -177,7 +179,10 @@ const dashboardIcons={
   commission_today:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M17 7H9.5a3 3 0 0 0 0 6H14a3 3 0 0 1 0 6H6"/><path d="m18 4 2 2-2 2"/></svg>`,
   commission_total:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8l1 4h4l-3 5 1 9H5l1-9-3-5h4l1-4Z"/><path d="M9 15h6M12 12v6"/></svg>`,
   pending_abnormal:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 16H3L12 3Z"/><path d="M12 9v4M12 17h.01"/></svg>`,
-  redeemed_cdk:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v4a2.5 2.5 0 0 0 0 5v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a2.5 2.5 0 0 0 0-5V6a1 1 0 0 1 1-1Z"/><path d="m9 12 2 2 4-4"/></svg>`
+  redeemed_cdk:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v4a2.5 2.5 0 0 0 0 5v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a2.5 2.5 0 0 0 0-5V6a1 1 0 0 1 1-1Z"/><path d="m9 12 2 2 4-4"/></svg>`,
+  cpu:`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/><path d="M10 10h4v4h-4z"/></svg>`,
+  memory:`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 10h8M8 14h5M7 3v3M11 3v3M15 3v3M19 3v3M7 18v3M11 18v3M15 18v3M19 18v3"/></svg>`,
+  disk:`<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/><circle cx="16.5" cy="18.5" r=".5"/></svg>`
 };
 function dashboardMetric(label,value,kind='number',icon='registrations_total',tone='registration'){
  const shown=kind==='money'?`¥ ${Number(value||0).toFixed(2)}`:kind==='percent'?(value==null?'—':`${(Number(value)*100).toFixed(2).replace(/\.00$/,'')}%`):String(value??0);
@@ -186,6 +191,69 @@ function dashboardMetric(label,value,kind='number',icon='registrations_total',to
 }
 function dashboardGroup(title,subtitle,items,cols){
  return `<section class="overview-group"><div class="overview-group-head"><div><h3>${title}</h3><p>${subtitle}</p></div></div><div class="overview-grid cols-${cols}">${items.join('')}</div></section>`;
+}
+function systemMonitorTemplate(){
+ return `<section class="system-monitor" id="systemMonitor">
+   <div class="system-monitor-head"><div><h3>系统资源监控</h3><p>Render 服务实时运行状态 · 每 15 秒自动刷新</p></div><span class="system-monitor-updated" id="systemMetricsUpdated">正在读取...</span></div>
+   <div class="system-monitor-grid">
+     <div class="system-resource resource-cpu">
+       <div class="system-resource-top"><span class="system-resource-icon">${dashboardIcons.cpu}</span><div><div class="system-resource-label">CPU 使用率</div><strong id="systemCpuValue">--%</strong></div></div>
+       <div class="system-resource-bar"><i id="systemCpuBar"></i></div>
+       <div class="system-resource-detail" id="systemCpuDetail">实时计算中</div>
+     </div>
+     <div class="system-resource resource-memory">
+       <div class="system-resource-top"><span class="system-resource-icon">${dashboardIcons.memory}</span><div><div class="system-resource-label">内存使用率</div><strong id="systemMemoryValue">--%</strong></div></div>
+       <div class="system-resource-bar"><i id="systemMemoryBar"></i></div>
+       <div class="system-resource-detail" id="systemMemoryDetail">-- / -- MB</div>
+     </div>
+     <div class="system-resource resource-disk">
+       <div class="system-resource-top"><span class="system-resource-icon">${dashboardIcons.disk}</span><div><div class="system-resource-label">硬盘使用率</div><strong id="systemDiskValue">--%</strong></div></div>
+       <div class="system-resource-bar"><i id="systemDiskBar"></i></div>
+       <div class="system-resource-detail" id="systemDiskDetail">-- / -- GB</div>
+     </div>
+   </div>
+ </section>`;
+}
+function clampMetricPercent(v){const n=Number(v);return Number.isFinite(n)?Math.min(Math.max(n,0),100):null}
+function setResourceMetric(prefix,pct,detail=''){
+ const value=document.getElementById(`system${prefix}Value`);
+ const bar=document.getElementById(`system${prefix}Bar`);
+ const detailEl=document.getElementById(`system${prefix}Detail`);
+ if(!value||!bar)return;
+ const n=clampMetricPercent(pct);
+ value.textContent=n==null?'--%':`${n.toFixed(1)}%`;
+ bar.style.width=n==null?'0%':`${n}%`;
+ if(detailEl&&detail)detailEl.textContent=detail;
+}
+function stopSystemMetricsPolling(){
+ if(systemMetricsTimer){clearInterval(systemMetricsTimer);systemMetricsTimer=null}
+ systemMetricsLoading=false;
+}
+async function refreshSystemMetrics(){
+ if(systemMetricsLoading||currentView!=='dashboard'||!document.getElementById('systemMonitor'))return;
+ systemMetricsLoading=true;
+ try{
+   const m=await api('/api/system/metrics');
+   if(currentView!=='dashboard'||!document.getElementById('systemMonitor'))return;
+   setResourceMetric('Cpu',m.cpu_percent,'Render 实例实时 CPU');
+   const memoryDetail=(m.memory_used_mb!=null&&m.memory_total_mb!=null)?`${Number(m.memory_used_mb).toFixed(1)} / ${Number(m.memory_total_mb).toFixed(1)} MB`:'内存数据不可用';
+   const diskDetail=(m.disk_used_gb!=null&&m.disk_total_gb!=null)?`${Number(m.disk_used_gb).toFixed(2)} / ${Number(m.disk_total_gb).toFixed(2)} GB`:'硬盘数据不可用';
+   setResourceMetric('Memory',m.memory_percent,memoryDetail);
+   setResourceMetric('Disk',m.disk_percent,diskDetail);
+   const updated=document.getElementById('systemMetricsUpdated');
+   if(updated){
+     const d=m.updated_at?new Date(m.updated_at):null;
+     updated.textContent=d&&!Number.isNaN(d.getTime())?`更新 ${d.toLocaleTimeString('zh-CN',{hour12:false})}`:'刚刚更新';
+   }
+ }catch(e){
+   const updated=document.getElementById('systemMetricsUpdated');
+   if(updated)updated.textContent='监控暂时不可用';
+ }finally{systemMetricsLoading=false}
+}
+function startSystemMetricsPolling(){
+ stopSystemMetricsPolling();
+ refreshSystemMetrics();
+ systemMetricsTimer=setInterval(refreshSystemMetrics,15000);
 }
 async function renderDashboard(){
  const d=await api('/api/dashboard');
@@ -205,10 +273,12 @@ async function renderDashboard(){
      dashboardMetric('待发货/异常',d.pending_abnormal,'number','pending_abnormal','alert'),
      dashboardMetric('已兑换CDK',d.redeemed_cdk,'number','redeemed_cdk','cdk')
    ],2);
-   $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}</div>`;
+   $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}${systemMonitorTemplate()}</div>`;
+   startSystemMetricsPolling();
    return;
  }
 
+ stopSystemMetricsPolling();
  const commission=dashboardGroup('分佣数据','按当前代理佣金比例计算',[
    dashboardMetric('佣金比例',d.commission_rate,'percent','commission_rate','commission'),
    dashboardMetric('昨日分佣',d.yesterday_commission,'money','commission_yesterday','commission'),
