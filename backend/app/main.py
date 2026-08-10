@@ -26,6 +26,7 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
+SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 BUSINESS_TZ = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Shanghai"))
 
@@ -305,7 +306,9 @@ def identity_payload(principal, db: Session) -> dict:
         }
     return {
         "username": principal.username, "role": principal.role, "actor_type": "admin",
-        "agent_id": None, "agent_level": 0, "subagent_limit": None, "registration_path": None, "permissions": perms,
+        "agent_id": None, "agent_level": 0, "subagent_limit": None,
+        "registration_path": f"/register/{SUPERADMIN_REGISTRATION_CODE}" if principal.role == "superadmin" else None,
+        "permissions": perms,
     }
 
 def seed_admin():
@@ -994,19 +997,34 @@ def player_identity_from_pk(player_pk: int) -> str:
     return f"P{player_pk}"
 
 
-def registration_agent(db: Session, invite_code: str) -> Agent:
+def registration_channel(db: Session, invite_code: str):
+    """解析公开注册链接。
+
+    SUPERADMIN 是平台/超管直属注册渠道，对应玩家不绑定普通代理（agent_id=NULL）；
+    A1/A2/... 等邀请码则绑定对应且处于启用状态的代理。
+    """
     code = (invite_code or "").strip()
+    if code.upper() == SUPERADMIN_REGISTRATION_CODE:
+        return None
     agent = db.query(Agent).filter(Agent.invite_code == code, Agent.status == "active").first()
     if not agent:
         raise HTTPException(404, "注册地址无效或该代理后台已被封禁")
     return agent
 
 
-
 @app.get("/api/public/registration/{invite_code}")
 def registration_info(invite_code: str, db: Session = Depends(get_db)):
-    agent = registration_agent(db, invite_code)
+    agent = registration_channel(db, invite_code)
+    if agent is None:
+        return {
+            "channel_type": "superadmin",
+            "agent_id": "超管",
+            "agent_name": "总平台直属",
+            "agent_level": 0,
+            "agent_level_name": "超级管理员",
+        }
     return {
+        "channel_type": "agent",
         "agent_id": agent.agent_id,
         "agent_name": agent.agent_name,
         "agent_level": int(agent.agent_level or 1),
@@ -1016,12 +1034,13 @@ def registration_info(invite_code: str, db: Session = Depends(get_db)):
 
 @app.post("/api/public/registration/{invite_code}")
 def register_player(invite_code: str, body: PlayerRegister, db: Session = Depends(get_db)):
-    agent = registration_agent(db, invite_code)
+    agent = registration_channel(db, invite_code)
     username = body.username.strip()
     if db.query(Player).filter(Player.username == username).first():
         raise HTTPException(409, "玩家账号已存在")
 
-    # 玩家ID与代理ID一样由系统生成，注册页不要求玩家手工填写内部标识。
+    # 玩家ID由系统生成。超管注册链接注册的玩家直属平台（agent_id=NULL），
+    # 代理注册链接注册的玩家自动绑定对应代理。
     temp_player_id = "TMPP" + secrets.token_hex(10).upper()
     row = Player(
         player_id=temp_player_id,
@@ -1029,7 +1048,7 @@ def register_player(invite_code: str, body: PlayerRegister, db: Session = Depend
         password_hash=hash_password(body.password),
         role_name="未绑定",
         server_name="未绑定",
-        agent_id=agent.id,
+        agent_id=agent.id if agent else None,
         today_recharge=0,
         total_recharge=0,
         last_login_at=None,
@@ -1043,8 +1062,9 @@ def register_player(invite_code: str, body: PlayerRegister, db: Session = Depend
         "id": row.id,
         "player_id": row.player_id,
         "username": row.username,
-        "agent_id": agent.agent_id,
-        "agent_name": agent.agent_name,
+        "agent_id": agent.agent_id if agent else "超管",
+        "agent_name": agent.agent_name if agent else "总平台直属",
+        "channel_type": "agent" if agent else "superadmin",
         "message": "注册成功",
     }
 
@@ -1062,7 +1082,7 @@ def list_players(keyword: str = "", db: Session = Depends(get_db), principal=Dep
     agents = {a.id: a.agent_id for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).all()} if agent_ids else {}
     return [{
         "id": p.id, "player_id": p.player_id, "username": p.username, "role_name": p.role_name, "server_name": p.server_name,
-        "agent_id": p.agent_id, "agent_public_id": agents.get(p.agent_id),
+        "agent_id": p.agent_id, "agent_public_id": agents.get(p.agent_id) if p.agent_id is not None else "超管",
         "today_recharge": money(p.today_recharge), "total_recharge": money(p.total_recharge),
         "last_login_at": dt(p.last_login_at), "last_login_ip": p.last_login_ip, "created_at": dt(p.created_at),
     } for p in rows]

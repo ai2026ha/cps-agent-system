@@ -274,7 +274,8 @@ async function renderDashboard(){
      dashboardMetric('待发货/异常',d.pending_abnormal,'number','pending_abnormal','alert'),
      dashboardMetric('已兑换CDK',d.redeemed_cdk,'number','redeemed_cdk','cdk')
    ],2);
-   $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}${systemMonitorTemplate()}</div>`;
+   $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}${dashboardRegistrationCard()}${systemMonitorTemplate()}</div>`;
+   bindDashboardRegistrationCopy();
    startSystemMetricsPolling();
    return;
  }
@@ -286,10 +287,30 @@ async function renderDashboard(){
    dashboardMetric('今日分佣',d.today_commission,'money','commission_today','commission'),
    dashboardMetric('总计分佣',d.total_commission,'money','commission_total','commission')
  ],4);
- $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${commission}</div>`;
+ $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${commission}${dashboardRegistrationCard()}</div>`;
+ bindDashboardRegistrationCopy();
 }
 
 function registrationUrl(agentId){return `${window.location.origin}/register/${encodeURIComponent(agentId)}`}
+function currentRegistrationUrl(){
+ const path=currentUser?.registration_path;
+ if(path)return `${window.location.origin}${path}`;
+ if(currentUser?.agent_id)return registrationUrl(currentUser.agent_id);
+ return '';
+}
+function dashboardRegistrationCard(){
+ const url=currentRegistrationUrl();
+ if(!url)return '';
+ const isAdmin=currentUser?.actor_type==='admin';
+ const title=isAdmin?'超管专属注册地址':'我的专属注册地址';
+ const note=isAdmin?'通过此地址注册的玩家直属总平台，并自动进入超管玩家列表。':`通过此地址注册的玩家会自动绑定代理 ${esc(currentUser.agent_id)}。`;
+ return `<section class="registration-link-card dashboard-registration-card"><div><strong>${title}</strong><span>${note}</span></div><div class="registration-link-actions"><input value="${esc(url)}" readonly id="dashboardRegistrationUrl"><button class="btn primary" id="copyDashboardRegistration">复制地址</button></div></section>`;
+}
+function bindDashboardRegistrationCopy(){
+ const btn=$('#copyDashboardRegistration');
+ if(!btn)return;
+ btn.onclick=async()=>{const url=currentRegistrationUrl();const ok=await copyText(url);showToast(ok?`注册地址已复制：${url}`:'复制失败，请手动复制注册地址',ok?'success':'error',ok?3200:4200)};
+}
 async function copyText(text){
  try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return true}}catch{}
  const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();
@@ -302,15 +323,7 @@ window.copyRegistrationLink=async(agentId)=>{
 };
 async function renderPlayers(){
  const rows=await api('/api/players');
- let top='';
- if(currentUser?.actor_type==='agent'&&currentUser?.agent_id){
-   const url=registrationUrl(currentUser.agent_id);
-   top=`<div class="registration-link-card"><div><strong>我的专属注册地址</strong><span>玩家从此地址注册后，会自动绑定到代理 ${esc(currentUser.agent_id)} 并进入玩家列表。</span></div><div class="registration-link-actions"><input value="${esc(url)}" readonly id="myRegistrationUrl"><button class="btn primary" id="copyMyRegistration">复制地址</button></div></div>`;
- }else{
-   top='<div class="registration-link-card admin-note"><div><strong>玩家采用代理专属地址注册</strong><span>后台不再手工新增玩家。请到「渠道管理 → 下级渠道」复制对应代理的注册地址。</span></div></div>';
- }
- $('#content').innerHTML=top+panel('玩家列表',`<div class="table-scroll">${table(rows,playerCols)}</div>`);
- const copy=$('#copyMyRegistration');if(copy)copy.onclick=()=>window.copyRegistrationLink(currentUser.agent_id);
+ $('#content').innerHTML=panel('玩家列表',`<div class="table-scroll">${table(rows,playerCols)}</div>`);
 }
 
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}

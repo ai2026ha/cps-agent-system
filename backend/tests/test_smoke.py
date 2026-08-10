@@ -543,3 +543,39 @@ def test_dashboard_turnover_counts_only_paid_platform_coin_orders():
 
         assert round(after_data['total_turnover'] - before_data['total_turnover'], 2) == 123.45
         assert round(after_data['today_turnover'] - before_data['today_turnover'], 2) == 123.45
+
+
+def test_v29_superadmin_and_agent_registration_links():
+    """V29: 超管与代理共用注册链路，超管直属玩家不绑定普通代理。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        me = c.get('/api/auth/me', headers=auth(admin))
+        assert me.status_code == 200, me.text
+        assert me.json()['registration_path'] == '/register/SUPERADMIN'
+
+        info = c.get('/api/public/registration/SUPERADMIN')
+        assert info.status_code == 200, info.text
+        assert info.json()['channel_type'] == 'superadmin'
+        assert info.json()['agent_id'] == '超管'
+
+        direct = c.post('/api/public/registration/SUPERADMIN', json={
+            'username': 'v29_super_direct_player',
+            'password': 'PlayerPass123!',
+        })
+        assert direct.status_code == 200, direct.text
+        assert direct.json()['channel_type'] == 'superadmin'
+        assert direct.json()['agent_id'] == '超管'
+
+        players = c.get('/api/players', headers=auth(admin))
+        assert players.status_code == 200, players.text
+        row = next(x for x in players.json() if x['username'] == 'v29_super_direct_player')
+        assert row['agent_id'] is None
+        assert row['agent_public_id'] == '超管'
+
+        agent_resp = create_agent(c, admin, 'v29_link_agent', 'V29注册链接代理', 1, 2, 0.2)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_id = agent_resp.json()['agent_id']
+        agent_token = login(c, 'v29_link_agent', 'AgentPass123!')
+        agent_me = c.get('/api/auth/me', headers=auth(agent_token))
+        assert agent_me.status_code == 200
+        assert agent_me.json()['registration_path'] == f'/register/{agent_id}'

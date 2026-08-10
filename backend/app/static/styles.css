@@ -248,3 +248,8 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 .registration-link-card{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 14px;padding:13px 15px;border:1px solid #dfe6f1;border-radius:12px;background:#fff}
 .registration-link-card>div:first-child{display:flex;flex-direction:column;gap:4px;min-width:0}.registration-link-card strong{font-size:15px;color:#18233d}.registration-link-card span{font-size:13px;color:#74809a;line-height:1.45}.registration-link-actions{display:flex;align-items:center;gap:8px;min-width:420px}.registration-link-actions input{width:330px;min-width:0;background:#f7f9fc;color:#3f4d68}.registration-link-card.admin-note{justify-content:flex-start}
 @media(max-width:900px){.registration-link-card{align-items:flex-start;flex-direction:column}.registration-link-actions{width:100%;min-width:0}.registration-link-actions input{width:100%}}
+
+/* V29: 注册地址统一放到数据总览下方 */
+.dashboard-registration-card{margin:2px 0 0;background:linear-gradient(180deg,#fff,#fbfcff)}
+.overview-groups>.dashboard-registration-card{width:100%}
+@media(max-width:720px){.dashboard-registration-card{margin-top:0}}
