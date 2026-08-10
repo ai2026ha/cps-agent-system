@@ -1629,45 +1629,94 @@ def generate_platform_order_no() -> str:
 
 
 def platform_order_status(row: PlatformCoinOrder) -> str:
-    if row.pay_status != "paid":
-        return "unpaid"
-    if row.delivery_status == "success":
-        return "shipped"
-    return "paid"
+    """平台币订单状态只反映支付状态；发货结果由 delivery_status 单独展示。"""
+    return "paid" if row.pay_status == "paid" else "unpaid"
+
+
+def _platform_delivery_ledger(db: Session, row: PlatformCoinOrder):
+    """查找该订单已经成功入账的唯一业务凭证，用于补发幂等确认。"""
+    return (
+        db.query(PlayerCoinLedger)
+        .filter(
+            PlayerCoinLedger.player_id == row.player_id,
+            PlayerCoinLedger.action == "recharge",
+            PlayerCoinLedger.note == f"平台币订单 {row.order_no}",
+        )
+        .order_by(PlayerCoinLedger.id.desc())
+        .first()
+    )
 
 
 def deliver_platform_order(db: Session, row: PlatformCoinOrder, operator: str = "system") -> bool:
-    """给已支付订单发放平台币。成功后标记 success；同一订单成功后绝不重复发放。"""
+    """
+    给已支付订单发放平台币。
+
+    发货状态必须以“实际入账事务是否成功提交”为准：
+    - 仅支付成功，不代表发货成功；
+    - 玩家余额增加 + 入账流水写入 + 订单 success 必须在同一数据库事务提交；
+    - 事务提交失败则回滚，并把订单持久化为 failed；
+    - 若已存在该订单的入账流水，则视为已确认到账，避免补发重复加币。
+    """
     if row.pay_status != "paid":
         raise HTTPException(400, "未支付订单不能发货")
-    if row.delivery_status == "success":
-        return False
+
+    # 已成功订单直接返回；同时兼容状态异常但已有入账流水的幂等恢复。
+    existing_ledger = _platform_delivery_ledger(db, row)
+    if row.delivery_status == "success" or existing_ledger:
+        if existing_ledger and row.delivery_status != "success":
+            row.delivery_status = "success"
+            row.delivery_message = "平台币到账已确认"
+            row.delivered_at = row.delivered_at or existing_ledger.created_at or utc_now_naive()
+            db.commit(); db.refresh(row)
+        return True
+
     player = db.get(Player, row.player_id)
     if not player:
         row.delivery_status = "failed"
-        row.delivery_message = "玩家不存在"
+        row.delivery_message = "发货失败：玩家不存在"
         row.delivered_at = None
+        db.commit(); db.refresh(row)
         return False
-    if int(row.platform_coin or 0) <= 0:
+    coins = int(row.platform_coin or 0)
+    if coins <= 0:
         row.delivery_status = "failed"
-        row.delivery_message = "平台币数量无效"
+        row.delivery_message = "发货失败：平台币数量无效"
         row.delivered_at = None
+        db.commit(); db.refresh(row)
         return False
 
-    player.platform_coin_balance = int(player.platform_coin_balance or 0) + int(row.platform_coin)
-    db.flush()
-    db.add(PlayerCoinLedger(
-        player_id=player.id,
-        action="recharge",
-        delta=int(row.platform_coin),
-        balance_after=int(player.platform_coin_balance),
-        operator=operator,
-        note=f"平台币订单 {row.order_no}",
-    ))
-    row.delivery_status = "success"
-    row.delivery_message = "平台币发放成功"
-    row.delivered_at = utc_now_naive()
-    return True
+    try:
+        player.platform_coin_balance = int(player.platform_coin_balance or 0) + coins
+        db.add(PlayerCoinLedger(
+            player_id=player.id,
+            action="recharge",
+            delta=coins,
+            balance_after=int(player.platform_coin_balance),
+            operator=operator,
+            note=f"平台币订单 {row.order_no}",
+        ))
+        row.delivery_status = "success"
+        row.delivery_message = "平台币到账已确认"
+        row.delivered_at = utc_now_naive()
+        # 只有整个入账事务真正提交成功，后台才允许显示“发货成功”。
+        db.commit(); db.refresh(row)
+        return row.delivery_status == "success"
+    except Exception as exc:
+        db.rollback()
+        fresh = db.get(PlatformCoinOrder, row.id)
+        # 极端情况下若事务其实已提交而响应阶段异常，用入账流水做幂等确认。
+        if fresh and _platform_delivery_ledger(db, fresh):
+            fresh.delivery_status = "success"
+            fresh.delivery_message = "平台币到账已确认"
+            fresh.delivered_at = fresh.delivered_at or utc_now_naive()
+            db.commit(); db.refresh(fresh)
+            return True
+        if fresh:
+            fresh.delivery_status = "failed"
+            fresh.delivery_message = f"发货失败：{str(exc)[:180]}"
+            fresh.delivered_at = None
+            db.commit(); db.refresh(fresh)
+        return False
 
 
 def _create_platform_recharge_order(db: Session, body: PlatformRechargeOrderCreate, *, test_mode: bool = False):
@@ -1702,21 +1751,30 @@ def _create_platform_recharge_order(db: Session, body: PlatformRechargeOrderCrea
 
 
 def _mark_platform_order_paid(db: Session, row: PlatformCoinOrder, *, operator: str = "payment-callback"):
-    """将订单按支付成功处理。重复调用幂等，不重复计流水、不重复发币。"""
+    """
+    将订单按支付成功处理。支付确认和发货确认分成两个事务：
+    支付成功先落库并计入真实流水；随后再尝试发货。这样即使发货失败，
+    订单仍保持“已支付”，发货列单独显示“失败”，由超管补发。
+    """
     first_paid = row.pay_status != "paid"
     if first_paid:
         row.pay_status = "paid"
         row.paid_at = utc_now_naive()
         apply_paid_platform_recharge(db, row.player_id, row.agent_id, Decimal(row.amount))
+        db.commit(); db.refresh(row)
+
     if row.delivery_status == "pending":
         deliver_platform_order(db, row, operator=operator)
-    db.commit(); db.refresh(row)
+        row = db.get(PlatformCoinOrder, row.id)
+    else:
+        db.refresh(row)
+
     return {
         "id": row.id,
         "order_no": row.order_no,
         "status": platform_order_status(row),
         "delivery_status": row.delivery_status,
-        "message": "支付成功并已处理发货" if row.delivery_status == "success" else "支付成功，但发货失败，请后台补发",
+        "message": "支付成功，平台币到账已确认" if row.delivery_status == "success" else "支付成功，但发货失败，请后台补发",
     }
 
 
@@ -1825,11 +1883,10 @@ def platform_orders(
         if wanted_status == "unpaid":
             q = q.filter(PlatformCoinOrder.pay_status != "paid")
         elif wanted_status == "paid":
-            q = q.filter(PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.delivery_status != "success")
-        elif wanted_status == "shipped":
-            q = q.filter(PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.delivery_status == "success")
+            # 支付状态与发货状态彻底分离：已支付筛选包含发货成功和发货失败的订单。
+            q = q.filter(PlatformCoinOrder.pay_status == "paid")
         else:
-            raise HTTPException(400, "状态只支持未支付、已支付、已发货")
+            raise HTTPException(400, "状态只支持未支付、已支付")
 
     rows = q.order_by(PlatformCoinOrder.id.desc()).all()
     return [{

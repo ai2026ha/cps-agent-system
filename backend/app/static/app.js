@@ -372,7 +372,6 @@ function platformOrderSearchBar(){
      <option value="" ${platformOrderSearch.status===''?'selected':''}>全部</option>
      <option value="unpaid" ${platformOrderSearch.status==='unpaid'?'selected':''}>未支付</option>
      <option value="paid" ${platformOrderSearch.status==='paid'?'selected':''}>已支付</option>
-     <option value="shipped" ${platformOrderSearch.status==='shipped'?'selected':''}>已发货</option>
    </select></div>
    <div class="query-actions"><button class="btn primary" id="platformQueryBtn">查询</button><button class="btn" id="platformResetBtn">重置</button></div>
  </div>`;
@@ -411,10 +410,10 @@ function paymentTestPlayerOptions(){
 function paymentTestOrderCard(){
   const o=paymentTestState.order;
   if(!o)return '<div class="payment-test-empty">尚未创建测试订单。先选择玩家并点击“模拟下单”。</div>';
-  const paid=o.status==='shipped'||o.status==='paid';
+  const paid=o.status==='paid';
   return `<div class="payment-test-result">
     <div><span>测试订单号</span><strong>${esc(o.order_no)}</strong></div>
-    <div><span>当前状态</span><strong>${esc(o.status==='unpaid'?'未支付':o.status==='shipped'?'已发货':'已支付')}</strong></div>
+    <div><span>当前状态</span><strong>${esc(o.status==='unpaid'?'未支付':'已支付')}</strong></div>
     <div><span>发货状态</span><strong>${esc(o.delivery_status==='success'?'成功':o.delivery_status==='failed'?'失败':'待处理')}</strong></div>
     <div class="payment-test-result-actions">
       <button class="btn primary" type="button" id="paymentTestPayBtn" ${paid?'disabled':''}>${paid?'已模拟支付':'模拟支付成功'}</button>
@@ -736,14 +735,16 @@ const playerBaseCols=[['玩家ID','player_id'],['账号','username'],['角色','
 function playerColumns(){return hasPermission('players.manage')?[...playerBaseCols,['操作','id',(_,r)=>`<button class="btn compact" onclick="openPlayerEdit(${Number(r.id)})">编辑</button>`]]:playerBaseCols}
 function platformPaymentMethodText(v){return ({wechat:'微信',alipay:'支付宝'})[String(v||'').toLowerCase()]||'历史/未知'}
 function platformOrderStatusBadge(v){
- const map={unpaid:['未支付','warn'],paid:['已支付','ok'],shipped:['已发货','ok']};
+ const map={unpaid:['未支付','warn'],paid:['已支付','ok']};
  const [label,tone]=map[String(v||'')]||[String(v||'-'),''];
  return `<span class="badge ${tone}">${esc(label)}</span>`;
 }
-function platformDeliveryBadge(v){
+function platformDeliveryBadge(v,r){
  const map={success:['成功','ok'],failed:['失败','bad']};
  if(!map[String(v||'')])return '<span class="muted">-</span>';
- const [label,tone]=map[String(v)];return `<span class="badge ${tone}">${label}</span>`;
+ const [label,tone]=map[String(v)];
+ const tip=esc((r&&r.delivery_message)||'');
+ return `<span class="badge ${tone}" title="${tip}">${label}</span>`;
 }
 function platformResendCell(_,r){
  if(!hasPermission('orders.manage'))return '<span class="muted">-</span>';

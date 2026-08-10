@@ -14,7 +14,7 @@ os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 from fastapi.testclient import TestClient
 from app.main import app, business_today
 from app.database import SessionLocal
-from app.models import Player, PlatformCoinOrder
+from app.models import Player, PlatformCoinOrder, PlayerCoinLedger
 
 
 def login(c, username, password):
@@ -1280,17 +1280,17 @@ def test_v46_platform_orders_are_payment_generated_searchable_and_no_manual_add(
             'order_no': 'V46-WX-ORDER-001'
         })
         assert paid.status_code == 200, paid.text
-        assert paid.json()['status'] == 'shipped'
+        assert paid.json()['status'] == 'paid'
         assert paid.json()['delivery_status'] == 'success'
         again = c.post('/api/payment/platform-orders/paid', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
             'order_no': 'V46-WX-ORDER-001'
         })
         assert again.status_code == 200, again.text
 
-        shipped = c.get('/api/orders/platform', headers=auth(admin), params={'status': 'shipped'})
-        row = next(x for x in shipped.json() if x['order_no'] == 'V46-WX-ORDER-001')
+        paid_rows = c.get('/api/orders/platform', headers=auth(admin), params={'status': 'paid'})
+        row = next(x for x in paid_rows.json() if x['order_no'] == 'V46-WX-ORDER-001')
         assert row['amount'] == 100.0
-        assert row['status'] == 'shipped'
+        assert row['status'] == 'paid'
         assert row['delivery_status'] == 'success'
         assert row['created_at']
         assert row['paid_at']
@@ -1307,6 +1307,12 @@ def test_v46_platform_orders_are_payment_generated_searchable_and_no_manual_add(
             order = db.get(PlatformCoinOrder, row['id'])
             failed_player = db.get(Player, order.player_id)
             failed_player.platform_coin_balance -= int(order.platform_coin)
+            # V49：真正的发货失败必须不存在该订单的成功入账凭证；否则补发会按幂等规则认定已到账。
+            db.query(PlayerCoinLedger).filter(
+                PlayerCoinLedger.player_id == order.player_id,
+                PlayerCoinLedger.action == 'recharge',
+                PlayerCoinLedger.note == f'平台币订单 {order.order_no}',
+            ).delete(synchronize_session=False)
             order.delivery_status = 'failed'
             order.delivery_message = '模拟游戏服发货失败'
             order.delivered_at = None
@@ -1337,7 +1343,7 @@ def test_v46_platform_order_frontend_has_required_filters_columns_and_resend():
     js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     html = (static_dir / 'index.html').read_text(encoding='utf-8')
-    for text in ['订单号查询','账号查询','支付方式','微信','支付宝','未支付','已支付','已发货','商品名称','金额（元）','发货','创建时间','支付时间','补发']:
+    for text in ['订单号查询','账号查询','支付方式','微信','支付宝','未支付','已支付','商品名称','金额（元）','发货','创建时间','支付时间','补发']:
         assert text in js
     assert "if(view==='platformOrders') return renderPlatformOrders();" in js
     assert '新增平台币订单' not in js
@@ -1382,12 +1388,12 @@ def test_v47_superadmin_payment_test_full_flow_and_rbac():
 
         paid = c.post(f'/api/payment-test/orders/{order_no}/pay', headers=auth(admin))
         assert paid.status_code == 200, paid.text
-        assert paid.json()['status'] == 'shipped'
+        assert paid.json()['status'] == 'paid'
         assert paid.json()['delivery_status'] == 'success'
 
         rows = c.get('/api/orders/platform', headers=auth(admin), params={'order_no': order_no}).json()
         assert len(rows) == 1
-        assert rows[0]['status'] == 'shipped'
+        assert rows[0]['status'] == 'paid'
         player = c.get('/api/players', headers=auth(admin), params={'account': 'v47_test_player'}).json()[0]
         assert player['platform_coin_balance'] == 100
         assert player['total_recharge'] == 1.0
@@ -1421,3 +1427,122 @@ def test_v47_payment_test_frontend_is_superadmin_only():
     assert "if(view==='paymentTest') return renderPaymentTest();" in js
     assert '.payment-test-grid' in css
     assert 'payment-test-v47' in html
+
+
+def test_v48_platform_status_only_unpaid_paid_and_delivery_separate():
+    """V48：平台币订单状态只表示支付状态，发货结果独立展示。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    assert '<option value="unpaid"' in js
+    assert '<option value="paid"' in js
+    assert '<option value="shipped"' not in js
+    assert "shipped:['已发货'" not in js
+    assert 'platform-status-v48' in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v48_status_agent', 'V48状态代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_public_id = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{agent_public_id}', json={
+            'username': 'v48_status_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        created = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V48-STATUS-ORDER', 'player_account': 'v48_status_player',
+            'product_name': 'V48状态测试', 'amount': 3, 'platform_coin': 300, 'payment_method': 'wechat'
+        })
+        assert created.status_code == 200, created.text
+        paid = c.post('/api/payment/platform-orders/paid', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V48-STATUS-ORDER'
+        })
+        assert paid.status_code == 200, paid.text
+        assert paid.json()['status'] == 'paid'
+        assert paid.json()['delivery_status'] == 'success'
+        rows = c.get('/api/orders/platform', headers=auth(admin), params={'status': 'paid', 'order_no': 'V48-STATUS-ORDER'})
+        assert rows.status_code == 200, rows.text
+        assert len(rows.json()) == 1
+        assert rows.json()[0]['status'] == 'paid'
+        assert rows.json()[0]['delivery_status'] == 'success'
+        invalid = c.get('/api/orders/platform', headers=auth(admin), params={'status': 'shipped'})
+        assert invalid.status_code == 400
+        assert invalid.json()['detail'] == '状态只支持未支付、已支付'
+
+
+def test_v49_delivery_status_requires_actual_credit_confirmation():
+    """V49：支付成功≠发货成功；只有实际余额入账事务提交成功才显示发货成功。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    assert 'delivery-confirm-v49' in html
+    assert 'delivery_message' in js
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v49_delivery_agent', 'V49发货代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_public_id = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{agent_public_id}', json={
+            'username': 'v49_delivery_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+
+        # 正常订单：支付成功后必须有余额实际增加与充值流水凭证，才是发货成功。
+        db = SessionLocal()
+        try:
+            player = db.query(Player).filter(Player.username == 'v49_delivery_player').first()
+            before_balance = int(player.platform_coin_balance or 0)
+        finally:
+            db.close()
+        created = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V49-DELIVERY-OK', 'player_account': 'v49_delivery_player',
+            'product_name': 'V49到账确认', 'amount': 5, 'platform_coin': 500, 'payment_method': 'wechat'
+        })
+        assert created.status_code == 200, created.text
+        paid = c.post('/api/payment/platform-orders/paid', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V49-DELIVERY-OK'
+        })
+        assert paid.status_code == 200, paid.text
+        assert paid.json()['status'] == 'paid'
+        assert paid.json()['delivery_status'] == 'success'
+
+        db = SessionLocal()
+        try:
+            player = db.query(Player).filter(Player.username == 'v49_delivery_player').first()
+            assert int(player.platform_coin_balance or 0) == before_balance + 500
+            ledger = db.query(PlayerCoinLedger).filter(
+                PlayerCoinLedger.player_id == player.id,
+                PlayerCoinLedger.action == 'recharge',
+                PlayerCoinLedger.note == '平台币订单 V49-DELIVERY-OK',
+            ).first()
+            assert ledger is not None
+            assert int(ledger.delta) == 500
+        finally:
+            db.close()
+
+        # 异常订单：即使支付已确认，实际发货条件失败时也必须保持“已支付 + 发货失败”。
+        created2 = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V49-DELIVERY-FAIL', 'player_account': 'v49_delivery_player',
+            'product_name': 'V49失败确认', 'amount': 2, 'platform_coin': 200, 'payment_method': 'alipay'
+        })
+        assert created2.status_code == 200, created2.text
+        db = SessionLocal()
+        try:
+            order = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == 'V49-DELIVERY-FAIL').first()
+            order.platform_coin = 0  # 模拟发货侧数据异常；支付本身仍可成功。
+            db.commit()
+        finally:
+            db.close()
+        paid2 = c.post('/api/payment/platform-orders/paid', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V49-DELIVERY-FAIL'
+        })
+        assert paid2.status_code == 200, paid2.text
+        assert paid2.json()['status'] == 'paid'
+        assert paid2.json()['delivery_status'] == 'failed'
+        rows = c.get('/api/orders/platform', headers=auth(admin), params={'order_no': 'V49-DELIVERY-FAIL'})
+        assert rows.status_code == 200, rows.text
+        row = rows.json()[0]
+        assert row['status'] == 'paid'
+        assert row['delivery_status'] == 'failed'
+        assert '平台币数量无效' in row['delivery_message']
