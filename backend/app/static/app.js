@@ -12,6 +12,38 @@ const titles = {
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
 };
 
+
+function ensureToastRoot(){
+  let root=document.getElementById('toastRoot');
+  if(!root){
+    root=document.createElement('div');
+    root.id='toastRoot';
+    root.className='toast-root';
+    root.setAttribute('aria-live','polite');
+    root.setAttribute('aria-atomic','true');
+    document.body.appendChild(root);
+  }
+  return root;
+}
+function showToast(message,type='success',duration=2400){
+  const root=ensureToastRoot();
+  const el=document.createElement('div');
+  el.className=`toast toast-${type}`;
+  const icon=type==='success'?'✓':type==='error'?'!':'…';
+  el.innerHTML=`<span class="toast-icon">${icon}</span><span class="toast-message">${esc(message)}</span>`;
+  root.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('show'));
+  const remove=()=>{el.classList.remove('show');setTimeout(()=>el.remove(),180)};
+  if(duration>0)setTimeout(remove,duration);
+  return {remove};
+}
+function refreshCurrentViewQuietly(){
+  // 渠道新增/编辑成功后不要先清空页面再显示“加载中”，直接后台刷新列表。
+  if(currentView==='agents') return renderAgents();
+  return loadView(currentView);
+}
+function nextPaint(){return new Promise(resolve=>requestAnimationFrame(()=>resolve()))}
+
 function formatApiError(detail){
   if(!detail) return '请求失败';
   if(typeof detail==='string') return detail;
@@ -312,5 +344,43 @@ function fieldControl(name,type,val,required,meta){
  }
  return `<input name="${name}" type="${type}" value="${esc(val)}" ${required?'required':''} ${inputAttrs(meta,type)}/>`;
 }
-function openForm(title,cfg){$('#modalTitle').textContent=title;const defaults=cfg.defaults||{};$('#modalForm').setAttribute('autocomplete','off');$('#modalForm').innerHTML=`${cfg.note?`<div class="form-hint">${esc(cfg.note)}</div>`:''}<div class="form-grid">${cfg.fields.map(f=>{const [name,label,type='text',required=true,meta=null]=f;const val=defaults[name]??'';return `<div class="${type==='textarea'?'full':''}"><label>${label}</label>${fieldControl(name,type,val,required,meta)}</div>`}).join('')}<div class="form-actions"><button type="button" class="btn" id="cancelForm">取消</button><button class="btn primary">提交</button></div></div>`;$('#modal').classList.remove('hidden');$('#cancelForm').onclick=closeModal;$('#modalForm').onsubmit=async e=>{e.preventDefault();let obj={};new FormData(e.target).forEach((v,k)=>{if(v==='')return;const f=cfg.fields.find(x=>x[0]===k);obj[k]=f?.[2]==='number'||(f?.[2]==='select'&&f?.[4]?.valueType==='number')?Number(v):v});try{if(cfg.transform)obj=cfg.transform(obj);let path=cfg.path;if(title==='生成兑换码'){path=`/api/redemption-batches/${obj.batch_id}/generate`;delete obj.batch_id}const r=await api(path,{method:cfg.method||'POST',body:JSON.stringify(obj)});alert(r.message||`成功${r.generated?`，已生成 ${r.generated} 个`:''}`);closeModal();loadView(currentView)}catch(err){alert(err.message)}}}
+function openForm(title,cfg){
+  $('#modalTitle').textContent=title;
+  const defaults=cfg.defaults||{};
+  const form=$('#modalForm');
+  form.setAttribute('autocomplete','off');
+  form.innerHTML=`${cfg.note?`<div class="form-hint">${esc(cfg.note)}</div>`:''}<div class="form-grid">${cfg.fields.map(f=>{const [name,label,type='text',required=true,meta=null]=f;const val=defaults[name]??'';return `<div class="${type==='textarea'?'full':''}"><label>${label}</label>${fieldControl(name,type,val,required,meta)}</div>`}).join('')}<div class="form-actions"><button type="button" class="btn" id="cancelForm">取消</button><button class="btn primary form-submit-btn">提交</button></div></div>`;
+  $('#modal').classList.remove('hidden');
+  $('#cancelForm').onclick=closeModal;
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const submitBtn=e.submitter||form.querySelector('.form-submit-btn');
+    const cancelBtn=$('#cancelForm');
+    const originalText=submitBtn?.textContent||'提交';
+    const pendingText=cfg.pendingText||(title.startsWith('编辑代理')?'保存中…':title==='新增代理'?'创建中…':'提交中…');
+    if(submitBtn){submitBtn.disabled=true;submitBtn.classList.add('is-busy');submitBtn.textContent=pendingText;}
+    if(cancelBtn)cancelBtn.disabled=true;
+    form.setAttribute('aria-busy','true');
+    // 先让“处理中”状态绘制出来，再发请求，避免用户感觉点击无反馈。
+    await nextPaint();
+    let obj={};
+    new FormData(e.target).forEach((v,k)=>{if(v==='')return;const f=cfg.fields.find(x=>x[0]===k);obj[k]=f?.[2]==='number'||(f?.[2]==='select'&&f?.[4]?.valueType==='number')?Number(v):v});
+    try{
+      if(cfg.transform)obj=cfg.transform(obj);
+      let path=cfg.path;
+      if(title==='生成兑换码'){path=`/api/redemption-batches/${obj.batch_id}/generate`;delete obj.batch_id}
+      const r=await api(path,{method:cfg.method||'POST',body:JSON.stringify(obj)});
+      const message=r.message||`操作成功${r.generated?`，已生成 ${r.generated} 个`:''}`;
+      // 请求一确认成功就立即关闭弹窗并给反馈；列表刷新放到后台，不阻塞成功提示。
+      closeModal();
+      showToast(message,'success',2600);
+      Promise.resolve(refreshCurrentViewQuietly()).catch(err=>showToast(`数据刷新失败：${err.message}`,'error',4200));
+    }catch(err){
+      showToast(err.message,'error',4200);
+      form.removeAttribute('aria-busy');
+      if(submitBtn){submitBtn.disabled=false;submitBtn.classList.remove('is-busy');submitBtn.textContent=originalText;}
+      if(cancelBtn)cancelBtn.disabled=false;
+    }
+  };
+}
 function closeModal(){$('#modal').classList.add('hidden')}$('#closeModal').onclick=closeModal;$('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal()};

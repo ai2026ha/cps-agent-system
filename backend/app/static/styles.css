@@ -29,3 +29,92 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 .query-turnover{min-width:0}.turnover-period-select{width:100%;height:38px;border:1px solid #dce2ed;border-radius:8px;background:#fff;padding:0 34px 0 10px;outline:none;color:#172033;font:inherit;font-size:13px;cursor:pointer}.turnover-period-select:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}.custom-turnover-range{margin-top:8px}.custom-turnover-range input{height:36px;cursor:pointer}
 @media(max-width:1180px){.agent-search-bar{grid-template-columns:1fr 1fr}.query-turnover{grid-column:1/-1}}
 @media(max-width:720px){.agent-search-bar{grid-template-columns:1fr}.query-turnover{grid-column:auto}}
+
+
+/* V14: 自定义流水日期使用浮层，不参与查询栏布局，避免 UI 跳动 */
+.agent-search-bar{position:relative;z-index:2}
+.query-turnover{position:relative}
+.custom-turnover-range{
+  position:absolute;
+  z-index:30;
+  top:calc(100% + 7px);
+  left:0;
+  width:360px;
+  max-width:calc(100vw - 48px);
+  margin-top:0;
+  padding:10px;
+  background:#fff;
+  border:1px solid #dfe5ee;
+  border-radius:10px;
+  box-shadow:0 12px 30px #1d315026;
+}
+.custom-turnover-range:before{
+  content:"";
+  position:absolute;
+  top:-6px;
+  left:22px;
+  width:10px;
+  height:10px;
+  background:#fff;
+  border-left:1px solid #dfe5ee;
+  border-top:1px solid #dfe5ee;
+  transform:rotate(45deg);
+}
+.custom-turnover-range input{background:#fff;position:relative;z-index:1}
+@media(max-width:720px){
+  .custom-turnover-range{left:0;width:100%;max-width:none}
+}
+
+/* V15: 精简渠道查询 + 代理编辑 */
+.agent-search-bar{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-end;
+  gap:10px 12px;
+  padding:12px 14px;
+}
+.agent-search-bar > .query-field{
+  flex:0 0 190px;
+  width:190px;
+  min-width:0;
+}
+.agent-search-bar > .query-field input{
+  width:100%;
+}
+.agent-search-bar .query-actions{
+  flex:0 0 auto;
+  padding-bottom:0;
+}
+.btn.compact{padding:6px 12px;font-size:12px;border-radius:7px;white-space:nowrap}
+.agent-table-scroll table th:last-child,
+.agent-table-scroll table td:last-child{
+  position:sticky;
+  right:0;
+  z-index:1;
+  background:#fff;
+  box-shadow:-1px 0 0 #edf0f5;
+}
+.agent-table-scroll table th:last-child{z-index:2;background:#f8f9fc}
+.agent-table-scroll table tbody tr:hover td:last-child{background:#fafbfe}
+@media(max-width:900px){
+  .agent-search-bar > .query-field{flex:1 1 180px;width:auto}
+  .agent-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}
+}
+@media(max-width:560px){
+  .agent-search-bar > .query-field{flex:1 0 100%}
+  .agent-search-bar .query-actions{width:100%}
+}
+
+
+/* V19: 新增/编辑代理的即时反馈 */
+.form-submit-btn.is-busy{position:relative;min-width:92px;padding-left:31px;cursor:wait;opacity:.9}
+.form-submit-btn.is-busy:before{content:"";position:absolute;left:12px;top:50%;width:12px;height:12px;margin-top:-7px;border:2px solid #ffffff73;border-top-color:#fff;border-radius:50%;animation:cps-spin .7s linear infinite}
+@keyframes cps-spin{to{transform:rotate(360deg)}}
+.toast-root{position:fixed;top:20px;right:20px;z-index:1000;display:grid;gap:10px;pointer-events:none;width:min(390px,calc(100vw - 32px))}
+.toast{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:#fff;border:1px solid #e1e6ee;border-radius:11px;box-shadow:0 14px 36px #16243b24;color:#26344e;opacity:0;transform:translateY(-8px) scale(.98);transition:opacity .18s ease,transform .18s ease;pointer-events:auto}
+.toast.show{opacity:1;transform:translateY(0) scale(1)}
+.toast-icon{display:grid;place-items:center;flex:0 0 22px;width:22px;height:22px;border-radius:50%;font-size:13px;font-weight:800}
+.toast-success .toast-icon{background:#e7f7ee;color:#167544}
+.toast-error .toast-icon{background:#fdecec;color:#aa2929}
+.toast-message{font-size:13px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere}
+@media(max-width:560px){.toast-root{top:12px;right:16px;left:16px;width:auto}}
