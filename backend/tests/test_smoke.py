@@ -1546,3 +1546,102 @@ def test_v49_delivery_status_requires_actual_credit_confirmation():
         assert row['status'] == 'paid'
         assert row['delivery_status'] == 'failed'
         assert '平台币数量无效' in row['delivery_message']
+
+
+def test_v50_platform_orders_date_range_and_beijing_created_date_filter():
+    """V50：平台币订单支持开始/结束日期；后端按北京时间创建日期筛选。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    assert 'platformStartDateQuery' in js
+    assert 'platformEndDateQuery' in js
+    assert '开始日期' in js and '结束日期' in js
+    assert '.platform-order-search-bar>.platform-date-field' in css
+    assert 'platform-all-orders-v51' in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v50_date_agent', 'V50日期代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_public_id = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{agent_public_id}', json={
+            'username': 'v50_date_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        for no in ['V50-DATE-TODAY', 'V50-DATE-OLD']:
+            created = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+                'order_no': no, 'player_account': 'v50_date_player', 'product_name': 'V50日期测试',
+                'amount': 1, 'platform_coin': 100, 'payment_method': 'wechat'
+            })
+            assert created.status_code == 200, created.text
+
+        # 把其中一单移动到北京时间昨天，验证当天查询不会命中。
+        db = SessionLocal()
+        try:
+            old = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == 'V50-DATE-OLD').first()
+            old.created_at = old.created_at - timedelta(days=1)
+            db.commit()
+        finally:
+            db.close()
+
+        today = business_today().isoformat()
+        yesterday = (business_today() - timedelta(days=1)).isoformat()
+        today_rows = c.get('/api/orders/platform', headers=auth(admin), params={
+            'account': 'v50_date_player', 'start_date': today, 'end_date': today
+        })
+        assert today_rows.status_code == 200, today_rows.text
+        assert {x['order_no'] for x in today_rows.json()} == {'V50-DATE-TODAY'}
+
+        range_rows = c.get('/api/orders/platform', headers=auth(admin), params={
+            'account': 'v50_date_player', 'start_date': yesterday, 'end_date': today
+        })
+        assert range_rows.status_code == 200, range_rows.text
+        assert {x['order_no'] for x in range_rows.json()} == {'V50-DATE-TODAY', 'V50-DATE-OLD'}
+
+        invalid = c.get('/api/orders/platform', headers=auth(admin), params={
+            'start_date': today, 'end_date': yesterday
+        })
+        assert invalid.status_code == 400
+        assert invalid.json()['detail'] == '开始日期不能晚于结束日期'
+
+
+def test_v51_platform_orders_default_all_and_created_at_desc():
+    """V51：默认日期为空，显示全部订单，并按创建时间从新到旧排序。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    assert "let platformOrderSearch = {order_no:'', account:'', payment_method:'', status:'', start_date:'', end_date:''};" in js
+    assert "platformOrderSearch={order_no:'',account:'',payment_method:'',status:'',start_date:'',end_date:''}" in js
+    assert '默认显示全部订单并按创建时间从新到旧排序' in js
+    assert 'platform-all-orders-v51' in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v51_order_agent', 'V51订单代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        aid = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{aid}', json={
+            'username': 'v51_order_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        for no in ['V51-OLDER', 'V51-NEWER']:
+            created = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+                'order_no': no, 'player_account': 'v51_order_player', 'product_name': 'V51排序测试',
+                'amount': 1, 'platform_coin': 100, 'payment_method': 'wechat'
+            })
+            assert created.status_code == 200, created.text
+
+        db = SessionLocal()
+        try:
+            older = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == 'V51-OLDER').first()
+            newer = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == 'V51-NEWER').first()
+            older.created_at = newer.created_at - timedelta(days=2)
+            db.commit()
+        finally:
+            db.close()
+
+        rows = c.get('/api/orders/platform', headers=auth(admin), params={'account': 'v51_order_player'})
+        assert rows.status_code == 200, rows.text
+        data = rows.json()
+        assert [x['order_no'] for x in data[:2]] == ['V51-NEWER', 'V51-OLDER']

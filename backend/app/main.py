@@ -1866,6 +1866,8 @@ def platform_orders(
     account: str | None = Query(default=None),
     payment_method: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
     principal=Depends(require_permission("orders.view")),
 ):
@@ -1878,6 +1880,20 @@ def platform_orders(
         q = q.filter(Player.username.ilike(f"%{account.strip()}%"))
     if payment_method and payment_method.strip():
         q = q.filter(PlatformCoinOrder.payment_channel == normalize_payment_method(payment_method))
+    # V50：平台币充值订单支持按北京时间创建日期查询。只填一端时按单日处理。
+    if start_date is not None and end_date is None:
+        end_date = start_date
+    elif end_date is not None and start_date is None:
+        start_date = end_date
+    if start_date is not None and end_date is not None:
+        if start_date > end_date:
+            raise HTTPException(400, "开始日期不能晚于结束日期")
+        start_dt, end_dt = business_date_bounds(start_date, end_date)
+        if start_dt is not None:
+            q = q.filter(PlatformCoinOrder.created_at >= start_dt)
+        if end_dt is not None:
+            q = q.filter(PlatformCoinOrder.created_at < end_dt)
+
     wanted_status = (status or "").strip().lower()
     if wanted_status:
         if wanted_status == "unpaid":
@@ -1888,7 +1904,7 @@ def platform_orders(
         else:
             raise HTTPException(400, "状态只支持未支付、已支付")
 
-    rows = q.order_by(PlatformCoinOrder.id.desc()).all()
+    rows = q.order_by(PlatformCoinOrder.created_at.desc(), PlatformCoinOrder.id.desc()).all()
     return [{
         "id": order.id,
         "order_no": order.order_no,

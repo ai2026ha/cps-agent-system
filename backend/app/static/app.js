@@ -1,11 +1,16 @@
 const $ = s => document.querySelector(s);
+function beijingTodayString(){
+  const parts=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const map=Object.fromEntries(parts.filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
 let token = localStorage.getItem('cps_token') || '';
 let actorType = localStorage.getItem('cps_actor_type') || 'admin';
 let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
 let playerSearch = {account:'', role:'', parent:''};
-let platformOrderSearch = {order_no:'', account:'', payment_method:'', status:''};
+let platformOrderSearch = {order_no:'', account:'', payment_method:'', status:'', start_date:'', end_date:''};
 let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
@@ -373,6 +378,8 @@ function platformOrderSearchBar(){
      <option value="unpaid" ${platformOrderSearch.status==='unpaid'?'selected':''}>未支付</option>
      <option value="paid" ${platformOrderSearch.status==='paid'?'selected':''}>已支付</option>
    </select></div>
+   <div class="query-field platform-date-field"><label>开始日期</label><input id="platformStartDateQuery" type="date" value="${esc(platformOrderSearch.start_date)}"></div>
+   <div class="query-field platform-date-field"><label>结束日期</label><input id="platformEndDateQuery" type="date" value="${esc(platformOrderSearch.end_date)}"></div>
    <div class="query-actions"><button class="btn primary" id="platformQueryBtn">查询</button><button class="btn" id="platformResetBtn">重置</button></div>
  </div>`;
 }
@@ -380,16 +387,17 @@ function bindPlatformOrderSearch(){
  const run=()=>{
    platformOrderSearch={
      order_no:$('#platformOrderNoQuery')?.value.trim()||'',account:$('#platformAccountQuery')?.value.trim()||'',
-     payment_method:$('#platformPaymentMethodQuery')?.value||'',status:$('#platformStatusQuery')?.value||''
+     payment_method:$('#platformPaymentMethodQuery')?.value||'',status:$('#platformStatusQuery')?.value||'',
+     start_date:$('#platformStartDateQuery')?.value||'',end_date:$('#platformEndDateQuery')?.value||''
    };renderPlatformOrders();
  };
  $('#platformQueryBtn').onclick=run;
- $('#platformResetBtn').onclick=()=>{platformOrderSearch={order_no:'',account:'',payment_method:'',status:''};renderPlatformOrders()};
+ $('#platformResetBtn').onclick=()=>{platformOrderSearch={order_no:'',account:'',payment_method:'',status:'',start_date:'',end_date:''};renderPlatformOrders()};
  ['#platformOrderNoQuery','#platformAccountQuery'].forEach(sel=>{const el=$(sel);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
 }
 async function renderPlatformOrders(){
  const rows=await api('/api/orders/platform'+platformOrderSearchQuery());
- $('#content').innerHTML=panel('平台币订单',`${platformOrderSearchBar()}<div class="query-scope-note">订单由玩家充值/支付流程自动生成，后台不提供手工新增。只有真实支付成功的订单进入流水；补发不会重复增加流水或分佣。</div><div class="table-scroll platform-order-table-scroll">${table(rows,platformCols)}</div>`);
+ $('#content').innerHTML=panel('平台币订单',`${platformOrderSearchBar()}<div class="query-scope-note">订单由玩家充值/支付流程自动生成，后台不提供手工新增。默认显示全部订单并按创建时间从新到旧排序；日期仅在主动查询时生效。只有真实支付成功的订单进入流水；补发不会重复增加流水或分佣。</div><div class="table-scroll platform-order-table-scroll">${table(rows,platformCols)}</div>`);
  bindPlatformOrderSearch();
 }
 async function resendPlatformOrder(id){
