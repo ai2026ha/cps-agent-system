@@ -143,6 +143,45 @@ def test_three_level_chain_and_creation_permissions():
         assert '无此操作权限' in forbidden.json()['detail']
 
 
+def test_player_registers_via_agent_link_and_is_auto_bound():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        l1 = create_agent(c, admin, 'register_link_agent', '注册链接代理', 1, 2)
+        assert l1.status_code == 200, l1.text
+        agent_public_id = l1.json()['agent_id']
+
+        info = c.get(f'/api/public/registration/{agent_public_id}')
+        assert info.status_code == 200, info.text
+        assert info.json()['agent_id'] == agent_public_id
+
+        reg = c.post(f'/api/public/registration/{agent_public_id}', json={
+            'username': 'linked_player_001',
+            'password': 'PlayerPass123!',
+        })
+        assert reg.status_code == 200, reg.text
+        data = reg.json()
+        assert data['player_id'].startswith('P')
+        assert data['agent_id'] == agent_public_id
+
+        agent_token = login(c, 'register_link_agent', 'AgentPass123!')
+        me = c.get('/api/auth/me', headers=auth(agent_token))
+        assert me.status_code == 200
+        assert me.json()['registration_path'] == f'/register/{agent_public_id}'
+
+        players = c.get('/api/players', headers=auth(agent_token))
+        assert players.status_code == 200, players.text
+        row = next(x for x in players.json() if x['username'] == 'linked_player_001')
+        assert row['agent_public_id'] == agent_public_id
+        assert row['role_name'] == '未绑定'
+        assert row['server_name'] == '未绑定'
+
+        # 后台不再允许手工新增玩家，统一从代理专属注册地址进入。
+        manual = c.post('/api/players', headers=auth(admin), json={
+            'username': 'manual_player', 'password': 'PlayerPass123!'
+        })
+        assert manual.status_code == 405
+
+
 def test_commission_rate_is_internal_ratio_and_validated():
     with TestClient(app) as c:
         token = login(c, 'admin', 'ChangeMe123!')
@@ -194,15 +233,12 @@ def test_agent_query_bar_filters_and_custom_turnover():
         assert any(x['agent_id'] == parent_public_id and x['parent_agent_display'] == '超管' for x in by_superadmin.json())
 
         child_row = next(x for x in by_account.json() if x['agent_id'] == child_public_id)
-        player = c.post('/api/players', headers=auth(admin), json={
-            'player_id': 'QUERYPLAYER001',
+        player = c.post(f'/api/public/registration/{child_public_id}', json={
             'username': 'query_player',
             'password': 'PlayerPass123!',
-            'role_name': '查询玩家',
-            'server_name': 'S1',
-            'agent_id': child_row['id'],
         })
         assert player.status_code == 200, player.text
+        assert player.json()['agent_id'] == child_public_id
         player_pk = player.json()['id']
         order = c.post('/api/orders/platform', headers=auth(admin), json={
             'order_no': 'QUERYORDER001',
@@ -450,12 +486,12 @@ def test_dashboard_turnover_counts_only_paid_platform_coin_orders():
         assert before.status_code == 200, before.text
         before_data = before.json()
 
-        player = c.post('/api/players', headers=auth(admin), json={
-            'player_id': 'V23FLOWPLAYER001',
+        reg_agent = create_agent(c, admin, 'v23_flow_agent', 'V23流水代理', 1, 5, 0.1)
+        assert reg_agent.status_code == 200, reg_agent.text
+        reg_agent_id = reg_agent.json()['agent_id']
+        player = c.post(f'/api/public/registration/{reg_agent_id}', json={
             'username': 'v23_flow_player',
             'password': 'PlayerPass123!',
-            'role_name': 'V23流水玩家',
-            'server_name': 'V23-S1',
         })
         assert player.status_code == 200, player.text
         player_pk = player.json()['id']

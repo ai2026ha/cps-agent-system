@@ -9,7 +9,7 @@ let systemMetricsLoading = false;
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','按周期计算代理佣金'],
- players:['玩家列表','账号、角色、区服与充值数据'], platformOrders:['平台币订单','平台币充值订单记录'], mallOrders:['商城订单','商城购买订单记录'],
+ players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','平台币充值订单记录'], mallOrders:['商城订单','商城购买订单记录'],
  shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], cdk:['兑换码列表','CDK 批次与兑换统计'],
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
 };
@@ -156,7 +156,7 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='dashboard') return renderDashboard();
  if(view==='agents') return renderAgents();
  if(view==='settlements') return renderList('/api/settlements',settleCols,'结算记录',hasPermission('settlements.manage')?()=>openForm('生成结算单',forms.settlement):null);
- if(view==='players') return renderList('/api/players',playerCols,'玩家列表',hasPermission('players.manage')?()=>openForm('新增玩家',forms.player):null);
+ if(view==='players') return renderPlayers();
  if(view==='platformOrders') return renderList('/api/orders/platform',platformCols,'平台币订单',hasPermission('orders.manage')?()=>openForm('新增平台币订单',forms.platform):null);
  if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单',hasPermission('orders.manage')?()=>openForm('新增商城订单',forms.mall):null);
  if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',hasPermission('shipments.manage')?()=>openForm('更新发货',forms.shipment):null);
@@ -289,6 +289,30 @@ async function renderDashboard(){
  $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${commission}</div>`;
 }
 
+function registrationUrl(agentId){return `${window.location.origin}/register/${encodeURIComponent(agentId)}`}
+async function copyText(text){
+ try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return true}}catch{}
+ const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();
+ let ok=false;try{ok=document.execCommand('copy')}catch{}ta.remove();return ok;
+}
+window.copyRegistrationLink=async(agentId)=>{
+ const url=registrationUrl(agentId);
+ const ok=await copyText(url);
+ showToast(ok?`注册地址已复制：${url}`:'复制失败，请手动复制注册地址',ok?'success':'error',ok?3200:4200);
+};
+async function renderPlayers(){
+ const rows=await api('/api/players');
+ let top='';
+ if(currentUser?.actor_type==='agent'&&currentUser?.agent_id){
+   const url=registrationUrl(currentUser.agent_id);
+   top=`<div class="registration-link-card"><div><strong>我的专属注册地址</strong><span>玩家从此地址注册后，会自动绑定到代理 ${esc(currentUser.agent_id)} 并进入玩家列表。</span></div><div class="registration-link-actions"><input value="${esc(url)}" readonly id="myRegistrationUrl"><button class="btn primary" id="copyMyRegistration">复制地址</button></div></div>`;
+ }else{
+   top='<div class="registration-link-card admin-note"><div><strong>玩家采用代理专属地址注册</strong><span>后台不再手工新增玩家。请到「渠道管理 → 下级渠道」复制对应代理的注册地址。</span></div></div>';
+ }
+ $('#content').innerHTML=top+panel('玩家列表',`<div class="table-scroll">${table(rows,playerCols)}</div>`);
+ const copy=$('#copyMyRegistration');if(copy)copy.onclick=()=>window.copyRegistrationLink(currentUser.agent_id);
+}
+
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
 function agentLevelText(v){return ({1:'一级代理',2:'二级代理',3:'三级代理'})[Number(v)]||'-'}
 function agentSearchQuery(){
@@ -390,8 +414,8 @@ async function renderProducts(cat){const rows=await api('/api/products?category=
 async function renderCDK(){const rows=await api('/api/redemption-batches');const manage=hasPermission('cdk.manage');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>':'');if(manage){$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
 
-const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',agentStatusBadge],['操作','id',(_,r)=>hasPermission('channels.edit_basic')||hasPermission('channels.edit_full')?`<button class="btn compact" onclick="openAgentEdit(${Number(r.id)})">编辑</button>`:'-']];
-const playerCols=[['玩家ID','player_id'],['账号','username'],['角色名','role_name'],['区服','server_name'],['代理PK','agent_id'],['今日充值','today_recharge'],['总充值','total_recharge'],['最后登录','last_login_at'],['登录IP','last_login_ip']];
+const agentCols=[['代理ID','agent_id'],['代理等级','agent_level',agentLevelText],['代理名称','agent_name'],['账号','username'],['邀请码','invite_code'],['上级代理','parent_agent_display'],['今日流水','today_turnover'],['昨日流水','yesterday_turnover'],['总流水','total_turnover'],['佣金比例','commission_rate',percent],['状态','status',agentStatusBadge],['注册地址','agent_id',(v)=>`<button class="btn compact" onclick="copyRegistrationLink('${esc(v)}')">复制地址</button>`],['操作','id',(_,r)=>hasPermission('channels.edit_basic')||hasPermission('channels.edit_full')?`<button class="btn compact" onclick="openAgentEdit(${Number(r.id)})">编辑</button>`:'-']];
+const playerCols=[['玩家ID','player_id'],['账号','username'],['角色名','role_name'],['区服','server_name'],['所属代理','agent_public_id'],['今日充值','today_recharge'],['总充值','total_recharge'],['注册时间','created_at'],['最后登录','last_login_at'],['登录IP','last_login_ip']];
 const platformCols=[['订单号','order_no'],['玩家PK','player_id'],['代理PK','agent_id'],['金额','amount'],['平台币','platform_coin'],['支付渠道','payment_channel'],['支付状态','pay_status',badge],['创建时间','created_at']];
 const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','product_id'],['数量','quantity'],['金额','amount'],['支付','pay_status',badge],['发货','delivery_status',badge],['创建时间','created_at']];
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
@@ -433,7 +457,6 @@ function buildAgentForm(caps){
 }
 
 const forms={
- player:{path:'/api/players',fields:[['player_id','玩家ID'],['username','账号'],['password','密码','password'],['role_name','角色名'],['server_name','区服'],['agent_id','所属代理PK','number',false],['last_login_ip','登录IP','text',false]]},
  platform:{path:'/api/orders/platform',fields:[['order_no','订单号'],['player_id','玩家PK','number'],['agent_id','代理PK','number',false],['amount','金额','number'],['platform_coin','平台币数量','number'],['payment_channel','支付渠道'],['pay_status','支付状态']]},
  mall:{path:'/api/orders/mall',fields:[['order_no','订单号'],['player_id','玩家PK','number'],['agent_id','代理PK','number',false],['product_id','商品PK','number'],['quantity','数量','number'],['amount','金额','number'],['pay_status','支付状态']]},
  shipment:{path:'/api/shipments',fields:[['mall_order_id','商城订单PK','number'],['provider','发货服务商'],['tracking_no','发货单号','text',false],['status','状态(sent/failed/success)'],['message','说明','textarea',false]]},

@@ -22,14 +22,10 @@ class AgentUpdate(BaseModel):
     subagent_limit: int | None = Field(default=None, ge=0, le=9999)
     parent_agent_id: str | None = None
 
-class PlayerCreate(BaseModel):
-    player_id: str
-    username: str
-    password: str = Field(min_length=8)
-    role_name: str
-    server_name: str
-    agent_id: int | None = None
-    last_login_ip: str | None = None
+class PlayerRegister(BaseModel):
+    username: str = Field(min_length=4, max_length=64)
+    password: str = Field(min_length=8, max_length=128)
+
 
 class ProductCreate(BaseModel):
     sku: str

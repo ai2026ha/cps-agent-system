@@ -18,7 +18,7 @@ from .models import (
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, MailRecord,
 )
 from .schemas import (
-    LoginIn, AgentCreate, AgentUpdate, PlayerCreate, ProductCreate, PlatformOrderCreate, MallOrderCreate,
+    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, ProductCreate, PlatformOrderCreate, MallOrderCreate,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, MailCreate,
 )
@@ -235,7 +235,7 @@ def dt(v):
 PERMISSION_MATRIX = {
     "superadmin": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "channels.edit_full",
-        "settlements.view", "settlements.manage", "players.view", "players.manage",
+        "settlements.view", "settlements.manage", "players.view",
         "orders.view", "orders.manage", "shipments.view", "shipments.manage",
         "products.view", "products.manage", "cdk.view", "cdk.manage",
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
@@ -299,11 +299,13 @@ def identity_payload(principal, db: Session) -> dict:
         return {
             "username": principal.username, "role": principal.role, "actor_type": "agent",
             "agent_id": agent.agent_id, "agent_level": int(agent.agent_level or 1),
-            "subagent_limit": int(agent.subagent_limit or 0), "permissions": perms,
+            "subagent_limit": int(agent.subagent_limit or 0),
+            "registration_path": f"/register/{agent.invite_code}",
+            "permissions": perms,
         }
     return {
         "username": principal.username, "role": principal.role, "actor_type": "admin",
-        "agent_id": None, "agent_level": 0, "subagent_limit": None, "permissions": perms,
+        "agent_id": None, "agent_level": 0, "subagent_limit": None, "registration_path": None, "permissions": perms,
     }
 
 def seed_admin():
@@ -421,6 +423,12 @@ def healthz():
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/register/{invite_code}")
+def player_registration_page(invite_code: str):
+    # 邀请码/代理ID由页面内的公开 API 再次校验，这里只负责返回注册页面。
+    return FileResponse(STATIC_DIR / "register.html")
 
 @app.post("/api/auth/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
@@ -576,7 +584,7 @@ def serialize_agent(a: Agent, db: Session):
         "subagent_limit": limit, "subagent_count": used,
         "today_turnover": money(a.today_turnover), "yesterday_turnover": money(a.yesterday_turnover),
         "total_turnover": money(a.total_turnover), "commission_rate": float(a.commission_rate or 0),
-        "status": a.status, "created_at": dt(a.created_at),
+        "status": a.status, "registration_path": f"/register/{a.invite_code}", "created_at": dt(a.created_at),
     }
 
 
@@ -775,6 +783,7 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Dep
         "subagent_limit": row.subagent_limit,
         "parent_agent_id": row.parent.agent_id if row.parent else None,
         "parent_agent_display": row.parent.agent_id if row.parent else "超管",
+        "registration_path": f"/register/{row.invite_code}",
         "message": f"{agent_level_name(row.agent_level)}创建成功，代理ID：{row.agent_id}，邀请码：{row.invite_code}",
     }
 
@@ -980,27 +989,83 @@ def create_settlement(body: SettlementCreate, db: Session = Depends(get_db), _=D
         db.rollback(); raise HTTPException(409, "该代理此结算周期已存在")
     return {"id": row.id, "commission_amount": money(amount), "message": "结算单已生成"}
 
-# ---------- 玩家管理 ----------
+# ---------- 玩家管理 / 公开注册 ----------
+def player_identity_from_pk(player_pk: int) -> str:
+    return f"P{player_pk}"
+
+
+def registration_agent(db: Session, invite_code: str) -> Agent:
+    code = (invite_code or "").strip()
+    agent = db.query(Agent).filter(Agent.invite_code == code, Agent.status == "active").first()
+    if not agent:
+        raise HTTPException(404, "注册地址无效或该代理后台已被封禁")
+    return agent
+
+
+
+@app.get("/api/public/registration/{invite_code}")
+def registration_info(invite_code: str, db: Session = Depends(get_db)):
+    agent = registration_agent(db, invite_code)
+    return {
+        "agent_id": agent.agent_id,
+        "agent_name": agent.agent_name,
+        "agent_level": int(agent.agent_level or 1),
+        "agent_level_name": agent_level_name(agent.agent_level),
+    }
+
+
+@app.post("/api/public/registration/{invite_code}")
+def register_player(invite_code: str, body: PlayerRegister, db: Session = Depends(get_db)):
+    agent = registration_agent(db, invite_code)
+    username = body.username.strip()
+    if db.query(Player).filter(Player.username == username).first():
+        raise HTTPException(409, "玩家账号已存在")
+
+    # 玩家ID与代理ID一样由系统生成，注册页不要求玩家手工填写内部标识。
+    temp_player_id = "TMPP" + secrets.token_hex(10).upper()
+    row = Player(
+        player_id=temp_player_id,
+        username=username,
+        password_hash=hash_password(body.password),
+        role_name="未绑定",
+        server_name="未绑定",
+        agent_id=agent.id,
+        today_recharge=0,
+        total_recharge=0,
+        last_login_at=None,
+        last_login_ip=None,
+    )
+    db.add(row)
+    db.flush()
+    row.player_id = player_identity_from_pk(row.id)
+    db.commit(); db.refresh(row)
+    return {
+        "id": row.id,
+        "player_id": row.player_id,
+        "username": row.username,
+        "agent_id": agent.agent_id,
+        "agent_name": agent.agent_name,
+        "message": "注册成功",
+    }
+
+
 @app.get("/api/players")
 def list_players(keyword: str = "", db: Session = Depends(get_db), principal=Depends(require_permission("players.view"))):
     q = db.query(Player)
-    if principal.actor_type == "agent": q = q.filter(Player.agent_id.in_(scoped_agent_ids(db, principal)))
+    if principal.actor_type == "agent":
+        q = q.filter(Player.agent_id.in_(scoped_agent_ids(db, principal)))
     if keyword:
         like = f"%{keyword}%"
         q = q.filter((Player.player_id.like(like)) | (Player.username.like(like)) | (Player.role_name.like(like)) | (Player.server_name.like(like)))
     rows = q.order_by(Player.id.desc()).all()
-    return [{"id": p.id, "player_id": p.player_id, "username": p.username, "role_name": p.role_name, "server_name": p.server_name,
-             "agent_id": p.agent_id, "today_recharge": money(p.today_recharge), "total_recharge": money(p.total_recharge),
-             "last_login_at": dt(p.last_login_at), "last_login_ip": p.last_login_ip, "created_at": dt(p.created_at)} for p in rows]
-
-@app.post("/api/players")
-def create_player(body: PlayerCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
-    if body.agent_id and not db.get(Agent, body.agent_id): raise HTTPException(400, "所属代理不存在")
-    if db.query(Player).filter((Player.player_id == body.player_id) | (Player.username == body.username)).first(): raise HTTPException(409, "玩家ID或账号已存在")
-    row = Player(player_id=body.player_id, username=body.username, password_hash=hash_password(body.password), role_name=body.role_name,
-                 server_name=body.server_name, agent_id=body.agent_id, last_login_ip=body.last_login_ip, last_login_at=datetime.utcnow())
-    db.add(row); db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "玩家创建成功"}
+    agent_ids = {p.agent_id for p in rows if p.agent_id is not None}
+    agents = {a.id: a.agent_id for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).all()} if agent_ids else {}
+    return [{
+        "id": p.id, "player_id": p.player_id, "username": p.username, "role_name": p.role_name, "server_name": p.server_name,
+        "agent_id": p.agent_id, "agent_public_id": agents.get(p.agent_id),
+        "today_recharge": money(p.today_recharge), "total_recharge": money(p.total_recharge),
+        "last_login_at": dt(p.last_login_at), "last_login_ip": p.last_login_ip, "created_at": dt(p.created_at),
+    } for p in rows]
 
 # ---------- 订单管理 ----------
 def apply_paid_recharge(db: Session, player_id: int, agent_id: int | None, amount: Decimal):

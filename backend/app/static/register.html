@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>玩家注册 · CPS</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f7fb;font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#18233d}.card{width:min(460px,100%);background:#fff;border:1px solid #e0e6ef;border-radius:18px;box-shadow:0 16px 45px rgba(37,56,88,.11);padding:30px}.brand{display:flex;align-items:center;gap:10px;margin-bottom:18px}.logo{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:#1e3a70;color:#fff;font-weight:800}.brand strong{font-size:20px}.channel{padding:12px 14px;border-radius:12px;background:#f2f6ff;border:1px solid #dfe8fb;margin-bottom:22px}.channel b{display:block;font-size:14px;margin-bottom:4px}.channel span{font-size:13px;color:#62708a}h1{font-size:24px;margin:0 0 7px}p{margin:0 0 22px;color:#78849a;font-size:14px}label{display:block;font-size:13px;font-weight:700;margin:14px 0 7px}input{width:100%;height:44px;border:1px solid #d8e0ec;border-radius:10px;padding:0 12px;font-size:15px;outline:none}input:focus{border-color:#5684e8;box-shadow:0 0 0 3px rgba(86,132,232,.12)}button{width:100%;height:46px;margin-top:22px;border:0;border-radius:10px;background:#1e3a70;color:#fff;font-size:15px;font-weight:700;cursor:pointer}button:disabled{opacity:.62;cursor:not-allowed}.msg{min-height:22px;margin-top:14px;font-size:13px}.error{color:#c73d4d}.ok{color:#16835d}.foot{margin-top:18px;text-align:center;color:#9aa4b6;font-size:12px}.hidden{display:none}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><div class="logo">CPS</div><div><strong>玩家注册</strong><div style="font-size:12px;color:#8994a8;margin-top:2px">代理专属注册地址</div></div></div>
+    <div id="channel" class="channel"><b>正在确认渠道...</b><span>请稍候</span></div>
+    <div id="formArea" class="hidden">
+      <h1>创建玩家账号</h1><p>注册完成后，账号会自动绑定当前代理，无需填写邀请码。</p>
+      <form id="registerForm" autocomplete="off">
+        <label>玩家账号</label><input id="username" minlength="4" maxlength="64" autocomplete="username" required placeholder="请输入玩家登录账号">
+        <label>登录密码</label><input id="password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required placeholder="至少 8 位">
+        <label>确认密码</label><input id="confirmPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" required placeholder="再次输入密码">
+        <button id="submitBtn" type="submit">立即注册</button>
+      </form>
+    </div>
+    <div id="message" class="msg"></div>
+    <div class="foot">CPS 智能代理系统</div>
+  </main>
+<script>
+const code=decodeURIComponent(location.pathname.split('/').filter(Boolean).pop()||'');
+const channel=document.getElementById('channel'),formArea=document.getElementById('formArea'),msg=document.getElementById('message'),form=document.getElementById('registerForm'),btn=document.getElementById('submitBtn');
+function errorText(detail){if(typeof detail==='string')return detail;if(Array.isArray(detail))return detail.map(x=>x.msg||'参数错误').join('；');return detail?.message||detail?.msg||'请求失败'}
+async function request(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(errorText(d.detail));return d}
+(async()=>{try{const d=await request(`/api/public/registration/${encodeURIComponent(code)}`);channel.innerHTML=`<b>${d.agent_name}</b><span>代理ID：${d.agent_id} · ${d.agent_level_name}</span>`;formArea.classList.remove('hidden')}catch(e){channel.innerHTML='<b>注册地址不可用</b><span>请联系渠道人员获取有效的注册地址</span>';msg.className='msg error';msg.textContent=e.message}})();
+form?.addEventListener('submit',async e=>{e.preventDefault();msg.textContent='';const username=document.getElementById('username').value.trim(),password=document.getElementById('password').value,confirm=document.getElementById('confirmPassword').value;if(password!==confirm){msg.className='msg error';msg.textContent='两次输入的密码不一致';return}btn.disabled=true;btn.textContent='注册中…';try{const d=await request(`/api/public/registration/${encodeURIComponent(code)}`,{method:'POST',body:JSON.stringify({username,password})});msg.className='msg ok';msg.textContent=`注册成功，玩家ID：${d.player_id}`;form.reset();btn.textContent='注册成功';setTimeout(()=>{btn.disabled=false;btn.textContent='继续注册'},1500)}catch(e){msg.className='msg error';msg.textContent=e.message;btn.disabled=false;btn.textContent='立即注册'}});
+</script>
+</body></html>
