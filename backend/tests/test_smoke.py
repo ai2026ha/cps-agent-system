@@ -9,9 +9,12 @@ if TEST_DB.exists():
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "ChangeMe123!"
+os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 
 from fastapi.testclient import TestClient
 from app.main import app, business_today
+from app.database import SessionLocal
+from app.models import Player, PlatformCoinOrder
 
 
 def login(c, username, password):
@@ -32,6 +35,36 @@ def create_agent(c, token, username, name, level, limit, commission=0.1):
         'agent_level': level,
         'subagent_limit': limit,
         'commission_rate': commission,
+    })
+
+
+def platform_payment(c, payload):
+    """V46 测试辅助：模拟玩家充值系统下单，并在 paid 时模拟支付成功回调。"""
+    payload = dict(payload)
+    player_id = payload.pop('player_id')
+    payload.pop('agent_id', None)  # 订单归属必须从玩家当前归属自动获取，外部不能伪造。
+    pay_status = payload.pop('pay_status', 'paid')
+    channel = str(payload.pop('payment_channel', 'wechat')).lower()
+    method = 'alipay' if channel in {'alipay', 'ali', '支付宝'} else 'wechat'
+    db = SessionLocal()
+    try:
+        player = db.get(Player, player_id)
+        assert player is not None
+        player_account = player.username
+    finally:
+        db.close()
+    create = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+        'order_no': payload['order_no'],
+        'player_account': player_account,
+        'product_name': payload.pop('product_name', '平台币充值'),
+        'amount': payload['amount'],
+        'platform_coin': payload['platform_coin'],
+        'payment_method': method,
+    })
+    if create.status_code != 200 or pay_status != 'paid':
+        return create
+    return c.post('/api/payment/platform-orders/paid', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+        'order_no': payload['order_no'],
     })
 
 
@@ -241,7 +274,7 @@ def test_agent_query_bar_filters_and_custom_turnover():
         assert player.status_code == 200, player.text
         assert player.json()['agent_id'] == child_public_id
         player_pk = player.json()['id']
-        order = c.post('/api/orders/platform', headers=auth(admin), json={
+        order = platform_payment(c, {
             'order_no': 'QUERYORDER001',
             'player_id': player_pk,
             'agent_id': child_row['id'],
@@ -508,7 +541,7 @@ def test_dashboard_turnover_counts_only_paid_platform_coin_orders():
         assert product.status_code == 200, product.text
         product_pk = product.json()['id']
 
-        paid_platform = c.post('/api/orders/platform', headers=auth(admin), json={
+        paid_platform = platform_payment(c, {
             'order_no': 'V23-PLATFORM-PAID-001',
             'player_id': player_pk,
             'amount': 123.45,
@@ -518,7 +551,7 @@ def test_dashboard_turnover_counts_only_paid_platform_coin_orders():
         })
         assert paid_platform.status_code == 200, paid_platform.text
 
-        pending_platform = c.post('/api/orders/platform', headers=auth(admin), json={
+        pending_platform = platform_payment(c, {
             'order_no': 'V23-PLATFORM-PENDING-001',
             'player_id': player_pk,
             'amount': 999.00,
@@ -660,7 +693,7 @@ def test_player_queries_and_superadmin_only_edit_controls():
         assert '余额不足' in too_much.json()['detail']
 
         # 已支付平台币订单会真实增加玩家平台币余额。
-        paid = c.post('/api/orders/platform', headers=auth(admin), json={
+        paid = platform_payment(c, {
             'order_no': 'PLAYERCOINORDER001',
             'player_id': player_pk,
             'agent_id': agent_pk,
@@ -740,7 +773,7 @@ def test_v31_all_turnover_uses_real_paid_platform_orders_only():
         assert player_row['total_recharge'] == 0
 
         # 只有真实已支付的平台币订单进入流水。
-        paid = c.post('/api/orders/platform', headers=auth(admin), json={
+        paid = platform_payment(c, {
             'order_no': 'V31-PLATFORM-PAID-001',
             'player_id': player_pk,
             'agent_id': agent_pk,
@@ -975,15 +1008,15 @@ def test_v38_channel_daily_turnover_filters_sort_and_agent_scope():
         assert p2.status_code == 200, p2.text
         assert p3.status_code == 200, p3.text
 
-        paid_l2 = c.post('/api/orders/platform', headers=auth(admin), json={
+        paid_l2 = platform_payment(c, {
             'order_no': 'V38-PAID-L2-001', 'player_id': p2.json()['id'], 'agent_id': l2_data['id'],
             'amount': 50, 'platform_coin': 5000, 'payment_channel': 'test', 'pay_status': 'paid'
         })
-        paid_l3 = c.post('/api/orders/platform', headers=auth(admin), json={
+        paid_l3 = platform_payment(c, {
             'order_no': 'V38-PAID-L3-001', 'player_id': p3.json()['id'], 'agent_id': l3_data['id'],
             'amount': 100, 'platform_coin': 10000, 'payment_channel': 'test', 'pay_status': 'paid'
         })
-        pending_l2 = c.post('/api/orders/platform', headers=auth(admin), json={
+        pending_l2 = platform_payment(c, {
             'order_no': 'V38-PENDING-L2-001', 'player_id': p2.json()['id'], 'agent_id': l2_data['id'],
             'amount': 999, 'platform_coin': 99900, 'payment_channel': 'test', 'pay_status': 'pending'
         })
@@ -1048,7 +1081,7 @@ def test_v42_channel_settlement_total_range_columns_and_level_scope():
             'username': 'v40_paid_player', 'password': 'PlayerPass123!'
         })
         assert player.status_code == 200, player.text
-        paid = c.post('/api/orders/platform', headers=auth(admin), json={
+        paid = platform_payment(c, {
             'order_no': 'V40-PAID-001', 'player_id': player.json()['id'], 'agent_id': l2_data['id'],
             'amount': 88, 'platform_coin': 8800, 'payment_channel': 'test', 'pay_status': 'paid'
         })
@@ -1159,7 +1192,7 @@ def test_v42_settlement_frontend_has_date_range_horizontal_compact_and_seven_col
     assert "['佣金','commission_amount'" not in js
     assert 'padding:11px 7px' in css
     assert 'grid-template-columns:128px 14px 128px' in css
-    assert 'channel-row-spacing-v45' in html
+    assert 'platform-orders-v46' in html
 
 def test_v43_settlement_table_has_stable_fixed_horizontal_layout():
     """V43 渠道结算：总流水/日期查询切换时固定 7 列宽度，避免左右跳动。"""
@@ -1173,7 +1206,7 @@ def test_v43_settlement_table_has_stable_fixed_horizontal_layout():
     assert 'scrollbar-gutter:stable' in css
     for idx, width in [(1, '9%'), (2, '15%'), (3, '11%'), (4, '18%'), (5, '15%'), (6, '12%'), (7, '20%')]:
         assert f'th:nth-child({idx}),.settlement-table-scroll td:nth-child({idx}){{width:{width}' in css
-    assert 'channel-row-spacing-v45' in html
+    assert 'platform-orders-v46' in html
 
 
 
@@ -1199,4 +1232,116 @@ def test_v45_settlement_vertical_row_spacing_matches_agent_table():
     assert '.agent-table-scroll tbody tr,\n.settlement-table-scroll tbody tr{height:52px}' in css
     assert '.agent-table-scroll tbody td,\n.settlement-table-scroll tbody td{vertical-align:middle;padding-top:11px;padding-bottom:11px}' in css
     assert 'padding:11px 7px' in css
-    assert 'channel-row-spacing-v45' in html
+    assert 'platform-orders-v46' in html
+
+
+
+def test_v46_platform_orders_are_payment_generated_searchable_and_no_manual_add():
+    """V46：平台币订单由充值/支付流程自动生成，后台只能查单和补发。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v46_order_agent', 'V46订单代理', 1, 2, 0.12)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_id = agent_resp.json()['agent_id']
+        player = c.post(f'/api/public/registration/{agent_id}', json={
+            'username': 'v46_order_player', 'password': 'PlayerPass123!'
+        })
+        assert player.status_code == 200, player.text
+
+        # 后台手工新增必须被禁止。
+        manual = c.post('/api/orders/platform', headers=auth(admin), json={})
+        assert manual.status_code == 405
+        assert '后台禁止手工添加' in manual.json()['detail']
+
+        # 充值系统创建未支付订单；归属由玩家自动带出，而不是外部传 agent_id。
+        created = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V46-WX-ORDER-001',
+            'player_account': 'v46_order_player',
+            'product_name': '100元平台币礼包',
+            'amount': 100,
+            'platform_coin': 10000,
+            'payment_method': 'wechat',
+        })
+        assert created.status_code == 200, created.text
+        assert created.json()['status'] == 'unpaid'
+
+        unpaid = c.get('/api/orders/platform', headers=auth(admin), params={
+            'order_no': 'WX-ORDER', 'account': 'v46_order', 'payment_method': 'wechat', 'status': 'unpaid'
+        })
+        assert unpaid.status_code == 200, unpaid.text
+        assert len(unpaid.json()) == 1
+        assert unpaid.json()[0]['player_account'] == 'v46_order_player'
+        assert unpaid.json()[0]['product_name'] == '100元平台币礼包'
+        assert unpaid.json()[0]['payment_method'] == 'wechat'
+        assert unpaid.json()[0]['status'] == 'unpaid'
+
+        # 支付成功回调自动计真实流水并自动发货，重复回调不重复增加余额/流水。
+        paid = c.post('/api/payment/platform-orders/paid', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V46-WX-ORDER-001'
+        })
+        assert paid.status_code == 200, paid.text
+        assert paid.json()['status'] == 'shipped'
+        assert paid.json()['delivery_status'] == 'success'
+        again = c.post('/api/payment/platform-orders/paid', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V46-WX-ORDER-001'
+        })
+        assert again.status_code == 200, again.text
+
+        shipped = c.get('/api/orders/platform', headers=auth(admin), params={'status': 'shipped'})
+        row = next(x for x in shipped.json() if x['order_no'] == 'V46-WX-ORDER-001')
+        assert row['amount'] == 100.0
+        assert row['status'] == 'shipped'
+        assert row['delivery_status'] == 'success'
+        assert row['created_at']
+        assert row['paid_at']
+
+        player_rows = c.get('/api/players', headers=auth(admin), params={'account': 'v46_order_player'}).json()
+        p = next(x for x in player_rows if x['username'] == 'v46_order_player')
+        assert p['platform_coin_balance'] == 10000
+        assert p['total_recharge'] == 100.0
+
+        # 模拟“支付已成功，但实际发货失败”的状态：补发只恢复发货，不重复增加流水/充值统计。
+        turnover_before_resend = c.get('/api/dashboard', headers=auth(admin)).json()['total_turnover']
+        db = SessionLocal()
+        try:
+            order = db.get(PlatformCoinOrder, row['id'])
+            failed_player = db.get(Player, order.player_id)
+            failed_player.platform_coin_balance -= int(order.platform_coin)
+            order.delivery_status = 'failed'
+            order.delivery_message = '模拟游戏服发货失败'
+            order.delivered_at = None
+            db.commit()
+        finally:
+            db.close()
+        resend = c.post(f"/api/orders/platform/{row['id']}/resend", headers=auth(admin))
+        assert resend.status_code == 200, resend.text
+        after = c.get('/api/players', headers=auth(admin), params={'account': 'v46_order_player'}).json()[0]
+        assert after['platform_coin_balance'] == 10000
+        assert after['total_recharge'] == 100.0
+        assert c.get('/api/dashboard', headers=auth(admin)).json()['total_turnover'] == turnover_before_resend
+
+        # 补发成功以后再次点击会被拒绝，避免重复到账。
+        duplicate_resend = c.post(f"/api/orders/platform/{row['id']}/resend", headers=auth(admin))
+        assert duplicate_resend.status_code == 409
+
+        # 支付回调密钥错误必须拒绝。
+        bad = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'wrong'}, json={
+            'player_account': 'v46_order_player', 'product_name': '测试', 'amount': 1,
+            'platform_coin': 100, 'payment_method': 'alipay'
+        })
+        assert bad.status_code == 401
+
+
+def test_v46_platform_order_frontend_has_required_filters_columns_and_resend():
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    for text in ['订单号查询','账号查询','支付方式','微信','支付宝','未支付','已支付','已发货','商品名称','金额（元）','发货','创建时间','支付时间','补发']:
+        assert text in js
+    assert "if(view==='platformOrders') return renderPlatformOrders();" in js
+    assert '新增平台币订单' not in js
+    assert '.platform-order-search-bar' in css
+    assert '.platform-order-table-scroll table' in css
+    assert 'table-layout:fixed' in css
+    assert 'platform-orders-v46' in html

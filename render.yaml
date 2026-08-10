@@ -24,6 +24,8 @@ services:
         value: "720"
       - key: BUSINESS_TIMEZONE
         value: Asia/Shanghai
+      - key: PAYMENT_CALLBACK_SECRET
+        sync: false
       - key: PYTHON_VERSION
         value: 3.12.8
 

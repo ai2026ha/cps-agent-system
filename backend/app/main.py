@@ -6,7 +6,7 @@ from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Header
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, text
@@ -18,7 +18,7 @@ from .models import (
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, MailRecord,
 )
 from .schemas import (
-    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformOrderCreate, MallOrderCreate,
+    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, MailCreate,
 )
@@ -424,6 +424,32 @@ def ensure_agent_hierarchy_columns():
         conn.execute(text("UPDATE agents SET subagent_limit = 0 WHERE agent_level >= 3"))
 
 
+def ensure_platform_order_columns():
+    """V46：平台币订单改为充值支付自动记录，并补充商品/发货字段。
+
+    历史已支付订单在旧版本中已经即时增加过玩家平台币余额，因此迁移时将其标记为
+    发货成功，避免升级后误触“补发”造成重复到账。
+    """
+    inspector = inspect(engine)
+    if "platform_coin_orders" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("platform_coin_orders")}
+    with engine.begin() as conn:
+        if "product_name" not in columns:
+            conn.execute(text("ALTER TABLE platform_coin_orders ADD COLUMN product_name VARCHAR(120) DEFAULT '平台币充值'"))
+        if "delivery_status" not in columns:
+            conn.execute(text("ALTER TABLE platform_coin_orders ADD COLUMN delivery_status VARCHAR(20) DEFAULT 'pending'"))
+        if "delivery_message" not in columns:
+            conn.execute(text("ALTER TABLE platform_coin_orders ADD COLUMN delivery_message VARCHAR(255) DEFAULT ''"))
+        if "delivered_at" not in columns:
+            conn.execute(text("ALTER TABLE platform_coin_orders ADD COLUMN delivered_at TIMESTAMP"))
+        conn.execute(text("UPDATE platform_coin_orders SET product_name = '平台币充值' WHERE product_name IS NULL OR product_name = ''"))
+        conn.execute(text("UPDATE platform_coin_orders SET delivery_status = 'pending' WHERE delivery_status IS NULL OR delivery_status = ''"))
+        # 旧版 paid 订单创建时已经把平台币直接加到余额，因此一律视为历史已发货。
+        conn.execute(text("UPDATE platform_coin_orders SET delivery_status = 'success', delivered_at = COALESCE(delivered_at, paid_at, created_at), delivery_message = CASE WHEN delivery_message IS NULL OR delivery_message = '' THEN '历史订单已到账' ELSE delivery_message END WHERE pay_status = 'paid' AND delivery_status <> 'success'"))
+        conn.execute(text("UPDATE platform_coin_orders SET delivery_message = '' WHERE delivery_message IS NULL"))
+
+
 def ensure_player_admin_columns():
     """兼容已上线数据库：补充玩家状态与平台币余额字段。
 
@@ -598,6 +624,7 @@ def ensure_agent_public_identity_format():
 def startup():
     Base.metadata.create_all(bind=engine)
     ensure_agent_hierarchy_columns()
+    ensure_platform_order_columns()
     ensure_player_admin_columns()
     ensure_player_character_data()
     ensure_agent_public_identity_format()
@@ -1573,33 +1600,210 @@ def apply_paid_platform_recharge(db: Session, player_id: int, agent_id: int | No
         agent.today_turnover = Decimal(agent.today_turnover or 0) + amount
         agent.total_turnover = Decimal(agent.total_turnover or 0) + amount
 
+
+def normalize_payment_method(value: str) -> str:
+    raw = (value or "").strip().lower()
+    mapping = {
+        "wechat": "wechat", "wx": "wechat", "weixin": "wechat", "微信": "wechat",
+        "alipay": "alipay", "ali": "alipay", "支付宝": "alipay",
+    }
+    method = mapping.get(raw)
+    if not method:
+        raise HTTPException(400, "支付方式只支持微信或支付宝")
+    return method
+
+
+def require_payment_secret(x_payment_secret: str | None = Header(default=None)):
+    """支付系统回调密钥。未配置时拒绝调用，避免公网伪造充值。"""
+    expected = (os.getenv("PAYMENT_CALLBACK_SECRET") or "").strip()
+    if not expected:
+        raise HTTPException(503, "支付回调密钥未配置")
+    if not x_payment_secret or not secrets.compare_digest(str(x_payment_secret), expected):
+        raise HTTPException(401, "支付回调认证失败")
+    return True
+
+
+def generate_platform_order_no() -> str:
+    local_now = datetime.now(BUSINESS_TZ)
+    return f"PC{local_now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}"
+
+
+def platform_order_status(row: PlatformCoinOrder) -> str:
+    if row.pay_status != "paid":
+        return "unpaid"
+    if row.delivery_status == "success":
+        return "shipped"
+    return "paid"
+
+
+def deliver_platform_order(db: Session, row: PlatformCoinOrder, operator: str = "system") -> bool:
+    """给已支付订单发放平台币。成功后标记 success；同一订单成功后绝不重复发放。"""
+    if row.pay_status != "paid":
+        raise HTTPException(400, "未支付订单不能发货")
+    if row.delivery_status == "success":
+        return False
+    player = db.get(Player, row.player_id)
+    if not player:
+        row.delivery_status = "failed"
+        row.delivery_message = "玩家不存在"
+        row.delivered_at = None
+        return False
+    if int(row.platform_coin or 0) <= 0:
+        row.delivery_status = "failed"
+        row.delivery_message = "平台币数量无效"
+        row.delivered_at = None
+        return False
+
+    player.platform_coin_balance = int(player.platform_coin_balance or 0) + int(row.platform_coin)
+    db.flush()
+    db.add(PlayerCoinLedger(
+        player_id=player.id,
+        action="recharge",
+        delta=int(row.platform_coin),
+        balance_after=int(player.platform_coin_balance),
+        operator=operator,
+        note=f"平台币订单 {row.order_no}",
+    ))
+    row.delivery_status = "success"
+    row.delivery_message = "平台币发放成功"
+    row.delivered_at = utc_now_naive()
+    return True
+
+
+@app.post("/api/payment/platform-orders")
+def create_platform_recharge_order(
+    body: PlatformRechargeOrderCreate,
+    db: Session = Depends(get_db),
+    _=Depends(require_payment_secret),
+):
+    """由玩家充值页面/支付服务创建待支付订单，不提供后台手工新增入口。"""
+    player = db.query(Player).filter(Player.username == body.player_account).first()
+    if not player:
+        raise HTTPException(404, "玩家账号不存在")
+    if player.status != "active":
+        raise HTTPException(403, "玩家账号已封禁，不能充值")
+    method = normalize_payment_method(body.payment_method)
+    order_no = (body.order_no or "").strip() or generate_platform_order_no()
+    if db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == order_no).first():
+        raise HTTPException(409, "订单号已存在")
+    row = PlatformCoinOrder(
+        order_no=order_no,
+        player_id=player.id,
+        agent_id=player.agent_id,
+        product_name=body.product_name.strip(),
+        amount=body.amount,
+        platform_coin=body.platform_coin,
+        payment_channel=method,
+        pay_status="pending",
+        delivery_status="pending",
+        delivery_message="",
+    )
+    db.add(row)
+    db.commit(); db.refresh(row)
+    return {"id": row.id, "order_no": row.order_no, "status": "unpaid", "message": "充值订单已创建，等待支付"}
+
+
+@app.post("/api/payment/platform-orders/paid")
+def platform_payment_success(
+    body: PlatformPaymentSuccess,
+    db: Session = Depends(get_db),
+    _=Depends(require_payment_secret),
+):
+    """支付成功回调：第一次成功回调才计流水/充值，并自动发放平台币。幂等处理重复回调。"""
+    row = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == body.order_no).first()
+    if not row:
+        raise HTTPException(404, "平台币订单不存在")
+
+    first_paid = row.pay_status != "paid"
+    if first_paid:
+        row.pay_status = "paid"
+        row.paid_at = utc_now_naive()
+        apply_paid_platform_recharge(db, row.player_id, row.agent_id, Decimal(row.amount))
+
+    # 支付平台重复回调不会重复发币；若第一次发货已失败，则留给后台“补发”人工处理。
+    if row.delivery_status == "pending":
+        deliver_platform_order(db, row, operator="payment-callback")
+    db.commit(); db.refresh(row)
+    return {
+        "id": row.id,
+        "order_no": row.order_no,
+        "status": platform_order_status(row),
+        "delivery_status": row.delivery_status,
+        "message": "支付成功并已处理发货" if row.delivery_status == "success" else "支付成功，但发货失败，请后台补发",
+    }
+
+
 @app.get("/api/orders/platform")
-def platform_orders(db: Session = Depends(get_db), principal=Depends(require_permission("orders.view"))):
-    q = db.query(PlatformCoinOrder)
-    if principal.actor_type == "agent": q = q.filter(PlatformCoinOrder.agent_id.in_(scoped_agent_ids(db, principal)))
+def platform_orders(
+    order_no: str | None = Query(default=None),
+    account: str | None = Query(default=None),
+    payment_method: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("orders.view")),
+):
+    q = db.query(PlatformCoinOrder, Player).join(Player, Player.id == PlatformCoinOrder.player_id)
+    if principal.actor_type == "agent":
+        q = q.filter(PlatformCoinOrder.agent_id.in_(scoped_agent_ids(db, principal)))
+    if order_no and order_no.strip():
+        q = q.filter(PlatformCoinOrder.order_no.ilike(f"%{order_no.strip()}%"))
+    if account and account.strip():
+        q = q.filter(Player.username.ilike(f"%{account.strip()}%"))
+    if payment_method and payment_method.strip():
+        q = q.filter(PlatformCoinOrder.payment_channel == normalize_payment_method(payment_method))
+    wanted_status = (status or "").strip().lower()
+    if wanted_status:
+        if wanted_status == "unpaid":
+            q = q.filter(PlatformCoinOrder.pay_status != "paid")
+        elif wanted_status == "paid":
+            q = q.filter(PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.delivery_status != "success")
+        elif wanted_status == "shipped":
+            q = q.filter(PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.delivery_status == "success")
+        else:
+            raise HTTPException(400, "状态只支持未支付、已支付、已发货")
+
     rows = q.order_by(PlatformCoinOrder.id.desc()).all()
-    return [{"id": x.id, "order_no": x.order_no, "player_id": x.player_id, "agent_id": x.agent_id, "amount": money(x.amount),
-             "platform_coin": x.platform_coin, "payment_channel": x.payment_channel, "pay_status": x.pay_status, "created_at": dt(x.created_at), "paid_at": dt(x.paid_at)} for x in rows]
+    return [{
+        "id": order.id,
+        "order_no": order.order_no,
+        "player_account": player.username,
+        "product_name": order.product_name or "平台币充值",
+        "amount": money(order.amount),
+        "payment_method": order.payment_channel,
+        "status": platform_order_status(order),
+        "pay_status": order.pay_status,
+        "delivery_status": order.delivery_status,
+        "delivery_message": order.delivery_message or "",
+        "created_at": dt(order.created_at),
+        "paid_at": dt(order.paid_at),
+        "delivered_at": dt(order.delivered_at),
+    } for order, player in rows]
+
+
+@app.post("/api/orders/platform/{order_id}/resend")
+def resend_platform_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("orders.manage")),
+):
+    row = db.get(PlatformCoinOrder, order_id)
+    if not row:
+        raise HTTPException(404, "平台币订单不存在")
+    if row.pay_status != "paid":
+        raise HTTPException(400, "未支付订单不能补发")
+    if row.delivery_status == "success":
+        raise HTTPException(409, "该订单已经发货成功，无需补发")
+    delivered = deliver_platform_order(db, row, operator=principal.username)
+    db.commit(); db.refresh(row)
+    if not delivered or row.delivery_status != "success":
+        raise HTTPException(500, row.delivery_message or "补发失败")
+    return {"message": "平台币补发成功", "order_no": row.order_no, "delivery_status": row.delivery_status}
+
 
 @app.post("/api/orders/platform")
-def create_platform_order(body: PlatformOrderCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
-    if db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == body.order_no).first(): raise HTTPException(409, "订单号已存在")
-    if not db.get(Player, body.player_id): raise HTTPException(404, "玩家不存在")
-    if body.agent_id and not db.get(Agent, body.agent_id): raise HTTPException(404, "代理不存在")
-    row = PlatformCoinOrder(**body.model_dump(), paid_at=datetime.utcnow() if body.pay_status == "paid" else None)
-    db.add(row)
-    if body.pay_status == "paid":
-        apply_paid_platform_recharge(db, body.player_id, body.agent_id, Decimal(body.amount))
-        player = db.get(Player, body.player_id)
-        player.platform_coin_balance = int(player.platform_coin_balance or 0) + int(body.platform_coin or 0)
-        db.flush()
-        db.add(PlayerCoinLedger(
-            player_id=player.id, action="recharge", delta=int(body.platform_coin or 0),
-            balance_after=int(player.platform_coin_balance), operator="system",
-            note=f"平台币订单 {body.order_no}",
-        ))
-    db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "平台币订单创建成功"}
+def disabled_manual_platform_order(_=Depends(require_permission("orders.manage"))):
+    raise HTTPException(405, "平台币订单由玩家充值支付流程自动生成，后台禁止手工添加")
+
 
 @app.get("/api/orders/mall")
 def mall_orders(db: Session = Depends(get_db), principal=Depends(require_permission("orders.view"))):

@@ -97,12 +97,17 @@ class PlatformCoinOrder(Base):
     order_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
     agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    product_name: Mapped[str] = mapped_column(String(120), default="平台币充值")
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     platform_coin: Mapped[int] = mapped_column(Integer)
-    payment_channel: Mapped[str] = mapped_column(String(48), default="manual")
+    # 数据库字段名沿用 payment_channel 以兼容历史版本，业务含义为支付方式：wechat/alipay。
+    payment_channel: Mapped[str] = mapped_column(String(48), default="wechat")
     pay_status: Mapped[str] = mapped_column(String(20), default="pending")
+    delivery_status: Mapped[str] = mapped_column(String(20), default="pending")
+    delivery_message: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 class MallOrder(Base):
     __tablename__ = "mall_orders"

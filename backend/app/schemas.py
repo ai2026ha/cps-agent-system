@@ -43,14 +43,19 @@ class ProductCreate(BaseModel):
     stock: int = 0
     description: str = ""
 
-class PlatformOrderCreate(BaseModel):
-    order_no: str
-    player_id: int
-    agent_id: int | None = None
-    amount: Decimal
-    platform_coin: int
-    payment_channel: str = "manual"
-    pay_status: str = "paid"
+class PlatformRechargeOrderCreate(BaseModel):
+    """由玩家充值/支付系统创建的待支付平台币订单，后台管理端不能手工创建。"""
+    order_no: str | None = Field(default=None, max_length=64)
+    player_account: str = Field(min_length=4, max_length=64)
+    product_name: str = Field(min_length=1, max_length=120)
+    amount: Decimal = Field(gt=0)
+    platform_coin: int = Field(gt=0, le=2_000_000_000)
+    payment_method: str
+
+
+class PlatformPaymentSuccess(BaseModel):
+    """支付平台成功回调。订单号来自充值下单阶段。"""
+    order_no: str = Field(min_length=1, max_length=64)
 
 class MallOrderCreate(BaseModel):
     order_no: str

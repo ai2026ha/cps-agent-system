@@ -5,13 +5,14 @@ let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
 let playerSearch = {account:'', role:'', parent:''};
+let platformOrderSearch = {order_no:'', account:'', payment_method:'', status:''};
 let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
- players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','平台币充值订单记录'], mallOrders:['商城订单','商城购买订单记录'],
+ players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], mallOrders:['商城订单','商城购买订单记录'],
  shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], cdk:['兑换码列表','CDK 批次与兑换统计'],
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
 };
@@ -159,7 +160,7 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='agents') return renderAgents();
  if(view==='settlements') return renderSettlements();
  if(view==='players') return renderPlayers();
- if(view==='platformOrders') return renderList('/api/orders/platform',platformCols,'平台币订单',hasPermission('orders.manage')?()=>openForm('新增平台币订单',forms.platform):null);
+ if(view==='platformOrders') return renderPlatformOrders();
  if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单',hasPermission('orders.manage')?()=>openForm('新增商城订单',forms.mall):null);
  if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',hasPermission('shipments.manage')?()=>openForm('更新发货',forms.shipment):null);
  if(view==='gifts') return renderProducts('gift'); if(view==='products') return renderProducts('product');
@@ -350,6 +351,56 @@ async function renderPlayers(){
  $('#content').innerHTML=panel('玩家列表',`${playerSearchBar()}<div class="table-scroll player-table-scroll ${hasPermission('players.manage')?'player-editable':''}">${table(rows,playerColumns())}</div>`);
  bindPlayerSearch();
 }
+
+function platformOrderSearchQuery(){
+ const p=new URLSearchParams();
+ Object.entries(platformOrderSearch).forEach(([k,v])=>{if(v)p.set(k,v)});
+ const qs=p.toString();return qs?`?${qs}`:'';
+}
+function platformOrderSearchBar(){
+ return `<div class="platform-order-search-bar">
+   <div class="query-field"><label>订单号查询</label><input id="platformOrderNoQuery" value="${esc(platformOrderSearch.order_no)}" placeholder="输入订单号"></div>
+   <div class="query-field"><label>账号查询</label><input id="platformAccountQuery" value="${esc(platformOrderSearch.account)}" placeholder="输入玩家账号"></div>
+   <div class="query-field"><label>支付方式</label><select id="platformPaymentMethodQuery">
+     <option value="" ${platformOrderSearch.payment_method===''?'selected':''}>全部</option>
+     <option value="wechat" ${platformOrderSearch.payment_method==='wechat'?'selected':''}>微信</option>
+     <option value="alipay" ${platformOrderSearch.payment_method==='alipay'?'selected':''}>支付宝</option>
+   </select></div>
+   <div class="query-field"><label>状态</label><select id="platformStatusQuery">
+     <option value="" ${platformOrderSearch.status===''?'selected':''}>全部</option>
+     <option value="unpaid" ${platformOrderSearch.status==='unpaid'?'selected':''}>未支付</option>
+     <option value="paid" ${platformOrderSearch.status==='paid'?'selected':''}>已支付</option>
+     <option value="shipped" ${platformOrderSearch.status==='shipped'?'selected':''}>已发货</option>
+   </select></div>
+   <div class="query-actions"><button class="btn primary" id="platformQueryBtn">查询</button><button class="btn" id="platformResetBtn">重置</button></div>
+ </div>`;
+}
+function bindPlatformOrderSearch(){
+ const run=()=>{
+   platformOrderSearch={
+     order_no:$('#platformOrderNoQuery')?.value.trim()||'',account:$('#platformAccountQuery')?.value.trim()||'',
+     payment_method:$('#platformPaymentMethodQuery')?.value||'',status:$('#platformStatusQuery')?.value||''
+   };renderPlatformOrders();
+ };
+ $('#platformQueryBtn').onclick=run;
+ $('#platformResetBtn').onclick=()=>{platformOrderSearch={order_no:'',account:'',payment_method:'',status:''};renderPlatformOrders()};
+ ['#platformOrderNoQuery','#platformAccountQuery'].forEach(sel=>{const el=$(sel);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
+}
+async function renderPlatformOrders(){
+ const rows=await api('/api/orders/platform'+platformOrderSearchQuery());
+ $('#content').innerHTML=panel('平台币订单',`${platformOrderSearchBar()}<div class="query-scope-note">订单由玩家充值/支付流程自动生成，后台不提供手工新增。只有真实支付成功的订单进入流水；补发不会重复增加流水或分佣。</div><div class="table-scroll platform-order-table-scroll">${table(rows,platformCols)}</div>`);
+ bindPlatformOrderSearch();
+}
+async function resendPlatformOrder(id){
+ if(!hasPermission('orders.manage'))return;
+ if(!confirm('确认补发该平台币订单？补发仅针对已支付但发货失败的订单。'))return;
+ try{
+   const result=await api(`/api/orders/platform/${Number(id)}/resend`,{method:'POST'});
+   showToast(result.message||'补发成功','success',2600);
+   await renderPlatformOrders();
+ }catch(e){showToast(e.message,'error',4200)}
+}
+window.resendPlatformOrder=resendPlatformOrder;
 
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
 function agentLevelText(v){return ({1:'一级代理',2:'二级代理',3:'三级代理'})[Number(v)]||'-'}
@@ -586,7 +637,27 @@ const agentCols=[
 ];
 const playerBaseCols=[['玩家ID','player_id'],['账号','username'],['角色','characters',playerCharactersCell],['所属代理','agent_public_id'],['平台币余额','platform_coin_balance'],['今日充值','today_recharge'],['总充值','total_recharge'],['状态','status',playerStatusBadge],['注册时间(北京时间)','created_at'],['最后登录(北京时间)','last_login_at'],['登录IP','last_login_ip']];
 function playerColumns(){return hasPermission('players.manage')?[...playerBaseCols,['操作','id',(_,r)=>`<button class="btn compact" onclick="openPlayerEdit(${Number(r.id)})">编辑</button>`]]:playerBaseCols}
-const platformCols=[['订单号','order_no'],['玩家PK','player_id'],['代理PK','agent_id'],['金额','amount'],['平台币','platform_coin'],['支付渠道','payment_channel'],['支付状态','pay_status',badge],['创建时间','created_at']];
+function platformPaymentMethodText(v){return ({wechat:'微信',alipay:'支付宝'})[String(v||'').toLowerCase()]||'历史/未知'}
+function platformOrderStatusBadge(v){
+ const map={unpaid:['未支付','warn'],paid:['已支付','ok'],shipped:['已发货','ok']};
+ const [label,tone]=map[String(v||'')]||[String(v||'-'),''];
+ return `<span class="badge ${tone}">${esc(label)}</span>`;
+}
+function platformDeliveryBadge(v){
+ const map={success:['成功','ok'],failed:['失败','bad']};
+ if(!map[String(v||'')])return '<span class="muted">-</span>';
+ const [label,tone]=map[String(v)];return `<span class="badge ${tone}">${label}</span>`;
+}
+function platformResendCell(_,r){
+ if(!hasPermission('orders.manage'))return '<span class="muted">-</span>';
+ const canResend=r.status==='paid' && r.delivery_status==='failed';
+ return `<button class="btn compact" ${canResend?'':'disabled'} onclick="resendPlatformOrder(${Number(r.id)})">补发</button>`;
+}
+const platformCols=[
+ ['订单号','order_no'],['玩家账号','player_account'],['商品名称','product_name'],['金额（元）','amount'],
+ ['支付方式','payment_method',platformPaymentMethodText],['状态','status',platformOrderStatusBadge],['发货','delivery_status',platformDeliveryBadge],
+ ['创建时间','created_at'],['支付时间','paid_at'],['操作','id',platformResendCell]
+];
 const mallCols=[['订单号','order_no'],['玩家PK','player_id'],['商品PK','product_id'],['数量','quantity'],['金额','amount'],['支付','pay_status',badge],['发货','delivery_status',badge],['创建时间','created_at']];
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
 const productCols=[['SKU','sku'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
@@ -626,7 +697,6 @@ function buildAgentForm(caps){
 }
 
 const forms={
- platform:{path:'/api/orders/platform',fields:[['order_no','订单号'],['player_id','玩家PK','number'],['agent_id','代理PK','number',false],['amount','金额','number'],['platform_coin','平台币数量','number'],['payment_channel','支付渠道'],['pay_status','支付状态']]},
  mall:{path:'/api/orders/mall',fields:[['order_no','订单号'],['player_id','玩家PK','number'],['agent_id','代理PK','number',false],['product_id','商品PK','number'],['quantity','数量','number'],['amount','金额','number'],['pay_status','支付状态']]},
  shipment:{path:'/api/shipments',fields:[['mall_order_id','商城订单PK','number'],['provider','发货服务商'],['tracking_no','发货单号','text',false],['status','状态(sent/failed/success)'],['message','说明','textarea',false]]},
  product:{path:'/api/products',fields:[['sku','SKU'],['name','名称'],['category','分类(gift/product)'],['price','价格','number'],['stock','库存','number'],['description','说明','textarea',false]]},
