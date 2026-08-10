@@ -5,12 +5,12 @@ let currentView = 'dashboard';
 let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
 let playerSearch = {account:'', parent:''};
-let settlementSearch = {account:'', public_agent_id:'', agent_level:'', date:''};
+let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
 
 const titles = {
- dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间单日查询'],
+ dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
  players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','平台币充值订单记录'], mallOrders:['商城订单','商城购买订单记录'],
  shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], cdk:['兑换码列表','CDK 批次与兑换统计'],
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
@@ -398,7 +398,8 @@ function settlementSearchQuery(){
  if(settlementSearch.public_agent_id)p.set('public_agent_id',settlementSearch.public_agent_id);
  const selectedLevel=String(settlementSearch.agent_level||'');
  if(selectedLevel&&allowedSettlementLevelValues().includes(selectedLevel))p.set('agent_level',selectedLevel);
- if(settlementSearch.date)p.set('date',settlementSearch.date);
+ if(settlementSearch.start_date)p.set('start_date',settlementSearch.start_date);
+ if(settlementSearch.end_date)p.set('end_date',settlementSearch.end_date);
  const qs=p.toString();
  return qs?`?${qs}`:'';
 }
@@ -413,7 +414,7 @@ function settlementSearchBar(){
    <div class="query-field query-account"><label>账号查询</label><input id="settlementAccountQuery" value="${esc(settlementSearch.account)}" placeholder="代理登录账号"></div>
    <div class="query-field query-agent-id"><label>ID查询</label><input id="settlementIdQuery" value="${esc(settlementSearch.public_agent_id)}" placeholder="例如 A1"></div>
    <div class="query-field query-level"><label>等级查询</label><select id="settlementLevelQuery">${settlementLevelOptions()}</select></div>
-   <div class="query-field query-date"><label>日期选择</label><input id="settlementDateQuery" type="date" value="${esc(settlementSearch.date||'')}" aria-label="查询日期"></div>
+   <div class="query-field query-date-range"><label>日期选择</label><div class="settlement-date-range"><input id="settlementStartDateQuery" type="date" value="${esc(settlementSearch.start_date||'')}" aria-label="开始日期"><span>至</span><input id="settlementEndDateQuery" type="date" value="${esc(settlementSearch.end_date||'')}" aria-label="结束日期"></div></div>
    <div class="query-actions"><button class="btn primary" id="settlementQueryBtn">查询</button><button class="btn" id="settlementResetBtn">重置</button></div>
  </div>`;
 }
@@ -422,11 +423,12 @@ function readSettlementSearch(){
    account:$('#settlementAccountQuery')?.value.trim()||'',
    public_agent_id:$('#settlementIdQuery')?.value.trim()||'',
    agent_level:$('#settlementLevelQuery')?.value||'',
-   date:$('#settlementDateQuery')?.value||''
+   start_date:$('#settlementStartDateQuery')?.value||'',
+   end_date:$('#settlementEndDateQuery')?.value||''
  };
 }
 function settlementColumns(data){
- const turnoverTitle=data?.period_type==='day'?'当日流水':'总流水';
+ const turnoverTitle=data?.period_type==='day'?'当日流水':data?.period_type==='range'?'区间流水':'总流水';
  return [
    ['代理ID','agent_id'],
    ['代理账号','username'],
@@ -441,15 +443,17 @@ async function renderSettlements(){
  const data=await api('/api/channel-settlements'+settlementSearchQuery());
  const rows=Array.isArray(data.rows)?data.rows:[];
  const scopeNote=currentUser?.actor_type==='admin'
-   ? '超级管理员查看全部一级、二级、三级代理；默认显示历史总流水，选择单日后显示所选日期流水，并按流水从高到低排列。'
-   : '当前账号仅查看自己代理树中的下级代理，不包含自己；默认显示历史总流水，选择单日后显示所选日期流水，并按流水从高到低排列。';
+   ? '超级管理员查看全部一级、二级、三级代理；默认显示历史总流水，选择开始/结束日期后显示所选日期范围流水，并按流水从高到低排列。'
+   : '当前账号仅查看自己代理树中的下级代理，不包含自己；默认显示历史总流水，选择开始/结束日期后显示所选日期范围流水，并按流水从高到低排列。';
  $('#content').innerHTML=panel('渠道结算',`${settlementSearchBar()}<div class="query-scope-note">${scopeNote} 流水仅统计真实支付成功的平台币订单。</div><div class="table-scroll settlement-table-scroll">${table(rows,settlementColumns(data))}</div>`);
  const run=async()=>{settlementSearch=readSettlementSearch();await renderSettlements();};
  $('#settlementQueryBtn').onclick=run;
- $('#settlementResetBtn').onclick=async()=>{settlementSearch={account:'',public_agent_id:'',agent_level:'',date:''};await renderSettlements();};
+ $('#settlementResetBtn').onclick=async()=>{settlementSearch={account:'',public_agent_id:'',agent_level:'',start_date:'',end_date:''};await renderSettlements();};
  ['settlementAccountQuery','settlementIdQuery'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
- const dateInput=$('#settlementDateQuery');
- if(dateInput)dateInput.addEventListener('click',()=>{try{dateInput.showPicker?.()}catch{}});
+ ['settlementStartDateQuery','settlementEndDateQuery'].forEach(id=>{
+   const dateInput=$('#'+id);
+   if(dateInput)dateInput.addEventListener('click',()=>{try{dateInput.showPicker?.()}catch{}});
+ });
 }
 
 function statusText(v){return String(v)==='disabled'?'封禁':'正常'}

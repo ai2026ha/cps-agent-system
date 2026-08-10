@@ -1148,28 +1148,40 @@ def channel_daily_turnover(
     account: str = "",
     public_agent_id: str = "",
     agent_level: int | None = Query(default=None, ge=1, le=3),
+    # V42 正式支持开始/结束日期区间。date 仅保留给旧页面兼容。
     settlement_date: date | None = Query(default=None, alias="date"),
-    # 兼容 V39 旧前端参数。V40 只允许单日；如果旧前端提交同一天的
-    # start_date/end_date 仍可工作，提交真正的日期区间则明确拒绝。
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
     principal=Depends(require_permission("settlements.view")),
 ):
-    """展示代理真实支付流水：默认总流水，仅支持北京时间单日筛选。
+    """展示代理真实支付流水：默认总流水，支持北京时间单日/日期区间筛选。
 
     超管可查看全部代理，并可按一级/二级/三级筛选。普通代理只查看自己代理
     树中的下级代理；等级筛选只能选择当前账号有权查看的下级代理等级。一级代理
-    可筛二级/三级，二级代理可筛三级；统计 pay_status=paid 且 paid_at 非空的平台币订单。
+    可筛二级/三级，二级代理可筛三级；三级代理无渠道结算权限。
+
+    流水只统计 pay_status=paid 且 paid_at 非空的平台币订单；手工平台币调整、
+    商城订单、未支付订单均不会进入本接口。
     """
-    legacy_dates = [d for d in (start_date, end_date) if d is not None]
-    if legacy_dates:
-        if len(set(legacy_dates)) > 1:
-            raise HTTPException(400, "渠道结算仅支持单日查询，不支持日期区间")
-        legacy_date = legacy_dates[0]
-        if settlement_date is not None and settlement_date != legacy_date:
-            raise HTTPException(400, "渠道结算仅支持选择一个日期")
-        settlement_date = settlement_date or legacy_date
+    # 兼容 V41 的 ?date=YYYY-MM-DD。如果同时传新旧参数，必须表示同一天，
+    # 防止旧缓存页面与新页面混用时出现口径不确定。
+    if settlement_date is not None:
+        if start_date is not None and start_date != settlement_date:
+            raise HTTPException(400, "旧版日期参数与开始日期不一致")
+        if end_date is not None and end_date != settlement_date:
+            raise HTTPException(400, "旧版日期参数与结束日期不一致")
+        start_date = start_date or settlement_date
+        end_date = end_date or settlement_date
+
+    # 只填写一端时按单日处理，避免用户漏点一个日期后得到意外的无限区间。
+    if start_date is not None and end_date is None:
+        end_date = start_date
+    elif end_date is not None and start_date is None:
+        start_date = end_date
+
+    if start_date is not None and end_date is not None and start_date > end_date:
+        raise HTTPException(400, "开始日期不能晚于结束日期")
 
     if principal.actor_type == "agent":
         current_agent = db.get(Agent, principal.agent_pk)
@@ -1179,14 +1191,18 @@ def channel_daily_turnover(
             allowed_names = "、".join(agent_level_name(level) for level in sorted(allowed_filter_levels)) or "无下级代理"
             raise HTTPException(403, f"当前账号等级查询只能选择{allowed_names}")
 
-    if settlement_date is not None:
-        start_dt, end_dt = business_date_bounds(settlement_date, settlement_date)
-        period_type = "day"
-        period_label = str(settlement_date)
-    else:
+    if start_date is None and end_date is None:
         start_dt, end_dt = None, None
         period_type = "total"
         period_label = "全部时间"
+    else:
+        start_dt, end_dt = business_date_bounds(start_date, end_date)
+        if start_date == end_date:
+            period_type = "day"
+            period_label = str(start_date)
+        else:
+            period_type = "range"
+            period_label = f"{start_date} 至 {end_date}"
 
     q = db.query(Agent)
     if principal.actor_type == "agent":
@@ -1195,9 +1211,9 @@ def channel_daily_turnover(
             return {
                 "period_type": period_type,
                 "period_label": period_label,
-                "date": str(settlement_date) if settlement_date else None,
-                "start_date": str(settlement_date) if settlement_date else None,
-                "end_date": str(settlement_date) if settlement_date else None,
+                "date": str(start_date) if start_date and start_date == end_date else None,
+                "start_date": str(start_date) if start_date else None,
+                "end_date": str(end_date) if end_date else None,
                 "rows": [],
             }
         q = q.filter(Agent.id.in_(visible_ids))
@@ -1248,10 +1264,12 @@ def channel_daily_turnover(
             "agent_level_name": agent_level_name(agent.agent_level),
             "period_type": period_type,
             "period_label": period_label,
-            "date": str(settlement_date) if settlement_date else None,
+            "date": str(start_date) if start_date and start_date == end_date else None,
+            "start_date": str(start_date) if start_date else None,
+            "end_date": str(end_date) if end_date else None,
             "turnover": money(turnover),
             "commission_rate": float(rate),
-            # 保留接口兼容字段；V40 渠道结算表不再展示佣金金额。
+            # 保留接口兼容字段；渠道结算表不展示佣金金额。
             "commission_amount": money(turnover * rate),
         })
 
@@ -1259,9 +1277,9 @@ def channel_daily_turnover(
     return {
         "period_type": period_type,
         "period_label": period_label,
-        "date": str(settlement_date) if settlement_date else None,
-        "start_date": str(settlement_date) if settlement_date else None,
-        "end_date": str(settlement_date) if settlement_date else None,
+        "date": str(start_date) if start_date and start_date == end_date else None,
+        "start_date": str(start_date) if start_date else None,
+        "end_date": str(end_date) if end_date else None,
         "rows": rows,
     }
 

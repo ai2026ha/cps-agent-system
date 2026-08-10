@@ -318,20 +318,27 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 @media(max-width:900px){.settlement-search-bar>.query-field{flex:1 1 160px;width:auto}.settlement-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}}
 @media(max-width:560px){.settlement-search-bar>.query-field{flex:1 0 100%}.settlement-search-bar .query-actions{width:100%}}
 
-/* V41 渠道结算：7 列紧凑展示；日期默认空，仅支持单日查询；等级筛选按可见下级层级授权。 */
-.agent-table-scroll th,.agent-table-scroll td,
-.settlement-table-scroll th,.settlement-table-scroll td{padding:6px 5px}
-.settlement-search-bar{gap:5px 6px;padding:7px 8px;margin-bottom:8px}
+/* V42 渠道结算：7 列展示；日期默认空，支持开始/结束日期；仅缩短左右间距。 */
+/* 表格保持原有上下行高 11px，只把左右 padding 从 10px 缩短约 30% 到 7px。 */
+.settlement-table-scroll th,.settlement-table-scroll td{padding:11px 7px}
+
+/* 查询区同样只收紧横向空间：保留原有 38px 控件高度与上下 padding。 */
+.settlement-search-bar{gap:10px 8px;padding:12px 10px;margin-bottom:12px}
 .settlement-search-bar>.query-field{flex-basis:138px;width:138px}
 .settlement-search-bar>.query-account{flex-basis:142px;width:142px}
 .settlement-search-bar>.query-agent-id{flex-basis:116px;width:116px}
 .settlement-search-bar>.query-level{flex-basis:116px;width:116px}
-.settlement-search-bar>.query-date{flex-basis:136px;width:136px}
-.settlement-search-bar>.query-field input,.settlement-search-bar>.query-field select{height:34px;padding:6px 8px;font-size:12.5px}
-.settlement-search-bar>.query-date input{cursor:pointer;padding-right:4px}
-.settlement-search-bar .query-actions .btn{height:34px;padding-top:6px;padding-bottom:6px}
+.settlement-search-bar>.query-date-range{flex:0 0 280px;width:280px}
+.settlement-search-bar>.query-field input,.settlement-search-bar>.query-field select{height:38px;padding:8px 7px;font-size:13px}
+.settlement-search-bar>.query-field select{padding-right:26px}
+.settlement-date-range{display:grid;grid-template-columns:128px 14px 128px;gap:5px;align-items:center}
+.settlement-date-range input{width:128px;min-width:0;cursor:pointer;padding-right:4px!important}
+.settlement-date-range span{text-align:center;color:#8a94a8;font-size:12px}
+.settlement-search-bar .query-actions .btn{height:38px}
 .settlement-table-scroll th:nth-child(5),.settlement-table-scroll td:nth-child(5),
 .settlement-table-scroll th:nth-child(6),.settlement-table-scroll td:nth-child(6),
 .settlement-table-scroll th:nth-child(7),.settlement-table-scroll td:nth-child(7){font-variant-numeric:tabular-nums;white-space:nowrap}
+@media(max-width:1050px){.settlement-search-bar>.query-date-range{flex:1 1 280px;width:auto}.settlement-date-range{grid-template-columns:minmax(118px,1fr) 14px minmax(118px,1fr)}.settlement-date-range input{width:100%}}
 @media(max-width:900px){.settlement-search-bar>.query-field{flex:1 1 138px;width:auto}.settlement-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}}
-@media(max-width:560px){.settlement-search-bar>.query-field{flex:1 0 100%;width:100%}.settlement-search-bar .query-actions{width:100%}}
+@media(max-width:560px){.settlement-search-bar>.query-field,.settlement-search-bar>.query-date-range{flex:1 0 100%;width:100%}.settlement-date-range{grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr)}.settlement-search-bar .query-actions{width:100%}}
+

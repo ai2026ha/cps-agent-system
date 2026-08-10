@@ -1012,8 +1012,8 @@ def test_v38_channel_daily_turnover_filters_sort_and_agent_scope():
         assert all(x['agent_id'] != l1_data['agent_id'] for x in child_rows.json()['rows'])
 
 
-def test_v41_channel_settlement_total_single_day_columns_and_level_scope():
-    """V41: 默认总流水；仅支持单日；等级筛选按当前账号可见的下级层级授权。"""
+def test_v42_channel_settlement_total_range_columns_and_level_scope():
+    """V42: 默认总流水；支持开始/结束日期；等级筛选按当前账号可见的下级层级授权。"""
     with TestClient(app) as c:
         admin = login(c, 'admin', 'ChangeMe123!')
         l1 = create_agent(c, admin, 'v40_l1_agent', 'V40一级', 1, 2, 0.12)
@@ -1054,10 +1054,10 @@ def test_v41_channel_settlement_total_single_day_columns_and_level_scope():
         assert rows[0]['period_label'] == '全部时间'
         assert 'parent_agent_display' not in rows[0]
 
-        # 选择日期后只返回该北京时间自然日的流水。
+        # 开始/结束日期相同：返回该北京时间自然日的流水。
         today = business_today()
         single = c.get('/api/channel-settlements', headers=auth(admin), params={
-            'account': 'v40_', 'date': str(today)
+            'account': 'v40_', 'start_date': str(today), 'end_date': str(today)
         })
         assert single.status_code == 200, single.text
         single_data = single.json()
@@ -1066,13 +1066,25 @@ def test_v41_channel_settlement_total_single_day_columns_and_level_scope():
         assert single_data['period_label'] == str(today)
         assert single_data['rows'][0]['turnover'] == 88.0
 
-        # V40 明确取消日期区间；旧 V39 参数若形成真正区间必须拒绝。
+        # V42 支持开始/结束日期区间，区间包含首尾两个北京时间自然日。
         yesterday = today - timedelta(days=1)
         ranged = c.get('/api/channel-settlements', headers=auth(admin), params={
-            'start_date': str(yesterday), 'end_date': str(today)
+            'account': 'v40_', 'start_date': str(yesterday), 'end_date': str(today)
         })
-        assert ranged.status_code == 400
-        assert '仅支持单日查询' in ranged.json()['detail']
+        assert ranged.status_code == 200, ranged.text
+        ranged_data = ranged.json()
+        assert ranged_data['period_type'] == 'range'
+        assert ranged_data['start_date'] == str(yesterday)
+        assert ranged_data['end_date'] == str(today)
+        assert ranged_data['period_label'] == f'{yesterday} 至 {today}'
+        assert ranged_data['rows'][0]['turnover'] == 88.0
+
+        # 日期倒置必须拒绝，避免查询口径不明确。
+        invalid_range = c.get('/api/channel-settlements', headers=auth(admin), params={
+            'start_date': str(today), 'end_date': str(yesterday)
+        })
+        assert invalid_range.status_code == 400
+        assert '开始日期不能晚于结束日期' in invalid_range.json()['detail']
 
         # 超管可以筛选全部三个代理等级。
         for level, username in [(1, 'v40_l1_agent'), (2, 'v40_l2_agent'), (3, 'v40_l3_agent')]:
@@ -1104,17 +1116,18 @@ def test_v41_channel_settlement_total_single_day_columns_and_level_scope():
         assert l3_forbidden.status_code == 403
 
 
-def test_v41_settlement_frontend_is_single_date_compact_and_seven_columns():
-    """V41 前端：单日期选择、分层等级选项、7 列固定顺序、缓存版本更新。"""
+def test_v42_settlement_frontend_has_date_range_horizontal_compact_and_seven_columns():
+    """V42 前端：开始/结束日期、横向紧凑、分层等级选项、7 列固定顺序。"""
     static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
     js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     html = (static_dir / 'index.html').read_text(encoding='utf-8')
 
-    assert "let settlementSearch = {account:'', public_agent_id:'', agent_level:'', date:''};" in js
-    assert 'settlementDateQuery' in js
-    assert 'settlementStartDateQuery' not in js
-    assert 'settlementEndDateQuery' not in js
+    assert "let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};" in js
+    assert 'settlementStartDateQuery' in js
+    assert 'settlementEndDateQuery' in js
+    assert "p.set('start_date',settlementSearch.start_date)" in js
+    assert "p.set('end_date',settlementSearch.end_date)" in js
     assert "if(currentUser?.actor_type==='admin')return ['1','2','3'];" in js
     assert "Number(currentUser?.agent_level)===1)return ['2','3'];" in js
     assert "Number(currentUser?.agent_level)===2)return ['3'];" in js
@@ -1131,6 +1144,7 @@ def test_v41_settlement_frontend_is_single_date_compact_and_seven_columns():
     positions = [js.index(x) for x in expected_order]
     assert positions == sorted(positions)
     assert "['佣金','commission_amount'" not in js
-    assert 'padding:6px 5px' in css
-    assert 'channel-settlement-v41' in html
+    assert 'padding:11px 7px' in css
+    assert 'grid-template-columns:128px 14px 128px' in css
+    assert 'channel-settlement-v42' in html
 
