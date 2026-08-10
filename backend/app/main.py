@@ -275,29 +275,83 @@ def auth_me(principal=Depends(current_user), db: Session = Depends(get_db)):
 
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), principal=Depends(require_permission("dashboard.view"))):
-    today = date.today(); start = datetime.combine(today, time.min)
+    """统一后台数据总览：超管与代理按角色返回不同指标。"""
+    today = business_today()
+    yesterday = today - timedelta(days=1)
+    today_start, tomorrow_start = business_date_bounds(today, today)
+    yesterday_start, _ = business_date_bounds(yesterday, yesterday)
     agent_ids = scoped_agent_ids(db, principal)
 
-    pq = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.pay_status == "paid", PlatformCoinOrder.created_at >= start)
-    mq = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(MallOrder.pay_status == "paid", MallOrder.created_at >= start)
-    poq = db.query(PlatformCoinOrder); moq = db.query(MallOrder); plq = db.query(Player); aq = db.query(Agent)
-    pending_q = db.query(MallOrder).filter(MallOrder.delivery_status.in_(["waiting", "failed"]))
-    if principal.actor_type == "agent":
-        pq = pq.filter(PlatformCoinOrder.agent_id.in_(agent_ids)); mq = mq.filter(MallOrder.agent_id.in_(agent_ids))
-        poq = poq.filter(PlatformCoinOrder.agent_id.in_(agent_ids)); moq = moq.filter(MallOrder.agent_id.in_(agent_ids))
-        plq = plq.filter(Player.agent_id.in_(agent_ids)); pending_q = pending_q.filter(MallOrder.agent_id.in_(agent_ids))
-        aq = aq.filter(Agent.id.in_([x for x in agent_ids if x != principal.agent_pk]))
-    result = {
-        "agents": aq.count(), "players": plq.count(), "today_turnover": money((pq.scalar() or 0) + (mq.scalar() or 0)),
-        "platform_orders": poq.count(), "mall_orders": moq.count(), "pending_shipments": pending_q.count(),
+    def scope_player_query(q):
+        if principal.actor_type == "agent":
+            q = q.filter(Player.agent_id.in_(agent_ids))
+        return q
+
+    def scope_order_query(q, model):
+        if principal.actor_type == "agent":
+            q = q.filter(model.agent_id.in_(agent_ids))
+        return q
+
+    def registration_count(start_dt=None, end_dt=None):
+        q = scope_player_query(db.query(func.count(Player.id)))
+        if start_dt is not None:
+            q = q.filter(Player.created_at >= start_dt)
+        if end_dt is not None:
+            q = q.filter(Player.created_at < end_dt)
+        return int(q.scalar() or 0)
+
+    def turnover_between(start_dt=None, end_dt=None):
+        platform_q = scope_order_query(
+            db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.pay_status == "paid"),
+            PlatformCoinOrder,
+        )
+        mall_q = scope_order_query(
+            db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(MallOrder.pay_status == "paid"),
+            MallOrder,
+        )
+        if start_dt is not None:
+            platform_q = platform_q.filter(PlatformCoinOrder.created_at >= start_dt)
+            mall_q = mall_q.filter(MallOrder.created_at >= start_dt)
+        if end_dt is not None:
+            platform_q = platform_q.filter(PlatformCoinOrder.created_at < end_dt)
+            mall_q = mall_q.filter(MallOrder.created_at < end_dt)
+        return Decimal(platform_q.scalar() or 0) + Decimal(mall_q.scalar() or 0)
+
+    total_turnover = turnover_between()
+    yesterday_turnover = turnover_between(yesterday_start, today_start)
+    today_turnover = turnover_between(today_start, tomorrow_start)
+
+    common = {
+        "total_registrations": registration_count(),
+        "yesterday_registrations": registration_count(yesterday_start, today_start),
+        "today_registrations": registration_count(today_start, tomorrow_start),
+        "total_turnover": money(total_turnover),
+        "yesterday_turnover": money(yesterday_turnover),
+        "today_turnover": money(today_turnover),
     }
-    # CDK 属于超管专属系统。普通代理的数据总览不暴露全局 CDK 数据。
+
+    # 超管只展示平台全局注册、流水，以及待发货/异常和已兑换 CDK。
     if principal.actor_type != "agent":
-        result.update({
-            "cdk_unused": db.query(RedemptionCode).filter(RedemptionCode.status == "unused").count(),
-            "cdk_redeemed": db.query(RedemptionCode).filter(RedemptionCode.status == "redeemed").count(),
-        })
-    return result
+        return {
+            "dashboard_type": "superadmin",
+            **common,
+            "pending_abnormal": db.query(MallOrder).filter(MallOrder.delivery_status.in_(["waiting", "failed"])).count(),
+            "redeemed_cdk": db.query(RedemptionCode).filter(RedemptionCode.status == "redeemed").count(),
+        }
+
+    # 一级/二级/三级代理展示自己权限树范围内的注册、流水与分佣。
+    current_agent = db.get(Agent, principal.agent_pk)
+    if not current_agent:
+        raise HTTPException(401, "代理账号不存在")
+    rate = Decimal(current_agent.commission_rate or 0)
+    return {
+        "dashboard_type": "agent",
+        **common,
+        "commission_rate": float(rate),
+        "yesterday_commission": money(yesterday_turnover * rate),
+        "today_commission": money(today_turnover * rate),
+        "total_commission": money(total_turnover * rate),
+    }
 
 # ---------- 渠道管理 ----------
 def agent_identity_from_pk(agent_pk: int) -> str:

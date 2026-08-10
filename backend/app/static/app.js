@@ -165,15 +165,43 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='sendMail') return renderSendMail(); if(view==='mailRecords') return renderList('/api/mails',mailCols,'发送记录');
  }catch(e){$('#content').innerHTML=`<div class="panel"><div class="empty error">${esc(e.message)}</div></div>`}}
 
-async function renderDashboard(){const [d,a]=await Promise.all([api('/api/dashboard'),api('/api/intelligence/alerts')]);
- const metrics=[];
- if(hasPermission('channels.view'))metrics.push(['代理数量',d.agents]);
- metrics.push(['玩家数量',d.players],['今日流水','¥ '+d.today_turnover.toFixed(2)],['待发货/异常',d.pending_shipments],['平台币订单',d.platform_orders],['商城订单',d.mall_orders]);
- if(hasPermission('cdk.view')){metrics.push(['未兑换CDK',d.cdk_unused??0],['已兑换CDK',d.cdk_redeemed??0]);}
- $('#content').innerHTML=`<div class="metrics">
- ${metrics.map(x=>`<div class="metric"><div class="label">${x[0]}</div><strong>${x[1]}</strong></div>`).join('')}
- </div>${panel('智能运营提醒',`<div class="alerts">${a.map(x=>`<div class="alert ${x.level}">${esc(x.message)}</div>`).join('')}</div>`,hasPermission('system.rebuild')?`<button class="btn" onclick="rebuildTurnover()">重算代理流水</button>`:'')}`}
-window.rebuildTurnover=async()=>{try{alert((await api('/api/agents/rebuild-turnover',{method:'POST'})).message);loadView('dashboard')}catch(e){alert(e.message)}};
+function dashboardMetric(label,value,kind='number'){
+ const shown=kind==='money'?`¥ ${Number(value||0).toFixed(2)}`:kind==='percent'?(value==null?'—':`${(Number(value)*100).toFixed(2).replace(/\.00$/,'')}%`):String(value??0);
+ return `<div class="overview-metric"><div class="overview-metric-label">${label}</div><strong>${shown}</strong></div>`;
+}
+function dashboardGroup(title,subtitle,items,cols){
+ return `<section class="overview-group"><div class="overview-group-head"><div><h3>${title}</h3><p>${subtitle}</p></div></div><div class="overview-grid cols-${cols}">${items.join('')}</div></section>`;
+}
+async function renderDashboard(){
+ const d=await api('/api/dashboard');
+ const registration=dashboardGroup('注册数据','玩家注册统计',[
+   dashboardMetric('总注册',d.total_registrations),
+   dashboardMetric('昨日注册',d.yesterday_registrations),
+   dashboardMetric('今日注册',d.today_registrations)
+ ],3);
+ const turnover=dashboardGroup('流水数据','已支付平台币订单与商城订单流水',[
+   dashboardMetric('总流水',d.total_turnover,'money'),
+   dashboardMetric('昨日流水',d.yesterday_turnover,'money'),
+   dashboardMetric('今日流水',d.today_turnover,'money')
+ ],3);
+
+ if(d.dashboard_type==='superadmin'){
+   const operations=dashboardGroup('运营数据','订单发货与兑换码状态',[
+     dashboardMetric('待发货/异常',d.pending_abnormal),
+     dashboardMetric('已兑换CDK',d.redeemed_cdk)
+   ],2);
+   $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}</div>`;
+   return;
+ }
+
+ const commission=dashboardGroup('分佣数据','按当前代理佣金比例计算',[
+   dashboardMetric('佣金比例',d.commission_rate,'percent'),
+   dashboardMetric('昨日分佣',d.yesterday_commission,'money'),
+   dashboardMetric('今日分佣',d.today_commission,'money'),
+   dashboardMetric('总计分佣',d.total_commission,'money')
+ ],4);
+ $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${commission}</div>`;
+}
 
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
 function agentLevelText(v){return ({1:'一级代理',2:'二级代理',3:'三级代理'})[Number(v)]||'-'}

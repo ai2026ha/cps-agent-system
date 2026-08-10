@@ -118,3 +118,20 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 .toast-error .toast-icon{background:#fdecec;color:#aa2929}
 .toast-message{font-size:13px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere}
 @media(max-width:560px){.toast-root{top:12px;right:16px;left:16px;width:auto}}
+
+
+/* V21: 数据总览按注册 / 流水 / 分佣三类分组，避免指标混排 */
+.overview-groups{display:grid;gap:18px}
+.overview-group{background:#fff;border:1px solid #e7ebf2;border-radius:15px;box-shadow:0 4px 20px #1d31500a;padding:18px 20px 20px}
+.overview-group-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding-bottom:13px;border-bottom:1px solid #edf0f5}
+.overview-group-head h3{margin:0;color:#1d2a44;font-size:16px}
+.overview-group-head p{margin:5px 0 0;color:#8a94a8;font-size:12px}
+.overview-grid{display:grid;gap:14px}
+.overview-grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.overview-grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.overview-grid.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.overview-metric{min-height:108px;padding:18px;border:1px solid #e8ecf3;border-radius:12px;background:#fafbfe;display:flex;flex-direction:column;justify-content:center}
+.overview-metric-label{color:#707d94;font-size:13px;font-weight:650}
+.overview-metric strong{display:block;margin-top:10px;color:#17233d;font-size:27px;line-height:1.15;letter-spacing:-.3px}
+@media(max-width:1000px){.overview-grid.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.overview-grid.cols-2,.overview-grid.cols-3,.overview-grid.cols-4{grid-template-columns:1fr}.overview-group{padding:16px}.overview-metric{min-height:92px}.overview-metric strong{font-size:24px}}
