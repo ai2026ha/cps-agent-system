@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>CPS 智能代理系统</title>
-  <link rel="stylesheet" href="/static/styles.css?v=5" />
+  <link rel="stylesheet" href="/static/styles.css?v=7" />
 </head>
 <body>
 <div id="login" class="login-page">
@@ -13,8 +13,8 @@
     <h1>智能代理系统</h1>
     <p>渠道、玩家、订单与运营一体化管理</p>
     <form id="loginForm">
-      <label>管理员账号</label><input id="loginUser" value="admin" autocomplete="username" />
-      <label>管理员密码</label><input id="loginPass" type="password" value="ChangeMe123!" autocomplete="current-password" />
+      <label>登录账号</label><input id="loginUser" value="admin" autocomplete="username" />
+      <label>登录密码</label><input id="loginPass" type="password" value="ChangeMe123!" autocomplete="current-password" />
       <button type="submit">登录系统</button>
       <div id="loginError" class="error"></div>
     </form>
@@ -24,7 +24,7 @@
   <aside class="sidebar">
     <div class="brand"><span>CPS</span><small>AGENT SYSTEM</small></div>
     <nav id="nav" class="nav-tree">
-      <button type="button" data-view="dashboard" class="nav-dashboard active">
+      <button type="button" data-view="dashboard" class="nav-dashboard active" data-admin-only>
         <span class="nav-icon">▦</span><span>数据总览</span>
       </button>
 
@@ -34,11 +34,11 @@
         </button>
         <div class="nav-children">
           <button type="button" class="nav-child" data-view="agents">下级渠道</button>
-          <button type="button" class="nav-child" data-view="settlements">渠道结算</button>
+          <button type="button" class="nav-child" data-view="settlements" data-admin-only>渠道结算</button>
         </div>
       </section>
 
-      <section class="nav-section" data-section="players">
+      <section class="nav-section" data-section="players" data-admin-only>
         <button type="button" class="nav-parent" aria-expanded="false">
           <span>玩家管理</span><span class="nav-chevron">›</span>
         </button>
@@ -47,7 +47,7 @@
         </div>
       </section>
 
-      <section class="nav-section" data-section="orders">
+      <section class="nav-section" data-section="orders" data-admin-only>
         <button type="button" class="nav-parent" aria-expanded="false">
           <span>订单管理</span><span class="nav-chevron">›</span>
         </button>
@@ -58,7 +58,7 @@
         </div>
       </section>
 
-      <section class="nav-section" data-section="products">
+      <section class="nav-section" data-section="products" data-admin-only>
         <button type="button" class="nav-parent" aria-expanded="false">
           <span>商品管理</span><span class="nav-chevron">›</span>
         </button>
@@ -68,7 +68,7 @@
         </div>
       </section>
 
-      <section class="nav-section" data-section="cdk">
+      <section class="nav-section" data-section="cdk" data-admin-only>
         <button type="button" class="nav-parent" aria-expanded="false">
           <span>兑换码管理</span><span class="nav-chevron">›</span>
         </button>
@@ -77,7 +77,7 @@
         </div>
       </section>
 
-      <section class="nav-section" data-section="recharge">
+      <section class="nav-section" data-section="recharge" data-admin-only>
         <button type="button" class="nav-parent" aria-expanded="false">
           <span>累充管理</span><span class="nav-chevron">›</span>
         </button>
@@ -87,7 +87,7 @@
         </div>
       </section>
 
-      <section class="nav-section" data-section="mail">
+      <section class="nav-section" data-section="mail" data-admin-only>
         <button type="button" class="nav-parent" aria-expanded="false">
           <span>邮件管理</span><span class="nav-chevron">›</span>
         </button>
@@ -104,6 +104,6 @@
   </main>
 </div>
 <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h3 id="modalTitle">新增</h3><button id="closeModal">×</button></div><form id="modalForm"></form></div></div>
-<script src="/static/app.js?v=5"></script>
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>

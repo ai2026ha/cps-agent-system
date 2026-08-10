@@ -19,7 +19,7 @@ from .schemas import (
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, MailCreate,
 )
-from .security import hash_password, verify_password, create_token, current_admin
+from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -58,10 +58,37 @@ def index():
 
 @app.post("/api/auth/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    user = db.query(AdminUser).filter(AdminUser.username == body.username, AdminUser.enabled.is_(True)).first()
-    if not user or not verify_password(body.password, user.password_hash):
-        raise HTTPException(401, "账号或密码错误")
-    return {"access_token": create_token(user.username, user.role), "token_type": "bearer", "username": user.username, "role": user.role}
+    admin = db.query(AdminUser).filter(AdminUser.username == body.username, AdminUser.enabled.is_(True)).first()
+    if admin and verify_password(body.password, admin.password_hash):
+        return {
+            "access_token": create_token(admin.username, admin.role, actor_type="admin"),
+            "token_type": "bearer",
+            "username": admin.username,
+            "role": admin.role,
+            "actor_type": "admin",
+            "agent_id": None,
+        }
+
+    agent = db.query(Agent).filter(Agent.username == body.username, Agent.status == "active").first()
+    if agent and verify_password(body.password, agent.password_hash):
+        return {
+            "access_token": create_token(agent.username, "agent", actor_type="agent", actor_id=agent.id),
+            "token_type": "bearer",
+            "username": agent.username,
+            "role": "agent",
+            "actor_type": "agent",
+            "agent_id": agent.agent_id,
+        }
+    raise HTTPException(401, "账号或密码错误")
+
+@app.get("/api/auth/me")
+def auth_me(principal=Depends(current_user)):
+    return {
+        "username": principal.username,
+        "role": principal.role,
+        "actor_type": principal.actor_type,
+        "agent_id": principal.agent_id,
+    }
 
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), _=Depends(current_admin)):
@@ -82,38 +109,90 @@ def dashboard(db: Session = Depends(get_db), _=Depends(current_admin)):
     }
 
 # ---------- 渠道管理 ----------
-@app.get("/api/agents")
-def list_agents(keyword: str = "", db: Session = Depends(get_db), _=Depends(current_admin)):
-    q = db.query(Agent)
-    if keyword:
-        like = f"%{keyword}%"
-        q = q.filter((Agent.agent_name.like(like)) | (Agent.agent_id.like(like)) | (Agent.username.like(like)))
-    rows = q.order_by(Agent.id.desc()).all()
-    return [{
+def generate_unique_agent_id(db: Session) -> str:
+    # 对外代理ID由系统生成，避免人工重复、串号或借此篡改上下级关系。
+    # 形式示例：AG48273165。唯一性同时由数据库 unique 约束兜底。
+    for _ in range(100):
+        public_id = "AG" + "".join(secrets.choice("0123456789") for _ in range(8))
+        if not db.query(Agent).filter(Agent.agent_id == public_id).first():
+            return public_id
+    raise HTTPException(500, "代理ID生成失败，请重试")
+
+
+def generate_unique_invite_code(db: Session, length: int = 8) -> str:
+    # 去掉 0/O、1/I 等容易看错的字符，邀请码由后端生成且数据库唯一。
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    for _ in range(100):
+        code = "".join(secrets.choice(alphabet) for _ in range(length))
+        if not db.query(Agent).filter(Agent.invite_code == code).first():
+            return code
+    raise HTTPException(500, "邀请码生成失败，请重试")
+
+
+def serialize_agent(a: Agent):
+    return {
         "id": a.id, "agent_id": a.agent_id, "username": a.username, "agent_name": a.agent_name,
         "invite_code": a.invite_code, "parent_id": a.parent_id,
         "parent_agent_id": a.parent.agent_id if a.parent else None,
         "today_turnover": money(a.today_turnover), "yesterday_turnover": money(a.yesterday_turnover),
         "total_turnover": money(a.total_turnover), "commission_rate": float(a.commission_rate or 0),
         "status": a.status, "created_at": dt(a.created_at),
-    } for a in rows]
+    }
+
+
+@app.get("/api/agents")
+def list_agents(keyword: str = "", db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+    # “下级渠道”只展示当前账号的直属下级。平台管理员看到一级代理；
+    # 代理账号看到自己亲自开通的下一级代理。
+    q = db.query(Agent)
+    if principal.actor_type == "agent":
+        q = q.filter(Agent.parent_id == principal.agent_pk)
+    else:
+        q = q.filter(Agent.parent_id.is_(None))
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter((Agent.agent_name.like(like)) | (Agent.agent_id.like(like)) | (Agent.username.like(like)))
+    return [serialize_agent(a) for a in q.order_by(Agent.id.desc()).all()]
+
 
 @app.post("/api/agents")
-def create_agent(body: AgentCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
-    if body.parent_id and not db.get(Agent, body.parent_id):
-        raise HTTPException(400, "上级代理不存在")
-    if db.query(Agent).filter((Agent.agent_id == body.agent_id) | (Agent.username == body.username) | (Agent.invite_code == body.invite_code)).first():
-        raise HTTPException(409, "代理ID、账号或邀请码已存在")
-    row = Agent(agent_id=body.agent_id, username=body.username, password_hash=hash_password(body.password), agent_name=body.agent_name,
-                invite_code=body.invite_code, parent_id=body.parent_id, commission_rate=body.commission_rate)
+def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+    # 归属不从前端接收：谁创建，谁就是上级。管理员创建的是一级代理。
+    parent_id = principal.agent_pk if principal.actor_type == "agent" else None
+
+    if db.query(Agent).filter(Agent.username == body.username).first():
+        raise HTTPException(409, "代理登录账号已存在")
+
+    agent_id = generate_unique_agent_id(db)
+    invite_code = generate_unique_invite_code(db)
+    row = Agent(
+        agent_id=agent_id,
+        username=body.username,
+        password_hash=hash_password(body.password),
+        agent_name=body.agent_name,
+        invite_code=invite_code,
+        parent_id=parent_id,
+        commission_rate=body.commission_rate,
+    )
     db.add(row); db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "代理创建成功"}
+    return {
+        "id": row.id,
+        "agent_id": row.agent_id,
+        "invite_code": row.invite_code,
+        "parent_agent_id": row.parent.agent_id if row.parent else None,
+        "message": f"代理创建成功，代理ID：{row.agent_id}，邀请码：{row.invite_code}",
+    }
+
 
 @app.get("/api/agents/{agent_pk}/subagents")
-def subagents(agent_pk: int, db: Session = Depends(get_db), _=Depends(current_admin)):
-    if not db.get(Agent, agent_pk): raise HTTPException(404, "代理不存在")
+def subagents(agent_pk: int, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+    agent = db.get(Agent, agent_pk)
+    if not agent:
+        raise HTTPException(404, "代理不存在")
+    if principal.actor_type == "agent" and agent.id != principal.agent_pk:
+        raise HTTPException(403, "只能查看自己的直属下级")
     rows = db.query(Agent).filter(Agent.parent_id == agent_pk).order_by(Agent.id.desc()).all()
-    return [{"id": a.id, "agent_id": a.agent_id, "agent_name": a.agent_name, "today_turnover": money(a.today_turnover), "total_turnover": money(a.total_turnover)} for a in rows]
+    return [serialize_agent(a) for a in rows]
 
 @app.post("/api/agents/rebuild-turnover")
 def rebuild_turnover(db: Session = Depends(get_db), _=Depends(current_admin)):

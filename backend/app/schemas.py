@@ -7,12 +7,9 @@ class LoginIn(BaseModel):
     password: str
 
 class AgentCreate(BaseModel):
-    agent_id: str
     username: str
     password: str = Field(min_length=8)
     agent_name: str
-    invite_code: str
-    parent_id: int | None = None
     commission_rate: Decimal = Decimal("0")
 
 class PlayerCreate(BaseModel):
