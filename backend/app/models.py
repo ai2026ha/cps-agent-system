@@ -31,6 +31,8 @@ class Agent(Base):
     yesterday_turnover: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     total_turnover: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
     commission_rate: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=0)
+    agent_level: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    subagent_limit: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     parent: Mapped[Agent | None] = relationship(remote_side=[id], backref="children")

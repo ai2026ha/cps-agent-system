@@ -10,6 +10,8 @@ class AgentCreate(BaseModel):
     username: str
     password: str = Field(min_length=8)
     agent_name: str
+    agent_level: int = Field(ge=1, le=3)
+    subagent_limit: int = Field(ge=0, le=9999)
     commission_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1)
 
 class PlayerCreate(BaseModel):

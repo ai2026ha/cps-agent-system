@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal, get_db
@@ -43,9 +43,48 @@ def seed_admin():
     finally:
         db.close()
 
+def ensure_agent_hierarchy_columns():
+    """兼容已上线数据库：为旧 agents 表补充三级代理字段并回填层级。"""
+    inspector = inspect(engine)
+    if "agents" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("agents")}
+    with engine.begin() as conn:
+        if "agent_level" not in columns:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN agent_level INTEGER"))
+        if "subagent_limit" not in columns:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN subagent_limit INTEGER"))
+
+        # 旧账号以前没有额度概念，为避免升级后突然无法继续开通，先给兼容额度；
+        # 新创建账号必须显式设置额度。
+        conn.execute(text("UPDATE agents SET subagent_limit = 9999 WHERE subagent_limit IS NULL"))
+        rows = conn.execute(text("SELECT id, parent_id FROM agents")).mappings().all()
+        parents = {int(r["id"]): (int(r["parent_id"]) if r["parent_id"] is not None else None) for r in rows}
+
+        cache = {}
+        def resolve_level(agent_pk, seen=None):
+            if agent_pk in cache:
+                return cache[agent_pk]
+            seen = set() if seen is None else seen
+            if agent_pk in seen:
+                return 1
+            seen.add(agent_pk)
+            parent_pk = parents.get(agent_pk)
+            level = 1 if parent_pk is None else min(resolve_level(parent_pk, seen) + 1, 3)
+            cache[agent_pk] = level
+            return level
+
+        for agent_pk in parents:
+            level = resolve_level(agent_pk)
+            conn.execute(text("UPDATE agents SET agent_level = :level WHERE id = :id"), {"level": level, "id": agent_pk})
+        # 三级代理是末级。
+        conn.execute(text("UPDATE agents SET subagent_limit = 0 WHERE agent_level >= 3"))
+
+
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    ensure_agent_hierarchy_columns()
     seed_admin()
 
 @app.get("/healthz")
@@ -67,6 +106,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
             "role": admin.role,
             "actor_type": "admin",
             "agent_id": None,
+            "agent_level": 0,
+            "subagent_limit": None,
         }
 
     agent = db.query(Agent).filter(Agent.username == body.username, Agent.status == "active").first()
@@ -78,16 +119,30 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
             "role": "agent",
             "actor_type": "agent",
             "agent_id": agent.agent_id,
+            "agent_level": agent.agent_level,
+            "subagent_limit": agent.subagent_limit,
         }
     raise HTTPException(401, "账号或密码错误")
 
 @app.get("/api/auth/me")
-def auth_me(principal=Depends(current_user)):
+def auth_me(principal=Depends(current_user), db: Session = Depends(get_db)):
+    if principal.actor_type == "agent":
+        agent = db.get(Agent, principal.agent_pk)
+        return {
+            "username": principal.username,
+            "role": principal.role,
+            "actor_type": principal.actor_type,
+            "agent_id": principal.agent_id,
+            "agent_level": agent.agent_level,
+            "subagent_limit": agent.subagent_limit,
+        }
     return {
         "username": principal.username,
         "role": principal.role,
         "actor_type": principal.actor_type,
-        "agent_id": principal.agent_id,
+        "agent_id": None,
+        "agent_level": 0,
+        "subagent_limit": None,
     }
 
 @app.get("/api/dashboard")
@@ -129,37 +184,155 @@ def generate_unique_invite_code(db: Session, length: int = 8) -> str:
     raise HTTPException(500, "邀请码生成失败，请重试")
 
 
-def serialize_agent(a: Agent):
+def agent_level_name(level: int | None) -> str:
+    return {1: "一级代理", 2: "二级代理", 3: "三级代理"}.get(level, "未知等级")
+
+
+def serialize_agent(a: Agent, db: Session):
+    used = db.query(Agent).filter(Agent.parent_id == a.id).count()
+    limit = int(a.subagent_limit or 0)
     return {
         "id": a.id, "agent_id": a.agent_id, "username": a.username, "agent_name": a.agent_name,
         "invite_code": a.invite_code, "parent_id": a.parent_id,
         "parent_agent_id": a.parent.agent_id if a.parent else None,
+        "agent_level": int(a.agent_level or 1), "agent_level_name": agent_level_name(a.agent_level),
+        "subagent_limit": limit, "subagent_count": used, "subagent_remaining": max(limit - used, 0),
         "today_turnover": money(a.today_turnover), "yesterday_turnover": money(a.yesterday_turnover),
         "total_turnover": money(a.total_turnover), "commission_rate": float(a.commission_rate or 0),
         "status": a.status, "created_at": dt(a.created_at),
     }
 
 
+def creation_capabilities(db: Session, principal):
+    if principal.actor_type != "agent":
+        return {
+            "current_level": 0, "current_level_name": "超级管理员",
+            "allowed_child_level": 1, "allowed_child_level_name": "一级代理",
+            "subagent_limit": None, "subagent_count": db.query(Agent).filter(Agent.parent_id.is_(None)).count(),
+            "subagent_remaining": None, "can_create": True,
+            "reason": "超级管理员可开通一级代理",
+        }
+
+    agent = db.get(Agent, principal.agent_pk)
+    if not agent:
+        raise HTTPException(401, "代理账号不存在")
+    level = int(agent.agent_level or 1)
+    used = db.query(Agent).filter(Agent.parent_id == agent.id).count()
+    limit = int(agent.subagent_limit or 0)
+    if level >= 3:
+        return {
+            "current_level": level, "current_level_name": agent_level_name(level),
+            "allowed_child_level": None, "allowed_child_level_name": None,
+            "subagent_limit": 0, "subagent_count": used, "subagent_remaining": 0,
+            "can_create": False, "reason": "三级代理为末级代理，不能继续开通下级代理",
+        }
+    remaining = max(limit - used, 0)
+    return {
+        "current_level": level, "current_level_name": agent_level_name(level),
+        "allowed_child_level": level + 1, "allowed_child_level_name": agent_level_name(level + 1),
+        "subagent_limit": limit, "subagent_count": used, "subagent_remaining": remaining,
+        "can_create": remaining > 0,
+        "reason": "可以继续开通下级代理" if remaining > 0 else "直属下级代理名额已用完",
+    }
+
+
+@app.get("/api/agents/capabilities")
+def agent_capabilities(db: Session = Depends(get_db), principal=Depends(current_channel_user)):
+    return creation_capabilities(db, principal)
+
+
+def agent_turnover_between(db: Session, agent_pk: int, start_date: date | None = None, end_date: date | None = None) -> Decimal:
+    """按自然日区间汇总代理已支付流水，结束日期包含当天。"""
+    start_dt = datetime.combine(start_date, time.min) if start_date else None
+    end_dt = datetime.combine(date.fromordinal(end_date.toordinal() + 1), time.min) if end_date else None
+    p = db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(
+        PlatformCoinOrder.agent_id == agent_pk, PlatformCoinOrder.pay_status == "paid"
+    )
+    m = db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(
+        MallOrder.agent_id == agent_pk, MallOrder.pay_status == "paid"
+    )
+    if start_dt:
+        p = p.filter(PlatformCoinOrder.created_at >= start_dt)
+        m = m.filter(MallOrder.created_at >= start_dt)
+    if end_dt:
+        p = p.filter(PlatformCoinOrder.created_at < end_dt)
+        m = m.filter(MallOrder.created_at < end_dt)
+    return Decimal(p.scalar() or 0) + Decimal(m.scalar() or 0)
+
+
 @app.get("/api/agents")
-def list_agents(keyword: str = "", db: Session = Depends(get_db), principal=Depends(current_channel_user)):
-    # “下级渠道”只展示当前账号的直属下级。平台管理员看到一级代理；
-    # 代理账号看到自己亲自开通的下一级代理。
+def list_agents(
+    keyword: str = "",
+    agent_account: str = "",
+    public_agent_id: str = "",
+    parent: str = "",
+    turnover_start: date | None = Query(default=None),
+    turnover_end: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    principal=Depends(current_channel_user),
+):
+    # 超级管理员可管理/查询全部三级渠道；代理账号仍严格限制为自己的直属下级。
     q = db.query(Agent)
     if principal.actor_type == "agent":
         q = q.filter(Agent.parent_id == principal.agent_pk)
-    else:
-        q = q.filter(Agent.parent_id.is_(None))
+
+    if turnover_start and turnover_end and turnover_end < turnover_start:
+        raise HTTPException(400, "流水查询结束日期不能早于开始日期")
+
     if keyword:
-        like = f"%{keyword}%"
+        like = f"%{keyword.strip()}%"
         q = q.filter((Agent.agent_name.like(like)) | (Agent.agent_id.like(like)) | (Agent.username.like(like)))
-    return [serialize_agent(a) for a in q.order_by(Agent.id.desc()).all()]
+    if agent_account:
+        q = q.filter(Agent.username.like(f"%{agent_account.strip()}%"))
+    if public_agent_id:
+        q = q.filter(Agent.agent_id.like(f"%{public_agent_id.strip()}%"))
+    if parent:
+        parent_like = f"%{parent.strip()}%"
+        parent_ids = [x[0] for x in db.query(Agent.id).filter(
+            (Agent.agent_id.like(parent_like)) |
+            (Agent.username.like(parent_like)) |
+            (Agent.agent_name.like(parent_like))
+        ).all()]
+        if not parent_ids:
+            return []
+        q = q.filter(Agent.parent_id.in_(parent_ids))
+
+    result = []
+    for a in q.order_by(Agent.id.desc()).all():
+        row = serialize_agent(a, db)
+        if turnover_start or turnover_end:
+            row["period_turnover"] = money(agent_turnover_between(db, a.id, turnover_start, turnover_end))
+            row["turnover_start"] = str(turnover_start) if turnover_start else None
+            row["turnover_end"] = str(turnover_end) if turnover_end else None
+        result.append(row)
+    return result
 
 
 @app.post("/api/agents")
 def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Depends(current_channel_user)):
-    # 归属不从前端接收：谁创建，谁就是上级。管理员创建的是一级代理。
-    parent_id = principal.agent_pk if principal.actor_type == "agent" else None
+    caps = creation_capabilities(db, principal)
+    expected_level = caps["allowed_child_level"]
+    if not caps["can_create"]:
+        raise HTTPException(403, caps["reason"])
+    if body.agent_level != expected_level:
+        raise HTTPException(403, f"当前账号只能开通{caps['allowed_child_level_name']}")
+    if body.agent_level == 3 and body.subagent_limit != 0:
+        raise HTTPException(400, "三级代理为末级代理，可开通下级代理数量必须为 0")
 
+    # 最终额度校验在数据库事务里锁定上级代理，避免并发创建时突破名额上限。
+    parent_id = None
+    if principal.actor_type == "agent":
+        parent = db.query(Agent).filter(Agent.id == principal.agent_pk).with_for_update().first()
+        if not parent or parent.status != "active":
+            raise HTTPException(401, "代理账号不存在或已停用")
+        parent_id = parent.id
+        used = db.query(Agent).filter(Agent.parent_id == parent.id).count()
+        if int(parent.agent_level or 1) >= 3:
+            raise HTTPException(403, "三级代理为末级代理，不能继续开通下级代理")
+        if used >= int(parent.subagent_limit or 0):
+            raise HTTPException(403, "直属下级代理名额已用完")
+
+    # 归属不从前端接收：谁创建，谁就是上级。管理员创建的是一级代理。
     if db.query(Agent).filter(Agent.username == body.username).first():
         raise HTTPException(409, "代理登录账号已存在")
 
@@ -172,6 +345,8 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Dep
         agent_name=body.agent_name,
         invite_code=invite_code,
         parent_id=parent_id,
+        agent_level=body.agent_level,
+        subagent_limit=0 if body.agent_level == 3 else body.subagent_limit,
         commission_rate=body.commission_rate,
     )
     db.add(row); db.commit(); db.refresh(row)
@@ -179,8 +354,11 @@ def create_agent(body: AgentCreate, db: Session = Depends(get_db), principal=Dep
         "id": row.id,
         "agent_id": row.agent_id,
         "invite_code": row.invite_code,
+        "agent_level": row.agent_level,
+        "agent_level_name": agent_level_name(row.agent_level),
+        "subagent_limit": row.subagent_limit,
         "parent_agent_id": row.parent.agent_id if row.parent else None,
-        "message": f"代理创建成功，代理ID：{row.agent_id}，邀请码：{row.invite_code}",
+        "message": f"{agent_level_name(row.agent_level)}创建成功，代理ID：{row.agent_id}，邀请码：{row.invite_code}",
     }
 
 
@@ -192,7 +370,7 @@ def subagents(agent_pk: int, db: Session = Depends(get_db), principal=Depends(cu
     if principal.actor_type == "agent" and agent.id != principal.agent_pk:
         raise HTTPException(403, "只能查看自己的直属下级")
     rows = db.query(Agent).filter(Agent.parent_id == agent_pk).order_by(Agent.id.desc()).all()
-    return [serialize_agent(a) for a in rows]
+    return [serialize_agent(a, db) for a in rows]
 
 @app.post("/api/agents/rebuild-turnover")
 def rebuild_turnover(db: Session = Depends(get_db), _=Depends(current_admin)):
