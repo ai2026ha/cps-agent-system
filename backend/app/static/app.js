@@ -21,10 +21,42 @@ async function api(path, options={}){
 function logout(){ token='';localStorage.removeItem('cps_token');$('#app').classList.add('hidden');$('#login').classList.remove('hidden'); }
 $('#logoutBtn').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;localStorage.setItem('cps_token',token);showApp();}catch(err){$('#loginError').textContent=err.message}};
-function showApp(){ $('#login').classList.add('hidden');$('#app').classList.remove('hidden');loadView(currentView); }
+function showApp(){ $('#login').classList.add('hidden');$('#app').classList.remove('hidden');syncNavToView(currentView);loadView(currentView); }
 if(token) showApp();
 
-document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');currentView=b.dataset.view;loadView(currentView)});
+const navParents = [...document.querySelectorAll('#nav .nav-parent')];
+const navViews = [...document.querySelectorAll('#nav [data-view]')];
+
+function setSectionOpen(section, open){
+  section.classList.toggle('open', open);
+  const parent = section.querySelector('.nav-parent');
+  if(parent) parent.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+navParents.forEach(parent=>{
+  parent.onclick=()=>{
+    const section=parent.closest('.nav-section');
+    setSectionOpen(section,!section.classList.contains('open'));
+  };
+});
+
+navViews.forEach(b=>b.onclick=()=>{
+  navViews.forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  const section=b.closest('.nav-section');
+  if(section) setSectionOpen(section,true);
+  currentView=b.dataset.view;
+  loadView(currentView);
+});
+
+function syncNavToView(view){
+  const active=document.querySelector(`#nav [data-view="${view}"]`);
+  if(!active) return;
+  navViews.forEach(x=>x.classList.toggle('active',x===active));
+  const section=active.closest('.nav-section');
+  if(section) setSectionOpen(section,true);
+}
+
 $('#refreshBtn').onclick=()=>loadView(currentView);
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}

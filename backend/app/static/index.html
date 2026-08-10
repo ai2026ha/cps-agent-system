@@ -23,16 +23,79 @@
 <div id="app" class="app hidden">
   <aside class="sidebar">
     <div class="brand"><span>CPS</span><small>AGENT SYSTEM</small></div>
-    <nav id="nav">
-      <button data-view="dashboard" class="active">▦ 数据总览</button>
-      <div class="group">渠道管理</div>
-      <button data-view="agents">渠道列表</button><button data-view="settlements">渠道结算</button>
-      <div class="group">玩家管理</div><button data-view="players">玩家列表</button>
-      <div class="group">订单管理</div><button data-view="platformOrders">平台币订单</button><button data-view="mallOrders">商城订单</button><button data-view="shipments">发货查询</button>
-      <div class="group">商品管理</div><button data-view="gifts">礼包列表</button><button data-view="products">商品列表</button>
-      <div class="group">兑换码管理</div><button data-view="cdk">兑换码列表</button>
-      <div class="group">累充管理</div><button data-view="rechargeRules">累充列表</button><button data-view="claims">领取记录</button>
-      <div class="group">邮件管理</div><button data-view="sendMail">发送邮件</button><button data-view="mailRecords">发送记录</button>
+    <nav id="nav" class="nav-tree">
+      <button type="button" data-view="dashboard" class="nav-dashboard active">
+        <span class="nav-icon">▦</span><span>数据总览</span>
+      </button>
+
+      <section class="nav-section" data-section="channels">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span>渠道管理</span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="agents">下级渠道</button>
+          <button type="button" class="nav-child" data-view="settlements">渠道结算</button>
+        </div>
+      </section>
+
+      <section class="nav-section" data-section="players">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span>玩家管理</span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="players">玩家列表</button>
+        </div>
+      </section>
+
+      <section class="nav-section" data-section="orders">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span>订单管理</span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="platformOrders">平台币订单</button>
+          <button type="button" class="nav-child" data-view="mallOrders">商城订单</button>
+          <button type="button" class="nav-child" data-view="shipments">发货查询</button>
+        </div>
+      </section>
+
+      <section class="nav-section" data-section="products">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span>商品管理</span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="gifts">礼包列表</button>
+          <button type="button" class="nav-child" data-view="products">商品列表</button>
+        </div>
+      </section>
+
+      <section class="nav-section" data-section="cdk">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span>兑换码管理</span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="cdk">兑换码列表</button>
+        </div>
+      </section>
+
+      <section class="nav-section" data-section="recharge">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span>累充管理</span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="rechargeRules">累充列表</button>
+          <button type="button" class="nav-child" data-view="claims">领取记录</button>
+        </div>
+      </section>
+
+      <section class="nav-section" data-section="mail">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span>邮件管理</span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="sendMail">发送邮件</button>
+          <button type="button" class="nav-child" data-view="mailRecords">发送记录</button>
+        </div>
+      </section>
     </nav>
   </aside>
   <main>
