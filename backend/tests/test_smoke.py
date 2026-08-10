@@ -872,3 +872,29 @@ def test_player_multiple_server_roles_are_bound_and_returned_as_character_list()
         assert row['characters'][0]['is_primary'] is True
         assert 'role_name' not in row
         assert 'server_name' not in row
+
+
+
+def test_beijing_time_display_and_agent_login_timestamp():
+    from datetime import datetime
+    from app.main import dt
+
+    # 数据库使用 UTC naive，后台必须转换成北京时间 UTC+8。
+    assert dt(datetime(2026, 8, 10, 16, 0, 0)) == '2026-08-11 00:00:00'
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        created = create_agent(c, admin, 'time_agent_v35', '时间代理', 1, 1)
+        assert created.status_code == 200, created.text
+
+        # 登录代理后应记录最近登录时间。
+        agent_token = login(c, 'time_agent_v35', 'AgentPass123!')
+        assert agent_token
+        rows = c.get('/api/agents', headers=auth(admin), params={'agent_account': 'time_agent_v35'})
+        assert rows.status_code == 200, rows.text
+        row = rows.json()[0]
+        assert row['created_at']
+        assert row['last_login_at']
+        # API 时间统一输出为可直接展示的北京时间格式。
+        datetime.strptime(row['created_at'], '%Y-%m-%d %H:%M:%S')
+        datetime.strptime(row['last_login_at'], '%Y-%m-%d %H:%M:%S')

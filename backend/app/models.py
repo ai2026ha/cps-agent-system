@@ -34,6 +34,7 @@ class Agent(Base):
     agent_level: Mapped[int] = mapped_column(Integer, default=1, index=True)
     subagent_limit: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="active")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     parent: Mapped[Agent | None] = relationship(remote_side=[id], backref="children")
 

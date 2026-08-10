@@ -224,7 +224,24 @@ def money(v):
     return float(v or 0)
 
 def dt(v):
-    return v.isoformat(sep=" ", timespec="seconds") if v else None
+    """统一把数据库时间按北京时间显示。
+
+    系统数据库中的历史/现有 DateTime 均按 UTC naive 保存；如果未来某个驱动返回
+    aware datetime，也会先规范到 UTC，再转换到 Asia/Shanghai。这样 Render 部署在
+    任何地区都不会影响后台显示时间。
+    """
+    if not v:
+        return None
+    if v.tzinfo is None:
+        utc_value = v.replace(tzinfo=timezone.utc)
+    else:
+        utc_value = v.astimezone(timezone.utc)
+    return utc_value.astimezone(BUSINESS_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def utc_now_naive() -> datetime:
+    """数据库统一保存 UTC naive，展示时再转换为北京时间。"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def real_paid_platform_turnover(
@@ -378,6 +395,8 @@ def ensure_agent_hierarchy_columns():
             conn.execute(text("ALTER TABLE agents ADD COLUMN agent_level INTEGER"))
         if "subagent_limit" not in columns:
             conn.execute(text("ALTER TABLE agents ADD COLUMN subagent_limit INTEGER"))
+        if "last_login_at" not in columns:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN last_login_at TIMESTAMP"))
 
         # 旧账号以前没有额度概念，为避免升级后突然无法继续开通，先给兼容额度；
         # 新创建账号必须显式设置额度。
@@ -612,6 +631,9 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
     agent = db.query(Agent).filter(Agent.username == body.username, Agent.status == "active").first()
     if agent and verify_password(body.password, agent.password_hash):
+        # 最近登录时间统一记录为 UTC，API 输出时由 dt() 转为北京时间。
+        agent.last_login_at = utc_now_naive()
+        db.commit()
         from .security import Principal
         principal = Principal(username=agent.username, role="agent", actor_type="agent", agent_pk=agent.id, agent_id=agent.agent_id)
         return {
@@ -751,7 +773,8 @@ def serialize_agent(a: Agent, db: Session):
         "subagent_limit": limit, "subagent_count": used,
         "today_turnover": money(today_turnover), "yesterday_turnover": money(yesterday_turnover),
         "total_turnover": money(total_turnover), "commission_rate": float(a.commission_rate or 0),
-        "status": a.status, "registration_path": f"/register/{a.invite_code}", "created_at": dt(a.created_at),
+        "status": a.status, "registration_path": f"/register/{a.invite_code}",
+        "created_at": dt(a.created_at), "last_login_at": dt(a.last_login_at),
     }
 
 

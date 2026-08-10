@@ -22,6 +22,8 @@ services:
         sync: false
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "720"
+      - key: BUSINESS_TIMEZONE
+        value: Asia/Shanghai
       - key: PYTHON_VERSION
         value: 3.12.8
 
