@@ -286,7 +286,7 @@ PERMISSION_MATRIX = {
         "orders.view", "orders.manage", "shipments.view", "shipments.manage",
         "products.view", "products.manage", "cdk.view", "cdk.manage",
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
-        "mail.view", "mail.send", "system.rebuild", "system.metrics",
+        "mail.view", "mail.send", "system.rebuild", "system.metrics", "payment.test",
     },
     "agent_1": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
@@ -1670,20 +1670,18 @@ def deliver_platform_order(db: Session, row: PlatformCoinOrder, operator: str = 
     return True
 
 
-@app.post("/api/payment/platform-orders")
-def create_platform_recharge_order(
-    body: PlatformRechargeOrderCreate,
-    db: Session = Depends(get_db),
-    _=Depends(require_payment_secret),
-):
-    """由玩家充值页面/支付服务创建待支付订单，不提供后台手工新增入口。"""
+def _create_platform_recharge_order(db: Session, body: PlatformRechargeOrderCreate, *, test_mode: bool = False):
+    """创建平台币充值待支付订单。生产支付接口与超管支付测试页共用同一业务入口。"""
     player = db.query(Player).filter(Player.username == body.player_account).first()
     if not player:
         raise HTTPException(404, "玩家账号不存在")
     if player.status != "active":
         raise HTTPException(403, "玩家账号已封禁，不能充值")
     method = normalize_payment_method(body.payment_method)
-    order_no = (body.order_no or "").strip() or generate_platform_order_no()
+    requested = (body.order_no or "").strip()
+    order_no = requested or generate_platform_order_no()
+    if test_mode and not requested:
+        order_no = "TEST" + order_no
     if db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == order_no).first():
         raise HTTPException(409, "订单号已存在")
     row = PlatformCoinOrder(
@@ -1696,10 +1694,40 @@ def create_platform_recharge_order(
         payment_channel=method,
         pay_status="pending",
         delivery_status="pending",
-        delivery_message="",
+        delivery_message="测试下单，等待模拟支付" if test_mode else "",
     )
     db.add(row)
     db.commit(); db.refresh(row)
+    return row
+
+
+def _mark_platform_order_paid(db: Session, row: PlatformCoinOrder, *, operator: str = "payment-callback"):
+    """将订单按支付成功处理。重复调用幂等，不重复计流水、不重复发币。"""
+    first_paid = row.pay_status != "paid"
+    if first_paid:
+        row.pay_status = "paid"
+        row.paid_at = utc_now_naive()
+        apply_paid_platform_recharge(db, row.player_id, row.agent_id, Decimal(row.amount))
+    if row.delivery_status == "pending":
+        deliver_platform_order(db, row, operator=operator)
+    db.commit(); db.refresh(row)
+    return {
+        "id": row.id,
+        "order_no": row.order_no,
+        "status": platform_order_status(row),
+        "delivery_status": row.delivery_status,
+        "message": "支付成功并已处理发货" if row.delivery_status == "success" else "支付成功，但发货失败，请后台补发",
+    }
+
+
+@app.post("/api/payment/platform-orders")
+def create_platform_recharge_order(
+    body: PlatformRechargeOrderCreate,
+    db: Session = Depends(get_db),
+    _=Depends(require_payment_secret),
+):
+    """由玩家充值页面/支付服务创建待支付订单，不提供后台手工新增入口。"""
+    row = _create_platform_recharge_order(db, body)
     return {"id": row.id, "order_no": row.order_no, "status": "unpaid", "message": "充值订单已创建，等待支付"}
 
 
@@ -1713,24 +1741,65 @@ def platform_payment_success(
     row = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == body.order_no).first()
     if not row:
         raise HTTPException(404, "平台币订单不存在")
+    return _mark_platform_order_paid(db, row, operator="payment-callback")
 
-    first_paid = row.pay_status != "paid"
-    if first_paid:
-        row.pay_status = "paid"
-        row.paid_at = utc_now_naive()
-        apply_paid_platform_recharge(db, row.player_id, row.agent_id, Decimal(row.amount))
 
-    # 支付平台重复回调不会重复发币；若第一次发货已失败，则留给后台“补发”人工处理。
-    if row.delivery_status == "pending":
-        deliver_platform_order(db, row, operator="payment-callback")
-    db.commit(); db.refresh(row)
+@app.get("/api/payment-test/players")
+def payment_test_players(
+    keyword: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("payment.test")),
+):
+    """V47：仅超管支付测试页使用，搜索可充值的正常玩家。"""
+    q = db.query(Player).filter(Player.status == "active")
+    key = (keyword or "").strip()
+    if key:
+        like = f"%{key}%"
+        q = q.filter((Player.username.ilike(like)) | (Player.player_id.ilike(like)))
+    rows = q.order_by(Player.id.desc()).limit(limit).all()
+    agent_ids = {p.agent_id for p in rows if p.agent_id is not None}
+    agents = {a.id: a for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).all()} if agent_ids else {}
+    return [{
+        "id": p.id,
+        "player_id": p.player_id,
+        "username": p.username,
+        "owner_agent_id": agents[p.agent_id].agent_id if p.agent_id in agents else "超管",
+        "owner_agent_name": agents[p.agent_id].agent_name if p.agent_id in agents else "总平台",
+        "platform_coin_balance": int(p.platform_coin_balance or 0),
+    } for p in rows]
+
+
+@app.post("/api/payment-test/orders")
+def payment_test_create_order(
+    body: PlatformRechargeOrderCreate,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("payment.test")),
+):
+    """V47：超管模拟玩家下单。不会绕过正式订单校验。"""
+    row = _create_platform_recharge_order(db, body, test_mode=True)
     return {
         "id": row.id,
         "order_no": row.order_no,
-        "status": platform_order_status(row),
-        "delivery_status": row.delivery_status,
-        "message": "支付成功并已处理发货" if row.delivery_status == "success" else "支付成功，但发货失败，请后台补发",
+        "status": "unpaid",
+        "payment_method": row.payment_channel,
+        "message": "模拟下单成功，订单已进入平台币订单列表",
     }
+
+
+@app.post("/api/payment-test/orders/{order_no}/pay")
+def payment_test_pay_order(
+    order_no: str,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("payment.test")),
+):
+    """V47：超管模拟支付成功，走与正式支付回调相同的计费/发货逻辑。"""
+    row = db.query(PlatformCoinOrder).filter(PlatformCoinOrder.order_no == order_no).first()
+    if not row:
+        raise HTTPException(404, "测试订单不存在")
+    if not str(row.order_no).startswith("TEST"):
+        raise HTTPException(403, "支付测试页只能操作 TEST 测试订单")
+    return _mark_platform_order_paid(db, row, operator=f"payment-test:{principal.username}")
 
 
 @app.get("/api/orders/platform")

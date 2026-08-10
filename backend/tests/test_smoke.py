@@ -1345,3 +1345,79 @@ def test_v46_platform_order_frontend_has_required_filters_columns_and_resend():
     assert '.platform-order-table-scroll table' in css
     assert 'table-layout:fixed' in css
     assert 'platform-orders-v46' in html
+
+
+def test_v47_superadmin_payment_test_full_flow_and_rbac():
+    """V47：超管支付测试页能完整模拟下单/支付，普通代理无权访问。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v47_test_agent', 'V47测试代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_public_id = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{agent_public_id}', json={
+            'username': 'v47_test_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+
+        me = c.get('/api/auth/me', headers=auth(admin))
+        assert me.status_code == 200
+        assert 'payment.test' in me.json()['permissions']
+
+        search = c.get('/api/payment-test/players', headers=auth(admin), params={'keyword': 'v47_test'})
+        assert search.status_code == 200, search.text
+        assert len(search.json()) == 1
+        assert search.json()[0]['username'] == 'v47_test_player'
+
+        created = c.post('/api/payment-test/orders', headers=auth(admin), json={
+            'player_account': 'v47_test_player',
+            'product_name': 'V47测试100币',
+            'amount': 1,
+            'platform_coin': 100,
+            'payment_method': 'wechat',
+        })
+        assert created.status_code == 200, created.text
+        order_no = created.json()['order_no']
+        assert order_no.startswith('TESTPC')
+        assert created.json()['status'] == 'unpaid'
+
+        paid = c.post(f'/api/payment-test/orders/{order_no}/pay', headers=auth(admin))
+        assert paid.status_code == 200, paid.text
+        assert paid.json()['status'] == 'shipped'
+        assert paid.json()['delivery_status'] == 'success'
+
+        rows = c.get('/api/orders/platform', headers=auth(admin), params={'order_no': order_no}).json()
+        assert len(rows) == 1
+        assert rows[0]['status'] == 'shipped'
+        player = c.get('/api/players', headers=auth(admin), params={'account': 'v47_test_player'}).json()[0]
+        assert player['platform_coin_balance'] == 100
+        assert player['total_recharge'] == 1.0
+
+        # 测试页不能拿正式订单号直接伪造测试支付。
+        formal = c.post('/api/payment/platform-orders', headers={'X-Payment-Secret': 'test-payment-secret'}, json={
+            'order_no': 'V47-FORMAL-ORDER', 'player_account': 'v47_test_player', 'product_name': '正式订单',
+            'amount': 2, 'platform_coin': 200, 'payment_method': 'alipay'
+        })
+        assert formal.status_code == 200, formal.text
+        blocked = c.post('/api/payment-test/orders/V47-FORMAL-ORDER/pay', headers=auth(admin))
+        assert blocked.status_code == 403
+
+        agent_token = login(c, 'v47_test_agent', 'AgentPass123!')
+        assert c.get('/api/payment-test/players', headers=auth(agent_token)).status_code == 403
+        assert c.post('/api/payment-test/orders', headers=auth(agent_token), json={
+            'player_account': 'v47_test_player', 'product_name': '越权', 'amount': 1,
+            'platform_coin': 1, 'payment_method': 'wechat'
+        }).status_code == 403
+
+
+def test_v47_payment_test_frontend_is_superadmin_only():
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    for text in ['支付测试','模拟下单','模拟支付成功','搜索玩家','测试平台币充值']:
+        assert text in js or text in html
+    assert 'data-view="paymentTest" data-permission="payment.test"' in html
+    assert "paymentTest:'payment.test'" in js
+    assert "if(view==='paymentTest') return renderPaymentTest();" in js
+    assert '.payment-test-grid' in css
+    assert 'payment-test-v47' in html

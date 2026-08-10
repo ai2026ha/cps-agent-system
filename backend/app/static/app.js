@@ -9,10 +9,11 @@ let platformOrderSearch = {order_no:'', account:'', payment_method:'', status:''
 let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
+let paymentTestState = {players:[], selectedAccount:'', order:null};
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
- players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], mallOrders:['商城订单','商城购买订单记录'],
+ players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','商城购买订单记录'],
  shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], cdk:['兑换码列表','CDK 批次与兑换统计'],
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
 };
@@ -81,7 +82,7 @@ function logout(){ stopSystemMetricsPolling();token='';actorType='admin';current
 $('#logoutBtn').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=firstAllowedView();await showApp();}catch(err){$('#loginError').textContent=err.message}};
 function hasPermission(code){return Boolean(currentUser?.permissions?.includes(code));}
-const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',platformOrders:'orders.view',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view'};
+const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',platformOrders:'orders.view',paymentTest:'payment.test',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view'};
 function canView(view){const code=viewPermissions[view];return !code||hasPermission(code);}
 function firstAllowedView(){return Object.keys(viewPermissions).find(canView)||'dashboard';}
 function applyRoleUI(){
@@ -161,6 +162,7 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='settlements') return renderSettlements();
  if(view==='players') return renderPlayers();
  if(view==='platformOrders') return renderPlatformOrders();
+ if(view==='paymentTest') return renderPaymentTest();
  if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单',hasPermission('orders.manage')?()=>openForm('新增商城订单',forms.mall):null);
  if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',hasPermission('shipments.manage')?()=>openForm('更新发货',forms.shipment):null);
  if(view==='gifts') return renderProducts('gift'); if(view==='products') return renderProducts('product');
@@ -401,6 +403,101 @@ async function resendPlatformOrder(id){
  }catch(e){showToast(e.message,'error',4200)}
 }
 window.resendPlatformOrder=resendPlatformOrder;
+
+function paymentTestPlayerOptions(){
+  if(!paymentTestState.players.length)return '<option value="">请先搜索玩家</option>';
+  return `<option value="">请选择玩家</option>${paymentTestState.players.map(p=>`<option value="${esc(p.username)}" ${paymentTestState.selectedAccount===p.username?'selected':''}>${esc(p.username)} ｜ ${esc(p.player_id)} ｜ ${esc(p.owner_agent_id)} ｜ 余额 ${Number(p.platform_coin_balance||0).toLocaleString()}</option>`).join('')}`;
+}
+function paymentTestOrderCard(){
+  const o=paymentTestState.order;
+  if(!o)return '<div class="payment-test-empty">尚未创建测试订单。先选择玩家并点击“模拟下单”。</div>';
+  const paid=o.status==='shipped'||o.status==='paid';
+  return `<div class="payment-test-result">
+    <div><span>测试订单号</span><strong>${esc(o.order_no)}</strong></div>
+    <div><span>当前状态</span><strong>${esc(o.status==='unpaid'?'未支付':o.status==='shipped'?'已发货':'已支付')}</strong></div>
+    <div><span>发货状态</span><strong>${esc(o.delivery_status==='success'?'成功':o.delivery_status==='failed'?'失败':'待处理')}</strong></div>
+    <div class="payment-test-result-actions">
+      <button class="btn primary" type="button" id="paymentTestPayBtn" ${paid?'disabled':''}>${paid?'已模拟支付':'模拟支付成功'}</button>
+      <button class="btn" type="button" id="paymentTestViewOrdersBtn">查看平台币订单</button>
+    </div>
+  </div>`;
+}
+function paymentTestPage(){
+ return `<div class="payment-test-warning"><strong>支付测试会写入真实业务数据库。</strong> 点击“模拟支付成功”后会真实增加玩家平台币余额、累计充值、代理流水与佣金。只用于测试账号/测试金额，正式运营数据不要使用此功能造单。</div>
+ <div class="payment-test-grid">
+   <div class="payment-test-card">
+     <h4>1. 选择玩家</h4>
+     <div class="payment-test-search"><input id="paymentTestPlayerKeyword" placeholder="输入玩家账号或玩家ID"><button type="button" class="btn" id="paymentTestSearchBtn">搜索玩家</button></div>
+     <label>玩家账号</label><select id="paymentTestPlayerSelect">${paymentTestPlayerOptions()}</select>
+   </div>
+   <div class="payment-test-card">
+     <h4>2. 填写充值内容</h4>
+     <div class="payment-test-fields">
+       <div><label>商品名称</label><input id="paymentTestProductName" value="测试平台币充值" maxlength="120"></div>
+       <div><label>金额（元）</label><input id="paymentTestAmount" type="number" min="0.01" step="0.01" value="1"></div>
+       <div><label>平台币数量</label><input id="paymentTestCoin" type="number" min="1" step="1" value="100"></div>
+       <div><label>支付方式</label><select id="paymentTestMethod"><option value="wechat">微信</option><option value="alipay">支付宝</option></select></div>
+     </div>
+     <button class="btn primary payment-test-create" type="button" id="paymentTestCreateBtn">模拟下单</button>
+   </div>
+ </div>
+ <div class="payment-test-card payment-test-order-card"><h4>3. 模拟支付结果</h4>${paymentTestOrderCard()}</div>`;
+}
+async function searchPaymentTestPlayers(){
+  const keyword=$('#paymentTestPlayerKeyword')?.value.trim()||'';
+  try{
+    paymentTestState.players=await api('/api/payment-test/players?'+new URLSearchParams({keyword}).toString());
+    if(paymentTestState.players.length===1)paymentTestState.selectedAccount=paymentTestState.players[0].username;
+    const select=$('#paymentTestPlayerSelect');
+    if(select)select.innerHTML=paymentTestPlayerOptions();
+    if(!paymentTestState.players.length)showToast('没有找到可充值的正常玩家','error',3200);
+  }catch(e){showToast(e.message,'error',4200)}
+}
+async function createPaymentTestOrder(){
+  const account=$('#paymentTestPlayerSelect')?.value||'';
+  const product_name=$('#paymentTestProductName')?.value.trim()||'';
+  const amount=Number($('#paymentTestAmount')?.value||0);
+  const platform_coin=Number($('#paymentTestCoin')?.value||0);
+  const payment_method=$('#paymentTestMethod')?.value||'wechat';
+  if(!account)return showToast('请先选择玩家','error',3000);
+  if(!product_name)return showToast('请输入商品名称','error',3000);
+  if(!(amount>0))return showToast('请输入大于 0 的充值金额','error',3000);
+  if(!Number.isInteger(platform_coin)||platform_coin<=0)return showToast('平台币数量必须是大于 0 的整数','error',3000);
+  const btn=$('#paymentTestCreateBtn');if(btn){btn.disabled=true;btn.textContent='正在下单...'}
+  try{
+    const result=await api('/api/payment-test/orders',{method:'POST',body:JSON.stringify({player_account:account,product_name,amount,platform_coin,payment_method})});
+    paymentTestState.selectedAccount=account;
+    paymentTestState.order={...result,delivery_status:'pending'};
+    showToast(`测试订单 ${result.order_no} 已创建`,'success',2800);
+    await renderPaymentTest(false);
+  }catch(e){showToast(e.message,'error',4200);if(btn){btn.disabled=false;btn.textContent='模拟下单'}}
+}
+async function payPaymentTestOrder(){
+  const o=paymentTestState.order;if(!o)return;
+  if(!confirm(`确认模拟订单 ${o.order_no} 支付成功？\n\n该操作会真实增加玩家余额，并计入充值、流水和佣金统计。`))return;
+  const btn=$('#paymentTestPayBtn');if(btn){btn.disabled=true;btn.textContent='正在模拟支付...'}
+  try{
+    const result=await api(`/api/payment-test/orders/${encodeURIComponent(o.order_no)}/pay`,{method:'POST'});
+    paymentTestState.order={...o,...result};
+    showToast(result.message||'模拟支付成功','success',3200);
+    await renderPaymentTest(false);
+  }catch(e){showToast(e.message,'error',4200);if(btn){btn.disabled=false;btn.textContent='模拟支付成功'}}
+}
+function bindPaymentTest(){
+  $('#paymentTestSearchBtn').onclick=searchPaymentTestPlayers;
+  $('#paymentTestPlayerKeyword').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchPaymentTestPlayers()}});
+  $('#paymentTestPlayerSelect').onchange=e=>{paymentTestState.selectedAccount=e.target.value||''};
+  $('#paymentTestCreateBtn').onclick=createPaymentTestOrder;
+  const pay=$('#paymentTestPayBtn');if(pay)pay.onclick=payPaymentTestOrder;
+  const view=$('#paymentTestViewOrdersBtn');if(view)view.onclick=()=>{currentView='platformOrders';syncNavToView(currentView);loadView(currentView)};
+}
+async function renderPaymentTest(loadPlayers=true){
+  if(loadPlayers && !paymentTestState.players.length){
+    paymentTestState.players=await api('/api/payment-test/players');
+  }
+  $('#content').innerHTML=panel('支付测试',paymentTestPage());
+  bindPaymentTest();
+}
 
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
 function agentLevelText(v){return ({1:'一级代理',2:'二级代理',3:'三级代理'})[Number(v)]||'-'}

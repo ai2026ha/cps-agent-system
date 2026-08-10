@@ -398,3 +398,29 @@ html{scrollbar-gutter:stable}
 .platform-order-table-scroll th:nth-child(10),.platform-order-table-scroll td:nth-child(10){width:7%;text-align:right}
 @media(max-width:900px){.platform-order-search-bar>.query-field{flex:1 1 160px;width:auto}.platform-order-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}}
 @media(max-width:560px){.platform-order-search-bar>.query-field{flex:1 0 100%}.platform-order-search-bar .query-actions{width:100%}}
+
+
+/* V47 支付测试：仅超管可见，用于完整模拟下单与支付成功链路。 */
+.payment-test-warning{margin-bottom:14px;padding:12px 14px;border:1px solid #f0c36a;background:#fff8e7;border-radius:11px;color:#7a5611;font-size:13px;line-height:1.6}
+.payment-test-warning strong{color:#5d3d00}
+.payment-test-grid{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.4fr);gap:14px;margin-bottom:14px}
+.payment-test-card{border:1px solid #e5eaf2;background:#fff;border-radius:12px;padding:15px}
+.payment-test-card h4{margin:0 0 13px;color:#27344c;font-size:14px}
+.payment-test-card label{display:block;margin:0 0 6px;color:#5c687d;font-size:12px;font-weight:700}
+.payment-test-card input,.payment-test-card select{width:100%;height:39px;border:1px solid #dce2ed;border-radius:8px;background:#fff;padding:8px 10px;outline:none;color:#172033;font:inherit;font-size:13px}
+.payment-test-card input:focus,.payment-test-card select:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}
+.payment-test-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-bottom:12px}
+.payment-test-search .btn{height:39px;white-space:nowrap}
+.payment-test-fields{display:grid;grid-template-columns:1.35fr .7fr .8fr .75fr;gap:10px}
+.payment-test-create{width:auto;margin-top:13px}
+.payment-test-order-card{margin-bottom:0}
+.payment-test-empty{padding:18px;border:1px dashed #d9e0eb;border-radius:9px;background:#fafbfc;color:#7a8598;font-size:13px}
+.payment-test-result{display:grid;grid-template-columns:1.6fr .7fr .7fr auto;gap:10px;align-items:end}
+.payment-test-result>div:not(.payment-test-result-actions){min-width:0;padding:10px 12px;background:#f7f9fc;border-radius:9px}
+.payment-test-result span{display:block;color:#8490a3;font-size:11px;margin-bottom:4px}
+.payment-test-result strong{display:block;color:#24314a;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.payment-test-result-actions{display:flex;gap:8px;align-items:center}
+.payment-test-result-actions .btn{height:39px;white-space:nowrap}
+.payment-test-result-actions .primary{width:auto;margin:0}
+@media(max-width:980px){.payment-test-grid{grid-template-columns:1fr}.payment-test-fields{grid-template-columns:1fr 1fr}.payment-test-result{grid-template-columns:1fr 1fr}.payment-test-result-actions{grid-column:1/-1}}
+@media(max-width:560px){.payment-test-fields,.payment-test-result{grid-template-columns:1fr}.payment-test-search{grid-template-columns:1fr}.payment-test-result-actions{grid-column:auto;flex-wrap:wrap}}
