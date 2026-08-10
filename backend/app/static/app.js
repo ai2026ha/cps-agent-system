@@ -393,7 +393,7 @@ window.openAgentEdit=async(agentPk)=>{
     const row=data.agent;
     const isThird=Number(row.agent_level)===3;
     const fullEdit=Boolean(data.can_full_edit);
-    const parentValue=Number(row.agent_level)===1?'SUPERADMIN':(row.parent_agent_id||'');
+    const currentParentDisplay=row.parent_agent_display||'超管';
     const fields=[
       ['agent_name','代理名称','text',true,{placeholder:'请输入代理名称'}],
       ['commission_rate','佣金比例(%)','number',true,{min:0,max:100,step:0.01,placeholder:'例如：50 表示 50%'}]
@@ -405,11 +405,11 @@ window.openAgentEdit=async(agentPk)=>{
         ['subagent_limit','可开通下级代理数量','number',true,{min:0,max:9999,step:1,readonly:isThird,placeholder:isThird?'三级代理固定为 0':'例如：10'}]
       );
       if(data.can_change_parent){
-        fields.push(['parent_agent_id','更改归属','select',true,{options:data.parent_options||[],valueType:'string'}]);
+        fields.push(['parent_agent_id','更改归属','search-select',false,{options:data.parent_options||[],valueType:'string',emptyLabel:'保持当前归属（不修改）',searchPlaceholder:'搜索代理ID / 账号 / 名称'}]);
       }
     }
     const note=fullEdit
-      ? `代理ID：${row.agent_id} ｜ 代理等级：${agentLevelText(row.agent_level)}。超管可修改完整代理资料；修改密码留空表示保持原密码。`
+      ? `代理ID：${row.agent_id} ｜ 代理等级：${agentLevelText(row.agent_level)} ｜ 当前归属：${currentParentDisplay}。超管可修改完整代理资料；修改密码留空、归属保持默认均表示不修改。`
       : `代理ID：${row.agent_id} ｜ 代理等级：${agentLevelText(row.agent_level)}。当前账号仅可修改直属下级的代理名称和佣金比例。`;
     const defaults={
       agent_name:row.agent_name||'',
@@ -417,7 +417,7 @@ window.openAgentEdit=async(agentPk)=>{
     };
     if(fullEdit){
       Object.assign(defaults,{
-        password:'',status:row.status||'active',subagent_limit:isThird?0:Number(row.subagent_limit||0),parent_agent_id:parentValue
+        password:'',status:row.status||'active',subagent_limit:isThird?0:Number(row.subagent_limit||0),parent_agent_id:''
       });
     }
     openForm(`编辑代理 · ${row.agent_id}`,{
@@ -437,7 +437,7 @@ window.openAgentEdit=async(agentPk)=>{
           if(!out.password)delete out.password;
           out.status=obj.status;
           out.subagent_limit=isThird?0:limit;
-          if(data.can_change_parent)out.parent_agent_id=obj.parent_agent_id;
+          if(data.can_change_parent&&obj.parent_agent_id)out.parent_agent_id=obj.parent_agent_id;
         }
         return out;
       }
@@ -453,17 +453,18 @@ window.openPlayerEdit=async(playerPk)=>{
      path:`/api/players/${playerPk}`,
      method:'PATCH',
      pendingText:'保存中…',
-     note:`玩家账号：${data.username} ｜ 当前平台币余额：${Number(data.platform_coin_balance||0).toLocaleString()}。修改密码留空表示保持原密码；平台币操作留空表示不变。`,
-     defaults:{password:'',status:data.status||'active',owner_agent_id:data.owner_agent_id||'SUPERADMIN',coin_action:'',coin_amount:''},
+     note:`玩家账号：${data.username} ｜ 当前归属：${data.owner_display||'超管'} ｜ 当前平台币余额：${Number(data.platform_coin_balance||0).toLocaleString()}。修改密码留空、归属保持默认、平台币操作留空均表示不修改。`,
+     defaults:{password:'',status:data.status||'active',owner_agent_id:'',coin_action:'',coin_amount:''},
      fields:[
        ['password','修改密码','password',false,{autocomplete:'new-password',placeholder:'留空则不修改；至少 8 位'}],
-       ['owner_agent_id','修改归属','select',true,{options:data.owner_options||[],valueType:'string'}],
+       ['owner_agent_id','修改归属','search-select',false,{options:data.owner_options||[],valueType:'string',emptyLabel:'保持当前归属（不修改）',searchPlaceholder:'搜索代理ID / 账号 / 名称'}],
        ['status','账号状态','select',true,{options:[{value:'active',label:'正常'},{value:'disabled',label:'封禁'}]}],
        ['coin_action','平台币操作','select',false,{options:[{value:'',label:'不操作'},{value:'issue',label:'发放平台币'},{value:'reclaim',label:'收回平台币'}]}],
        ['coin_amount','平台币数量','number',false,{min:1,max:2000000000,step:1,placeholder:'仅在发放/收回时填写'}]
      ],
      transform:obj=>{
-       const out={status:obj.status,owner_agent_id:obj.owner_agent_id};
+       const out={status:obj.status};
+       if(obj.owner_agent_id)out.owner_agent_id=obj.owner_agent_id;
        if(obj.password)out.password=obj.password;
        if(obj.coin_action){
          const amount=Number(obj.coin_amount||0);
@@ -552,15 +553,41 @@ function fieldControl(name,type,val,required,meta){
    const options=(meta?.options||[]).map(o=>`<option value="${esc(o.value)}" ${String(o.value)===String(val)?'selected':''} ${o.disabled?'disabled':''}>${esc(o.label)}</option>`).join('');
    return `<select name="${name}" ${required?'required':''}>${options}</select>`;
  }
+ if(type==='search-select'){
+   const emptyLabel=meta?.emptyLabel||'保持当前归属（不修改）';
+   const rawOptions=meta?.options||[];
+   const options=[{value:'',label:emptyLabel},...rawOptions.filter(o=>String(o.value)!=='')]
+     .map((o,index)=>`<option value="${esc(o.value)}" ${String(o.value)===String(val)?'selected':''} ${o.disabled?'disabled':''} data-noop="${index===0?'1':'0'}">${esc(o.label)}</option>`).join('');
+   return `<div class="search-select-control" data-search-select><input type="search" class="search-select-input" placeholder="${esc(meta?.searchPlaceholder||'搜索代理ID / 账号 / 名称')}" autocomplete="off" aria-label="搜索可选代理"><select name="${name}">${options}</select><div class="search-select-help">默认不修改归属；输入关键词可筛选代理</div></div>`;
+ }
  return `<input name="${name}" type="${type}" value="${esc(val)}" ${required?'required':''} ${inputAttrs(meta,type)}/>`;
+}
+function bindSearchSelects(root){
+  root.querySelectorAll('[data-search-select]').forEach(wrap=>{
+    const input=wrap.querySelector('.search-select-input');
+    const select=wrap.querySelector('select');
+    if(!input||!select)return;
+    const all=[...select.options].map((o,index)=>({value:o.value,label:o.textContent||'',disabled:o.disabled,noop:index===0||o.dataset.noop==='1'}));
+    const rebuild=()=>{
+      const q=input.value.trim().toLowerCase();
+      const selected=select.value;
+      const visible=all.filter(o=>o.noop||!q||`${o.value} ${o.label}`.toLowerCase().includes(q));
+      select.innerHTML=visible.map(o=>`<option value="${esc(o.value)}" ${o.disabled?'disabled':''}>${esc(o.label)}</option>`).join('');
+      if(visible.some(o=>String(o.value)===String(selected)))select.value=selected;else select.value='';
+      wrap.classList.toggle('search-select-filtering',Boolean(q));
+    };
+    input.addEventListener('input',rebuild);
+    input.addEventListener('keydown',e=>{if(e.key==='ArrowDown'){e.preventDefault();select.focus();}});
+  });
 }
 function openForm(title,cfg){
   $('#modalTitle').textContent=title;
   const defaults=cfg.defaults||{};
   const form=$('#modalForm');
   form.setAttribute('autocomplete','off');
-  form.innerHTML=`${cfg.note?`<div class="form-hint">${esc(cfg.note)}</div>`:''}<div class="form-grid">${cfg.fields.map(f=>{const [name,label,type='text',required=true,meta=null]=f;const val=defaults[name]??'';return `<div class="${type==='textarea'?'full':''}"><label>${label}</label>${fieldControl(name,type,val,required,meta)}</div>`}).join('')}<div class="form-actions"><button type="button" class="btn" id="cancelForm">取消</button><button class="btn primary form-submit-btn">提交</button></div></div>`;
+  form.innerHTML=`${cfg.note?`<div class="form-hint">${esc(cfg.note)}</div>`:''}<div class="form-grid">${cfg.fields.map(f=>{const [name,label,type='text',required=true,meta=null]=f;const val=defaults[name]??'';return `<div class="${type==='textarea'||type==='search-select'?'full':''}"><label>${label}</label>${fieldControl(name,type,val,required,meta)}</div>`}).join('')}<div class="form-actions"><button type="button" class="btn" id="cancelForm">取消</button><button class="btn primary form-submit-btn">提交</button></div></div>`;
   $('#modal').classList.remove('hidden');
+  bindSearchSelects(form);
   $('#cancelForm').onclick=closeModal;
   form.onsubmit=async e=>{
     e.preventDefault();

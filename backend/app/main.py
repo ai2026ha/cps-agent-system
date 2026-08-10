@@ -1004,29 +1004,31 @@ def update_agent(agent_pk: int, body: AgentUpdate, db: Session = Depends(get_db)
     if "parent_agent_id" in fields:
         level = int(target.agent_level or 1)
         requested = (body.parent_agent_id or "").strip().upper()
-        if level == 1:
-            if requested not in {"", "SUPERADMIN", "超管", "超级管理员"}:
-                raise HTTPException(400, "一级代理只能归属超管")
-            target.parent_id = None
-        else:
-            if requested in {"", "SUPERADMIN", "超管", "超级管理员"}:
-                raise HTTPException(400, f"{agent_level_name(level)}必须归属{agent_level_name(level - 1)}")
-            new_parent = db.query(Agent).filter(func.upper(Agent.agent_id) == requested).with_for_update().first()
-            if not new_parent:
-                raise HTTPException(404, "新的上级代理不存在")
-            if new_parent.id == target.id:
-                raise HTTPException(400, "代理不能归属自己")
-            if int(new_parent.agent_level or 1) != level - 1:
-                raise HTTPException(400, f"{agent_level_name(level)}只能归属{agent_level_name(level - 1)}")
-            if new_parent.status != "active":
-                raise HTTPException(400, "新的上级代理已封禁，不能接收下级")
-            if would_create_parent_cycle(db, target.id, new_parent.id):
-                raise HTTPException(400, "更改归属会形成循环关系")
-            if target.parent_id != new_parent.id:
-                used = db.query(Agent).filter(Agent.parent_id == new_parent.id, Agent.id != target.id).count()
-                if used >= int(new_parent.subagent_limit or 0):
-                    raise HTTPException(400, "新的上级代理可开通下级数量已满")
-                target.parent_id = new_parent.id
+        # 空值明确表示“保持当前归属”，避免编辑其它字段时误改代理关系。
+        if requested:
+            if level == 1:
+                if requested not in {"SUPERADMIN", "超管", "超级管理员"}:
+                    raise HTTPException(400, "一级代理只能归属超管")
+                target.parent_id = None
+            else:
+                if requested in {"SUPERADMIN", "超管", "超级管理员"}:
+                    raise HTTPException(400, f"{agent_level_name(level)}必须归属{agent_level_name(level - 1)}")
+                new_parent = db.query(Agent).filter(func.upper(Agent.agent_id) == requested).with_for_update().first()
+                if not new_parent:
+                    raise HTTPException(404, "新的上级代理不存在")
+                if new_parent.id == target.id:
+                    raise HTTPException(400, "代理不能归属自己")
+                if int(new_parent.agent_level or 1) != level - 1:
+                    raise HTTPException(400, f"{agent_level_name(level)}只能归属{agent_level_name(level - 1)}")
+                if new_parent.status != "active":
+                    raise HTTPException(400, "新的上级代理已封禁，不能接收下级")
+                if would_create_parent_cycle(db, target.id, new_parent.id):
+                    raise HTTPException(400, "更改归属会形成循环关系")
+                if target.parent_id != new_parent.id:
+                    used = db.query(Agent).filter(Agent.parent_id == new_parent.id, Agent.id != target.id).count()
+                    if used >= int(new_parent.subagent_limit or 0):
+                        raise HTTPException(400, "新的上级代理可开通下级数量已满")
+                    target.parent_id = new_parent.id
 
     db.commit()
     db.refresh(target)
@@ -1275,16 +1277,18 @@ def update_player(
             raise HTTPException(400, "玩家状态仅支持 active / disabled")
         player.status = body.status
     if "owner_agent_id" in fields:
-        owner_code = (body.owner_agent_id or "SUPERADMIN").strip()
-        if owner_code.upper() == "SUPERADMIN" or owner_code in {"超管", "超级管理员"}:
-            player.agent_id = None
-        else:
-            owner = db.query(Agent).filter(Agent.agent_id == owner_code).first()
-            if not owner:
-                raise HTTPException(404, "目标归属代理不存在")
-            if owner.status != "active":
-                raise HTTPException(400, "目标归属代理已被封禁")
-            player.agent_id = owner.id
+        owner_code = (body.owner_agent_id or "").strip()
+        # 空值明确表示“保持当前归属”，只有超管主动选中新归属时才修改。
+        if owner_code:
+            if owner_code.upper() == "SUPERADMIN" or owner_code in {"超管", "超级管理员"}:
+                player.agent_id = None
+            else:
+                owner = db.query(Agent).filter(func.upper(Agent.agent_id) == owner_code.upper()).first()
+                if not owner:
+                    raise HTTPException(404, "目标归属代理不存在")
+                if owner.status != "active":
+                    raise HTTPException(400, "目标归属代理已被封禁")
+                player.agent_id = owner.id
 
     if "coin_action" in fields and body.coin_action:
         if body.coin_action not in {"issue", "reclaim"}:

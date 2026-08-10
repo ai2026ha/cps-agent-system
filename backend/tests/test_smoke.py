@@ -775,3 +775,59 @@ def test_v31_all_turnover_uses_real_paid_platform_orders_only():
         rows = c.get('/api/settlements', headers=auth(admin)).json()
         row = next(x for x in rows if x['id'] == settlement.json()['id'])
         assert row['turnover'] == 120.50
+
+
+def test_blank_parent_selection_keeps_existing_agent_and_player_ownership():
+    """V33: 归属编辑默认“不操作”，即使前端/客户端显式提交空字符串也不得误改归属。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        p1 = create_agent(c, admin, 'owner_keep_1', '归属一', 1, 5)
+        p2 = create_agent(c, admin, 'owner_keep_2', '归属二', 1, 5)
+        assert p1.status_code == 200 and p2.status_code == 200
+        p1_id, p2_id = p1.json()['agent_id'], p2.json()['agent_id']
+
+        p1_token = login(c, 'owner_keep_1', 'AgentPass123!')
+        child = create_agent(c, p1_token, 'owner_keep_child', '二级归属测试', 2, 2)
+        assert child.status_code == 200, child.text
+        child_pk = child.json()['id']
+
+        # 显式提交空归属必须保持当前上级不变。
+        keep_agent = c.patch(f'/api/agents/{child_pk}', headers=auth(admin), json={
+            'agent_name': '二级归属测试',
+            'commission_rate': 0.1,
+            'parent_agent_id': '',
+        })
+        assert keep_agent.status_code == 200, keep_agent.text
+        agent_info = c.get(f'/api/agents/{child_pk}/edit-options', headers=auth(admin))
+        assert agent_info.status_code == 200
+        assert agent_info.json()['agent']['parent_agent_id'] == p1_id
+
+        # 主动选择新代理后才允许改变归属。
+        move_agent = c.patch(f'/api/agents/{child_pk}', headers=auth(admin), json={
+            'parent_agent_id': p2_id,
+        })
+        assert move_agent.status_code == 200, move_agent.text
+        agent_info = c.get(f'/api/agents/{child_pk}/edit-options', headers=auth(admin))
+        assert agent_info.json()['agent']['parent_agent_id'] == p2_id
+
+        # 玩家先注册到 p1，空归属同样不得把玩家误改成超管或其它代理。
+        player = c.post(f'/api/public/registration/{p1_id}', json={
+            'username': 'owner_keep_player',
+            'password': 'PlayerPass123!',
+        })
+        assert player.status_code == 200, player.text
+        player_pk = player.json()['id']
+        keep_player = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'owner_agent_id': '',
+        })
+        assert keep_player.status_code == 200, keep_player.text
+        player_info = c.get(f'/api/players/{player_pk}/edit', headers=auth(admin))
+        assert player_info.status_code == 200
+        assert player_info.json()['owner_agent_id'] == p1_id
+
+        move_player = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'owner_agent_id': p2_id,
+        })
+        assert move_player.status_code == 200, move_player.text
+        player_info = c.get(f'/api/players/{player_pk}/edit', headers=auth(admin))
+        assert player_info.json()['owner_agent_id'] == p2_id

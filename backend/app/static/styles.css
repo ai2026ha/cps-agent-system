@@ -280,3 +280,6 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
   .player-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}
 }
 @media(max-width:520px){.player-search-bar>.query-field{flex:1 0 100%}}
+
+/* V33: 超管更改代理/玩家归属使用可搜索下拉框；默认保持当前归属 */
+.search-select-control{display:grid;gap:7px}.search-select-control .search-select-input{height:38px;padding:8px 10px;border:1px solid #dce2ed;border-radius:9px;background:#fff}.search-select-control select{height:42px}.search-select-control .search-select-input:focus,.search-select-control select:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}.search-select-help{font-size:11px;line-height:1.4;color:#8a94a8}.search-select-filtering .search-select-help{color:#53627b}
