@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CPS 智能代理系统</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<div id="login" class="login-page">
+  <div class="login-card">
+    <div class="brand-mark">CPS</div>
+    <h1>智能代理系统</h1>
+    <p>渠道、玩家、订单与运营一体化管理</p>
+    <form id="loginForm">
+      <label>管理员账号</label><input id="loginUser" value="admin" autocomplete="username" />
+      <label>管理员密码</label><input id="loginPass" type="password" value="ChangeMe123!" autocomplete="current-password" />
+      <button type="submit">登录系统</button>
+      <div id="loginError" class="error"></div>
+    </form>
+  </div>
+</div>
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand"><span>CPS</span><small>AGENT SYSTEM</small></div>
+    <nav id="nav">
+      <button data-view="dashboard" class="active">▦ 数据总览</button>
+      <div class="group">渠道管理</div>
+      <button data-view="agents">渠道列表</button><button data-view="settlements">渠道结算</button>
+      <div class="group">玩家管理</div><button data-view="players">玩家列表</button>
+      <div class="group">订单管理</div><button data-view="platformOrders">平台币订单</button><button data-view="mallOrders">商城订单</button><button data-view="shipments">发货查询</button>
+      <div class="group">商品管理</div><button data-view="gifts">礼包列表</button><button data-view="products">商品列表</button>
+      <div class="group">兑换码管理</div><button data-view="cdk">兑换码列表</button>
+      <div class="group">累充管理</div><button data-view="rechargeRules">累充列表</button><button data-view="claims">领取记录</button>
+      <div class="group">邮件管理</div><button data-view="sendMail">发送邮件</button><button data-view="mailRecords">发送记录</button>
+    </nav>
+  </aside>
+  <main>
+    <header><div><h2 id="pageTitle">数据总览</h2><p id="pageSub">CPS 运营核心指标</p></div><div class="header-actions"><button class="ghost" id="refreshBtn">刷新</button><button class="danger ghost" id="logoutBtn">退出</button></div></header>
+    <section id="content"></section>
+  </main>
+</div>
+<div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h3 id="modalTitle">新增</h3><button id="closeModal">×</button></div><form id="modalForm"></form></div></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

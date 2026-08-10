@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cps
+      POSTGRES_USER: cps
+      POSTGRES_PASSWORD: cps_password
+    volumes:
+      - cps_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cps -d cps"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://cps:cps_password@db:5432/cps
+      JWT_SECRET: change-this-in-production
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ChangeMe123!
+      ACCESS_TOKEN_EXPIRE_MINUTES: 720
+    command: sh -c "pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  cps_pgdata:
