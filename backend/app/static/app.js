@@ -165,9 +165,24 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='sendMail') return renderSendMail(); if(view==='mailRecords') return renderList('/api/mails',mailCols,'发送记录');
  }catch(e){$('#content').innerHTML=`<div class="panel"><div class="empty error">${esc(e.message)}</div></div>`}}
 
-function dashboardMetric(label,value,kind='number'){
+const dashboardIcons={
+  registrations_total:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  registrations_yesterday:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M16 11h6"/></svg>`,
+  registrations_today:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 11 2 2 4-4"/></svg>`,
+  turnover_total:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7V5a2 2 0 0 0-2-2H5a3 3 0 0 0 0 6h15v10a2 2 0 0 1-2 2H5a3 3 0 0 1-3-3V6"/><path d="M16 13h4"/></svg>`,
+  turnover_yesterday:`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h3"/></svg>`,
+  turnover_today:`<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M16 8h-5a2 2 0 1 0 0 4h2a2 2 0 1 1 0 4H8M12 6v12"/></svg>`,
+  commission_rate:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m19 5-14 14"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/></svg>`,
+  commission_yesterday:`<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v5c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 11v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>`,
+  commission_today:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M17 7H9.5a3 3 0 0 0 0 6H14a3 3 0 0 1 0 6H6"/><path d="m18 4 2 2-2 2"/></svg>`,
+  commission_total:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8l1 4h4l-3 5 1 9H5l1-9-3-5h4l1-4Z"/><path d="M9 15h6M12 12v6"/></svg>`,
+  pending_abnormal:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 16H3L12 3Z"/><path d="M12 9v4M12 17h.01"/></svg>`,
+  redeemed_cdk:`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v4a2.5 2.5 0 0 0 0 5v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a2.5 2.5 0 0 0 0-5V6a1 1 0 0 1 1-1Z"/><path d="m9 12 2 2 4-4"/></svg>`
+};
+function dashboardMetric(label,value,kind='number',icon='registrations_total',tone='registration'){
  const shown=kind==='money'?`¥ ${Number(value||0).toFixed(2)}`:kind==='percent'?(value==null?'—':`${(Number(value)*100).toFixed(2).replace(/\.00$/,'')}%`):String(value??0);
- return `<div class="overview-metric"><div class="overview-metric-label">${label}</div><strong>${shown}</strong></div>`;
+ const svg=dashboardIcons[icon]||dashboardIcons.registrations_total;
+ return `<div class="overview-metric tone-${tone}"><span class="overview-metric-icon">${svg}</span><div class="overview-metric-body"><div class="overview-metric-label">${label}</div><strong>${shown}</strong></div></div>`;
 }
 function dashboardGroup(title,subtitle,items,cols){
  return `<section class="overview-group"><div class="overview-group-head"><div><h3>${title}</h3><p>${subtitle}</p></div></div><div class="overview-grid cols-${cols}">${items.join('')}</div></section>`;
@@ -175,30 +190,30 @@ function dashboardGroup(title,subtitle,items,cols){
 async function renderDashboard(){
  const d=await api('/api/dashboard');
  const registration=dashboardGroup('注册数据','玩家注册统计',[
-   dashboardMetric('总注册',d.total_registrations),
-   dashboardMetric('昨日注册',d.yesterday_registrations),
-   dashboardMetric('今日注册',d.today_registrations)
+   dashboardMetric('总注册',d.total_registrations,'number','registrations_total','registration'),
+   dashboardMetric('昨日注册',d.yesterday_registrations,'number','registrations_yesterday','registration'),
+   dashboardMetric('今日注册',d.today_registrations,'number','registrations_today','registration')
  ],3);
  const turnover=dashboardGroup('流水数据','仅统计已支付平台币订单',[
-   dashboardMetric('总流水',d.total_turnover,'money'),
-   dashboardMetric('昨日流水',d.yesterday_turnover,'money'),
-   dashboardMetric('今日流水',d.today_turnover,'money')
+   dashboardMetric('总流水',d.total_turnover,'money','turnover_total','turnover'),
+   dashboardMetric('昨日流水',d.yesterday_turnover,'money','turnover_yesterday','turnover'),
+   dashboardMetric('今日流水',d.today_turnover,'money','turnover_today','turnover')
  ],3);
 
  if(d.dashboard_type==='superadmin'){
    const operations=dashboardGroup('运营数据','订单发货与兑换码状态',[
-     dashboardMetric('待发货/异常',d.pending_abnormal),
-     dashboardMetric('已兑换CDK',d.redeemed_cdk)
+     dashboardMetric('待发货/异常',d.pending_abnormal,'number','pending_abnormal','alert'),
+     dashboardMetric('已兑换CDK',d.redeemed_cdk,'number','redeemed_cdk','cdk')
    ],2);
    $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}</div>`;
    return;
  }
 
  const commission=dashboardGroup('分佣数据','按当前代理佣金比例计算',[
-   dashboardMetric('佣金比例',d.commission_rate,'percent'),
-   dashboardMetric('昨日分佣',d.yesterday_commission,'money'),
-   dashboardMetric('今日分佣',d.today_commission,'money'),
-   dashboardMetric('总计分佣',d.total_commission,'money')
+   dashboardMetric('佣金比例',d.commission_rate,'percent','commission_rate','commission'),
+   dashboardMetric('昨日分佣',d.yesterday_commission,'money','commission_yesterday','commission'),
+   dashboardMetric('今日分佣',d.today_commission,'money','commission_today','commission'),
+   dashboardMetric('总计分佣',d.total_commission,'money','commission_total','commission')
  ],4);
  $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${commission}</div>`;
 }

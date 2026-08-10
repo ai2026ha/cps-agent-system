@@ -181,3 +181,42 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 
 
 /* V23: 延续 V22 的紧凑数据总览布局。流水统计口径变更不改变布局尺寸。 */
+
+
+/* V24: 数据总览彩色指标图标。按业务类型统一颜色，继续保持 V22/V23 的紧凑布局。 */
+.overview-metric{
+  display:grid;
+  grid-template-columns:34px minmax(0,1fr);
+  align-items:center;
+  column-gap:10px;
+  justify-content:initial;
+}
+.overview-metric-icon{
+  width:32px;
+  height:32px;
+  border-radius:9px;
+  display:grid;
+  place-items:center;
+  flex:0 0 32px;
+}
+.overview-metric-icon svg{
+  width:18px;
+  height:18px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.overview-metric-body{min-width:0}
+.overview-metric strong{margin-top:4px}
+.overview-metric.tone-registration .overview-metric-icon{color:#2563eb;background:#eaf2ff}
+.overview-metric.tone-turnover .overview-metric-icon{color:#11935b;background:#e7f8ef}
+.overview-metric.tone-commission .overview-metric-icon{color:#d97706;background:#fff2dd}
+.overview-metric.tone-alert .overview-metric-icon{color:#dc3545;background:#ffeaed}
+.overview-metric.tone-cdk .overview-metric-icon{color:#7c3aed;background:#f1eafe}
+@media(max-width:720px){
+  .overview-metric{grid-template-columns:32px minmax(0,1fr);column-gap:9px}
+  .overview-metric-icon{width:30px;height:30px;border-radius:8px}
+  .overview-metric-icon svg{width:17px;height:17px}
+}
