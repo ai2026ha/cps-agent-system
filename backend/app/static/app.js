@@ -179,7 +179,7 @@ async function renderDashboard(){
    dashboardMetric('昨日注册',d.yesterday_registrations),
    dashboardMetric('今日注册',d.today_registrations)
  ],3);
- const turnover=dashboardGroup('流水数据','已支付平台币订单与商城订单流水',[
+ const turnover=dashboardGroup('流水数据','仅统计已支付平台币订单',[
    dashboardMetric('总流水',d.total_turnover,'money'),
    dashboardMetric('昨日流水',d.yesterday_turnover,'money'),
    dashboardMetric('今日流水',d.today_turnover,'money')

@@ -301,21 +301,21 @@ def dashboard(db: Session = Depends(get_db), principal=Depends(require_permissio
         return int(q.scalar() or 0)
 
     def turnover_between(start_dt=None, end_dt=None):
+        """数据总览流水：只统计已支付的平台币订单。
+
+        今日/昨日按实际支付时间归档；兼容历史数据里 paid_at 为空的已支付订单，
+        此时退回 created_at 作为时间口径。商城订单不计入数据总览流水。
+        """
         platform_q = scope_order_query(
             db.query(func.coalesce(func.sum(PlatformCoinOrder.amount), 0)).filter(PlatformCoinOrder.pay_status == "paid"),
             PlatformCoinOrder,
         )
-        mall_q = scope_order_query(
-            db.query(func.coalesce(func.sum(MallOrder.amount), 0)).filter(MallOrder.pay_status == "paid"),
-            MallOrder,
-        )
+        paid_time = func.coalesce(PlatformCoinOrder.paid_at, PlatformCoinOrder.created_at)
         if start_dt is not None:
-            platform_q = platform_q.filter(PlatformCoinOrder.created_at >= start_dt)
-            mall_q = mall_q.filter(MallOrder.created_at >= start_dt)
+            platform_q = platform_q.filter(paid_time >= start_dt)
         if end_dt is not None:
-            platform_q = platform_q.filter(PlatformCoinOrder.created_at < end_dt)
-            mall_q = mall_q.filter(MallOrder.created_at < end_dt)
-        return Decimal(platform_q.scalar() or 0) + Decimal(mall_q.scalar() or 0)
+            platform_q = platform_q.filter(paid_time < end_dt)
+        return Decimal(platform_q.scalar() or 0)
 
     total_turnover = turnover_between()
     yesterday_turnover = turnover_between(yesterday_start, today_start)

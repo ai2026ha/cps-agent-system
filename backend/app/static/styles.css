@@ -135,3 +135,49 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 .overview-metric strong{display:block;margin-top:10px;color:#17233d;font-size:27px;line-height:1.15;letter-spacing:-.3px}
 @media(max-width:1000px){.overview-grid.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:720px){.overview-grid.cols-2,.overview-grid.cols-3,.overview-grid.cols-4{grid-template-columns:1fr}.overview-group{padding:16px}.overview-metric{min-height:92px}.overview-metric strong{font-size:24px}}
+
+/* V22: 数据总览紧凑布局 —— 缩小卡片与留白，并整体上移少许 */
+.overview-groups{
+  gap:12px;
+  margin-top:-7px;
+}
+.overview-group{
+  padding:13px 16px 15px;
+  border-radius:13px;
+}
+.overview-group-head{
+  margin-bottom:10px;
+  padding-bottom:9px;
+}
+.overview-group-head h3{
+  font-size:15px;
+}
+.overview-group-head p{
+  margin-top:3px;
+  font-size:11.5px;
+}
+.overview-grid{
+  gap:10px;
+}
+.overview-metric{
+  min-height:82px;
+  padding:12px 14px;
+  border-radius:10px;
+}
+.overview-metric-label{
+  font-size:12.5px;
+}
+.overview-metric strong{
+  margin-top:6px;
+  font-size:23px;
+}
+@media(max-width:720px){
+  .overview-groups{gap:10px;margin-top:-4px}
+  .overview-group{padding:12px 13px 13px}
+  .overview-group-head{margin-bottom:9px;padding-bottom:8px}
+  .overview-metric{min-height:76px;padding:11px 12px}
+  .overview-metric strong{font-size:22px}
+}
+
+
+/* V23: 延续 V22 的紧凑数据总览布局。流水统计口径变更不改变布局尺寸。 */
