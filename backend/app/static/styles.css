@@ -342,3 +342,27 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 @media(max-width:900px){.settlement-search-bar>.query-field{flex:1 1 138px;width:auto}.settlement-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}}
 @media(max-width:560px){.settlement-search-bar>.query-field,.settlement-search-bar>.query-date-range{flex:1 0 100%;width:100%}.settlement-date-range{grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr)}.settlement-search-bar .query-actions{width:100%}}
 
+/* V43 渠道结算：固定 7 列横向布局，避免日期查询/重置后列宽重算造成左右跳动。 */
+/* 保持 V42 的上下 11px / 左右 7px，不再改变行高或横向 padding。 */
+html{scrollbar-gutter:stable}
+.settlement-table-scroll{width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-gutter:stable}
+.settlement-table-scroll table{
+  width:100%;
+  min-width:860px;
+  table-layout:fixed;
+}
+.settlement-table-scroll th,.settlement-table-scroll td{
+  padding:11px 7px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+/* 7 列固定比例：ID / 账号 / 等级 / 名称 / 流水 / 佣金 / 日期。 */
+.settlement-table-scroll th:nth-child(1),.settlement-table-scroll td:nth-child(1){width:9%}
+.settlement-table-scroll th:nth-child(2),.settlement-table-scroll td:nth-child(2){width:15%}
+.settlement-table-scroll th:nth-child(3),.settlement-table-scroll td:nth-child(3){width:11%}
+.settlement-table-scroll th:nth-child(4),.settlement-table-scroll td:nth-child(4){width:18%}
+.settlement-table-scroll th:nth-child(5),.settlement-table-scroll td:nth-child(5){width:15%;font-variant-numeric:tabular-nums}
+.settlement-table-scroll th:nth-child(6),.settlement-table-scroll td:nth-child(6){width:12%;font-variant-numeric:tabular-nums}
+.settlement-table-scroll th:nth-child(7),.settlement-table-scroll td:nth-child(7){width:20%;font-variant-numeric:tabular-nums}
+

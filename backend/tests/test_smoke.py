@@ -1146,5 +1146,19 @@ def test_v42_settlement_frontend_has_date_range_horizontal_compact_and_seven_col
     assert "['佣金','commission_amount'" not in js
     assert 'padding:11px 7px' in css
     assert 'grid-template-columns:128px 14px 128px' in css
-    assert 'channel-settlement-v42' in html
+    assert 'channel-settlement-v43' in html
+
+def test_v43_settlement_table_has_stable_fixed_horizontal_layout():
+    """V43 渠道结算：总流水/日期查询切换时固定 7 列宽度，避免左右跳动。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    html = (static_dir / 'index.html').read_text(encoding='utf-8')
+
+    assert '.settlement-table-scroll table{' in css
+    assert 'table-layout:fixed' in css
+    assert 'min-width:860px' in css
+    assert 'scrollbar-gutter:stable' in css
+    for idx, width in [(1, '9%'), (2, '15%'), (3, '11%'), (4, '18%'), (5, '15%'), (6, '12%'), (7, '20%')]:
+        assert f'th:nth-child({idx}),.settlement-table-scroll td:nth-child({idx}){{width:{width}' in css
+    assert 'channel-settlement-v43' in html
 
