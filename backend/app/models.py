@@ -191,6 +191,23 @@ class ClaimRecord(Base):
     status: Mapped[str] = mapped_column(String(20), default="claimed")
     claimed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+class CharacterClaimRecord(Base):
+    """V64：玩家中心累充奖励按具体区服角色领取。
+
+    旧 claim_records 保留用于兼容历史后台领取记录；新玩家中心使用本表，
+    同一个玩家的不同区服角色可以分别达成并领取同一条累充奖励。
+    """
+    __tablename__ = "character_claim_records"
+    __table_args__ = (
+        UniqueConstraint("player_id", "character_id", "rule_id", name="uq_player_character_rule_claim"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    character_id: Mapped[int] = mapped_column(ForeignKey("player_characters.id"), index=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("recharge_rules.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="claimed")
+    claimed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
 class MailRecord(Base):
     __tablename__ = "mail_records"
     id: Mapped[int] = mapped_column(primary_key=True)
