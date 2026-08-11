@@ -73,6 +73,36 @@ class PlayerMallPurchase(BaseModel):
     # 玩家有多个区服角色时必须明确选择购买角色；只有 0/1 个角色时后端可兼容自动处理。
     character_id: int | None = Field(default=None, gt=0)
 
+
+class PrivilegeCardCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    card_type: str
+    price_coins: int = Field(gt=0, le=2_000_000_000)
+    daily_reward_content: str = Field(min_length=1, max_length=5000)
+    enabled: bool = True
+
+class PrivilegeCardUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    card_type: str | None = None
+    price_coins: int | None = Field(default=None, gt=0, le=2_000_000_000)
+    daily_reward_content: str | None = Field(default=None, min_length=1, max_length=5000)
+    enabled: bool | None = None
+
+class PlayerPrivilegePurchase(BaseModel):
+    character_id: int = Field(gt=0)
+
+class PlayerBehaviorMallPurchase(BaseModel):
+    character_id: int = Field(gt=0)
+    product_id: int = Field(gt=0)
+
+class PlayerBehaviorPrivilegePurchase(BaseModel):
+    character_id: int = Field(gt=0)
+    card_id: int = Field(gt=0)
+
+class PlayerBehaviorCumulativeClaim(BaseModel):
+    character_id: int = Field(gt=0)
+    rule_id: int = Field(gt=0)
+
 class ShipmentCreate(BaseModel):
     mall_order_id: int
     provider: str = "game-server"

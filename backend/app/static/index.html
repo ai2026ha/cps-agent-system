@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>CPS 智能代理系统</title>
-  <link rel="stylesheet" href="/static/styles.css?v=mall-character-snapshot-v57" />
+  <link rel="stylesheet" href="/static/styles.css?v=v68-auth-restore" />
 </head>
 <body>
 <!-- V8: self-contained line icons for the primary navigation. No external CDN required. -->
@@ -19,14 +19,14 @@
   <symbol id="icon-recharge" viewBox="0 0 24 24"><ellipse cx="8.5" cy="7" rx="4.5" ry="2.2"/><path d="M4 7v4c0 1.2 2 2.2 4.5 2.2S13 12.2 13 11V7M4 11v4c0 1.2 2 2.2 4.5 2.2 1 0 2-.2 2.7-.5"/><path d="M15 16h6M18 13v6"/></symbol>
   <symbol id="icon-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.5 7 7.5 6 7.5-6"/></symbol>
 </svg>
-<div id="login" class="login-page">
+<div id="login" class="login-page hidden">
   <div class="login-card">
     <div class="brand-mark">CPS</div>
     <h1>智能代理系统</h1>
     <p>渠道、玩家、订单与运营一体化管理</p>
-    <form id="loginForm">
-      <label>登录账号</label><input id="loginUser" value="admin" autocomplete="username" />
-      <label>登录密码</label><input id="loginPass" type="password" value="ChangeMe123!" autocomplete="current-password" />
+    <form id="loginForm" autocomplete="off">
+      <label>登录账号</label><input id="loginUser" autocomplete="off" placeholder="请输入登录账号" />
+      <label>登录密码</label><input id="loginPass" type="password" autocomplete="new-password" placeholder="请输入登录密码" />
       <button type="submit">登录系统</button>
       <div id="loginError" class="error"></div>
     </form>
@@ -56,6 +56,7 @@
         </button>
         <div class="nav-children">
           <button type="button" class="nav-child" data-view="players" data-permission="players.view">玩家列表</button>
+          <button type="button" class="nav-child" data-view="playerBehaviorTest" data-permission="payment.test">玩家行为测试</button>
         </div>
       </section>
 
@@ -78,6 +79,7 @@
         <div class="nav-children">
           <button type="button" class="nav-child" data-view="gifts" data-permission="products.view">礼包列表</button>
           <button type="button" class="nav-child" data-view="products" data-permission="products.view">商品列表</button>
+          <button type="button" class="nav-child" data-view="privilegeCards" data-permission="privilege.manage">特权卡配置</button>
         </div>
       </section>
 
@@ -117,6 +119,6 @@
   </main>
 </div>
 <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h3 id="modalTitle">新增</h3><button id="closeModal">×</button></div><form id="modalForm"></form></div></div>
-<script src="/static/app.js?v=mall-character-snapshot-v57"></script>
+<script src="/static/app.js?v=v68-auth-restore"></script>
 </body>
 </html>

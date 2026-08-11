@@ -213,6 +213,51 @@ class CharacterClaimRecord(Base):
     status: Mapped[str] = mapped_column(String(20), default="claimed")
     claimed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+
+class PrivilegeCardRule(Base):
+    """V71：周卡/月卡/年卡配置。价格单位为平台币，每日奖励由超管配置。"""
+    __tablename__ = "privilege_card_rules"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    card_type: Mapped[str] = mapped_column(String(20), index=True)  # week/month/year
+    duration_days: Mapped[int] = mapped_column(Integer)
+    price_coins: Mapped[int] = mapped_column(BigInteger)
+    daily_reward_content: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class PrivilegeCardPurchase(Base):
+    """玩家按具体区服角色购买的特权卡。奖励/价格保存购买时快照。"""
+    __tablename__ = "privilege_card_purchases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    character_id: Mapped[int] = mapped_column(ForeignKey("player_characters.id"), index=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("privilege_card_rules.id"), index=True)
+    role_name: Mapped[str] = mapped_column(String(100))
+    server_name: Mapped[str] = mapped_column(String(100))
+    card_name: Mapped[str] = mapped_column(String(120))
+    card_type: Mapped[str] = mapped_column(String(20), index=True)
+    duration_days: Mapped[int] = mapped_column(Integer)
+    price_coins: Mapped[int] = mapped_column(BigInteger)
+    daily_reward_content: Mapped[str] = mapped_column(Text, default="")
+    start_date: Mapped[date] = mapped_column(Date, index=True)
+    end_date: Mapped[date] = mapped_column(Date, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class PrivilegeCardClaim(Base):
+    __tablename__ = "privilege_card_claims"
+    __table_args__ = (UniqueConstraint("purchase_id", "claim_date", name="uq_privilege_purchase_claim_date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    purchase_id: Mapped[int] = mapped_column(ForeignKey("privilege_card_purchases.id"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    character_id: Mapped[int] = mapped_column(ForeignKey("player_characters.id"), index=True)
+    claim_date: Mapped[date] = mapped_column(Date, index=True)
+    reward_content: Mapped[str] = mapped_column(Text, default="")
+    claimed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
 class MailRecord(Base):
     __tablename__ = "mail_records"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -14,7 +14,7 @@ os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 from fastapi.testclient import TestClient
 from app.main import app, business_today, sync_real_payment_aggregates
 from app.database import SessionLocal
-from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder, RedemptionCode
+from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder, RedemptionCode, PrivilegeCardPurchase, PrivilegeCardClaim
 
 
 def login(c, username, password):
@@ -2353,3 +2353,131 @@ def test_v68_login_pages_do_not_flash_or_ship_default_credentials():
     assert "else showLogin();" in app_js
     assert 'id="loginView" class="login-wrap hidden"' in player
     assert "if(token)enterCenter();else $('#loginView').classList.remove('hidden');" in player
+
+
+
+def test_v71_privilege_card_week_month_year_and_daily_claim_are_character_scoped():
+    """V71：特权卡按角色购买，每天仅领取一次；续购顺延，不污染累充/流水口径。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent = create_agent(c, admin, 'v71_agent', 'V71代理', 1, 1, 0.1)
+        assert agent.status_code == 200, agent.text
+        reg = c.post(f"/api/public/registration/{agent.json()['agent_id']}", json={
+            'username': 'v71_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+        db = SessionLocal()
+        try:
+            char = PlayerCharacter(player_id=player_pk, role_name='周卡剑', server_name='一区', is_primary=True)
+            db.add(char); db.commit(); db.refresh(char); char_id = char.id
+        finally:
+            db.close()
+
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={'coin_action':'issue','coin_amount':500})
+        assert issue.status_code == 200, issue.text
+        card = c.post('/api/privilege-cards', headers=auth(admin), json={
+            'name':'V71周卡', 'card_type':'week', 'price_coins':50,
+            'daily_reward_content':'元宝 × 100\n强化石 × 2', 'enabled':True,
+        })
+        assert card.status_code == 200, card.text
+        card_id = card.json()['id']
+        token = c.post('/api/player/auth/login', json={'username':'v71_player','password':'PlayerPass123!'}).json()['access_token']
+
+        listing = c.get('/api/player/privilege', headers=auth(token), params={'character_id':char_id})
+        assert listing.status_code == 200, listing.text
+        rule = next(x for x in listing.json()['cards'] if x['id'] == card_id)
+        assert rule['duration_days'] == 7
+        assert rule['price_coins'] == 50
+
+        purchase = c.post(f'/api/player/privilege/{card_id}/purchase', headers=auth(token), json={'character_id':char_id})
+        assert purchase.status_code == 200, purchase.text
+        data = purchase.json()['purchase']
+        assert data['role_name'] == '周卡剑'
+        assert data['server_name'] == '一区'
+        assert data['start_date'] == str(business_today())
+        assert data['end_date'] == str(business_today() + timedelta(days=6))
+        assert purchase.json()['platform_coin_balance'] == 450
+
+        # 特权卡消费不是礼包商城订单，因此不增加角色累充。
+        cumulative = c.get('/api/player/cumulative-recharge', headers=auth(token), params={'character_id':char_id})
+        assert cumulative.status_code == 200
+        assert cumulative.json()['total_recharge'] == 0.0
+
+        claim = c.post(f"/api/player/privilege/purchases/{data['id']}/claim", headers=auth(token))
+        assert claim.status_code == 200, claim.text
+        assert claim.json()['reward_content'] == '元宝 × 100\n强化石 × 2'
+        duplicate = c.post(f"/api/player/privilege/purchases/{data['id']}/claim", headers=auth(token))
+        assert duplicate.status_code == 409
+
+        # 同卡续购从上一周期结束后的下一天生效，避免同日两份同卡奖励。
+        renew = c.post(f'/api/player/privilege/{card_id}/purchase', headers=auth(token), json={'character_id':char_id})
+        assert renew.status_code == 200, renew.text
+        renewed = renew.json()['purchase']
+        assert renewed['start_date'] == str(business_today() + timedelta(days=7))
+        assert renewed['end_date'] == str(business_today() + timedelta(days=13))
+        assert renewed['status'] == 'waiting'
+        wait_claim = c.post(f"/api/player/privilege/purchases/{renewed['id']}/claim", headers=auth(token))
+        assert wait_claim.status_code == 400
+
+        db = SessionLocal()
+        try:
+            assert db.query(PrivilegeCardPurchase).filter(PrivilegeCardPurchase.player_id == player_pk).count() == 2
+            assert db.query(PrivilegeCardClaim).filter(PrivilegeCardClaim.player_id == player_pk).count() == 1
+        finally:
+            db.close()
+
+
+def test_v71_superadmin_real_player_behavior_test_reuses_business_paths():
+    """V71：超管可按账号/区服/角色真实模拟礼包、特权卡、累充领取。"""
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    index = (static_dir / 'index.html').read_text(encoding='utf-8')
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    player_html = (static_dir / 'player_center.html').read_text(encoding='utf-8')
+    assert 'data-view="playerBehaviorTest"' in index
+    assert 'data-view="privilegeCards"' in index
+    assert '/api/player-behavior-test/mall-purchase' in app_js
+    assert '/api/player-behavior-test/privilege-purchase' in app_js
+    assert '/api/player-behavior-test/cumulative-claim' in app_js
+    assert 'id="privilegeCharacter"' in player_html
+    assert '领取今日奖励' in player_html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent = create_agent(c, admin, 'v71_test_agent', 'V71测试代理', 1, 1, 0.1)
+        reg = c.post(f"/api/public/registration/{agent.json()['agent_id']}", json={
+            'username':'v71_behavior', 'password':'PlayerPass123!'
+        })
+        player_pk = reg.json()['id']
+        db = SessionLocal()
+        try:
+            char = PlayerCharacter(player_id=player_pk, role_name='测试战神', server_name='九区', is_primary=True)
+            db.add(char); db.commit(); db.refresh(char); char_id = char.id
+        finally:
+            db.close()
+        c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={'coin_action':'issue','coin_amount':1000})
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku':'V71-BEH-GIFT','name':'行为测试礼包','category':'gift','price':200,'stock':5,'description':'元宝 × 200'
+        })
+        rule = c.post('/api/recharge-rules', headers=auth(admin), json={
+            'name':'V71行为累充200','threshold_amount':200,'reward_content':'宝箱 × 1'
+        })
+        card = c.post('/api/privilege-cards', headers=auth(admin), json={
+            'name':'V71行为月卡','card_type':'month','price_coins':60,'daily_reward_content':'钻石 × 10','enabled':True
+        })
+        found = c.get('/api/player-behavior-test/characters', headers=auth(admin), params={'keyword':'测试战神'})
+        assert found.status_code == 200, found.text
+        assert any(x['character_id'] == char_id and x['server_name'] == '九区' for x in found.json())
+
+        buy = c.post('/api/player-behavior-test/mall-purchase', headers=auth(admin), json={'character_id':char_id,'product_id':gift.json()['id']})
+        assert buy.status_code == 200, buy.text
+        cumulative = c.get('/api/player-behavior-test/cumulative', headers=auth(admin), params={'character_id':char_id})
+        assert cumulative.status_code == 200, cumulative.text
+        assert cumulative.json()['total_recharge'] == 200.0
+        assert rule.json()['id'] in [x['id'] for x in cumulative.json()['rules']]
+
+        claimed = c.post('/api/player-behavior-test/cumulative-claim', headers=auth(admin), json={'character_id':char_id,'rule_id':rule.json()['id']})
+        assert claimed.status_code == 200, claimed.text
+        card_buy = c.post('/api/player-behavior-test/privilege-purchase', headers=auth(admin), json={'character_id':char_id,'card_id':card.json()['id']})
+        assert card_buy.status_code == 200, card_buy.text
+        assert card_buy.json()['purchase']['duration_days'] == 30

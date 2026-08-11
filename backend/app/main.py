@@ -15,12 +15,14 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
     AdminUser, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
-    RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord, MailRecord,
+    RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord,
+    PrivilegeCardRule, PrivilegeCardPurchase, PrivilegeCardClaim, MailRecord,
 )
 from .schemas import (
     LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
-    RechargeRuleCreate, ClaimCreate, MailCreate,
+    RechargeRuleCreate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
+    PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
 )
 from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player
 
@@ -324,7 +326,7 @@ PERMISSION_MATRIX = {
         "orders.view", "orders.manage", "shipments.view", "shipments.manage",
         "products.view", "products.manage", "cdk.view", "cdk.manage",
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
-        "mail.view", "mail.send", "system.rebuild", "system.metrics", "payment.test",
+        "mail.view", "mail.send", "system.rebuild", "system.metrics", "payment.test", "privilege.manage",
     },
     "agent_1": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
@@ -1526,6 +1528,42 @@ def product_platform_coin_price(product: Product) -> int:
     return int(value)
 
 
+PRIVILEGE_CARD_DAYS = {"week": 7, "month": 30, "year": 365}
+PRIVILEGE_CARD_NAMES = {"week": "周卡", "month": "月卡", "year": "年卡"}
+
+def privilege_card_duration(card_type: str) -> int:
+    value = str(card_type or "").strip().lower()
+    if value not in PRIVILEGE_CARD_DAYS:
+        raise HTTPException(400, "特权卡类型只能是周卡、月卡或年卡")
+    return PRIVILEGE_CARD_DAYS[value]
+
+def privilege_order_no() -> str:
+    local_now = datetime.now(BUSINESS_TZ)
+    return f"PC{local_now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}"
+
+def privilege_purchase_payload(row: PrivilegeCardPurchase, db: Session, today: date | None = None) -> dict:
+    today = today or business_today()
+    claimed = db.query(PrivilegeCardClaim.id).filter(
+        PrivilegeCardClaim.purchase_id == row.id, PrivilegeCardClaim.claim_date == today
+    ).first() is not None
+    active = row.start_date <= today <= row.end_date
+    if today < row.start_date:
+        status = "waiting"
+    elif today > row.end_date:
+        status = "expired"
+    else:
+        status = "active"
+    return {
+        "id": row.id, "order_no": row.order_no, "card_name": row.card_name,
+        "card_type": row.card_type, "card_type_name": PRIVILEGE_CARD_NAMES.get(row.card_type, row.card_type),
+        "duration_days": row.duration_days, "price_coins": int(row.price_coins or 0),
+        "daily_reward_content": row.daily_reward_content or "",
+        "start_date": str(row.start_date), "end_date": str(row.end_date),
+        "status": status, "today_claimed": claimed, "can_claim_today": active and not claimed,
+        "role_name": row.role_name, "server_name": row.server_name, "created_at": dt(row.created_at),
+    }
+
+
 @app.post("/api/player/auth/login")
 def player_login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     player = db.query(Player).filter(Player.username == body.username.strip()).first()
@@ -1741,6 +1779,135 @@ def player_mall_purchase(
         "role_name": order.role_name,
         "server_name": order.server_name,
         "delivery_status": order.delivery_status,
+    }
+
+
+@app.get("/api/player/privilege")
+def player_privilege_cards(
+    character_id: int = Query(gt=0),
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
+    character = resolve_player_character(db, player, character_id)
+    if character is None:
+        raise HTTPException(400, "请先选择角色 / 区服")
+    rules = db.query(PrivilegeCardRule).filter(PrivilegeCardRule.enabled.is_(True)).order_by(PrivilegeCardRule.id.asc()).all()
+    today = business_today()
+    purchases = (
+        db.query(PrivilegeCardPurchase)
+        .filter(
+            PrivilegeCardPurchase.player_id == player.id,
+            PrivilegeCardPurchase.character_id == character.id,
+            PrivilegeCardPurchase.end_date >= today,
+        )
+        .order_by(PrivilegeCardPurchase.start_date.asc(), PrivilegeCardPurchase.id.asc())
+        .all()
+    )
+    return {
+        "character_id": character.id, "role_name": character.role_name, "server_name": character.server_name,
+        "cards": [{
+            "id": row.id, "name": row.name, "card_type": row.card_type,
+            "card_type_name": PRIVILEGE_CARD_NAMES.get(row.card_type, row.card_type),
+            "duration_days": int(row.duration_days or 0), "price_coins": int(row.price_coins or 0),
+            "daily_reward_content": row.daily_reward_content or "",
+        } for row in rules],
+        "purchases": [privilege_purchase_payload(row, db, today) for row in purchases],
+    }
+
+
+@app.post("/api/player/privilege/{card_id}/purchase")
+def player_privilege_purchase(
+    card_id: int,
+    body: PlayerPrivilegePurchase,
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
+    character = resolve_player_character(db, player, body.character_id)
+    if character is None:
+        raise HTTPException(400, "请先选择角色 / 区服")
+    rule = db.query(PrivilegeCardRule).filter(PrivilegeCardRule.id == card_id).with_for_update().first()
+    locked_player = db.query(Player).filter(Player.id == player.id).with_for_update().first()
+    if not rule or not rule.enabled:
+        raise HTTPException(404, "特权卡不存在或已停用")
+    if not locked_player or locked_player.status != "active":
+        raise HTTPException(403, "玩家账号当前不可购买")
+    price = int(rule.price_coins or 0)
+    if price <= 0:
+        raise HTTPException(400, "特权卡平台币价格配置错误")
+    balance = int(locked_player.platform_coin_balance or 0)
+    if balance < price:
+        raise HTTPException(400, "平台币余额不足")
+    today = business_today()
+    latest = (
+        db.query(PrivilegeCardPurchase)
+        .filter(
+            PrivilegeCardPurchase.player_id == locked_player.id,
+            PrivilegeCardPurchase.character_id == character.id,
+            PrivilegeCardPurchase.rule_id == rule.id,
+            PrivilegeCardPurchase.end_date >= today,
+        )
+        .order_by(PrivilegeCardPurchase.end_date.desc(), PrivilegeCardPurchase.id.desc())
+        .first()
+    )
+    # 同一种卡重复购买视为续期，新周期紧接当前周期之后，避免同一天重复领取同卡奖励。
+    start_date = (latest.end_date + timedelta(days=1)) if latest else today
+    duration_days = int(rule.duration_days or privilege_card_duration(rule.card_type))
+    end_date = start_date + timedelta(days=duration_days - 1)
+    order_no = privilege_order_no()
+    while db.query(PrivilegeCardPurchase.id).filter(PrivilegeCardPurchase.order_no == order_no).first():
+        order_no = privilege_order_no()
+    locked_player.platform_coin_balance = balance - price
+    row = PrivilegeCardPurchase(
+        order_no=order_no, player_id=locked_player.id, character_id=character.id, rule_id=rule.id,
+        role_name=character.role_name, server_name=character.server_name, card_name=rule.name, card_type=rule.card_type,
+        duration_days=duration_days, price_coins=price, daily_reward_content=rule.daily_reward_content or "",
+        start_date=start_date, end_date=end_date, created_at=utc_now_naive(),
+    )
+    db.add(row)
+    db.add(PlayerCoinLedger(
+        player_id=locked_player.id, action="privilege_purchase", delta=-price,
+        balance_after=int(locked_player.platform_coin_balance), operator=locked_player.username,
+        note=f"特权卡 {rule.name} · {character.server_name} / {character.role_name} · {start_date}~{end_date}",
+    ))
+    db.commit(); db.refresh(row); db.refresh(locked_player)
+    return {
+        "message": "特权卡购买成功", "platform_coin_balance": int(locked_player.platform_coin_balance or 0),
+        "purchase": privilege_purchase_payload(row, db, today),
+    }
+
+
+@app.post("/api/player/privilege/purchases/{purchase_id}/claim")
+def player_privilege_claim(
+    purchase_id: int,
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
+    purchase = (
+        db.query(PrivilegeCardPurchase)
+        .filter(PrivilegeCardPurchase.id == purchase_id, PrivilegeCardPurchase.player_id == player.id)
+        .with_for_update().first()
+    )
+    if not purchase:
+        raise HTTPException(404, "特权卡记录不存在")
+    today = business_today()
+    if today < purchase.start_date:
+        raise HTTPException(400, f"该特权卡将于 {purchase.start_date} 生效")
+    if today > purchase.end_date:
+        raise HTTPException(400, "该特权卡已过期")
+    existing = db.query(PrivilegeCardClaim).filter(
+        PrivilegeCardClaim.purchase_id == purchase.id, PrivilegeCardClaim.claim_date == today
+    ).first()
+    if existing:
+        raise HTTPException(409, "今日奖励已经领取")
+    row = PrivilegeCardClaim(
+        purchase_id=purchase.id, player_id=player.id, character_id=purchase.character_id,
+        claim_date=today, reward_content=purchase.daily_reward_content or "", claimed_at=utc_now_naive(),
+    )
+    db.add(row); db.commit(); db.refresh(row)
+    return {
+        "message": "今日特权奖励领取成功", "claim_date": str(row.claim_date),
+        "reward_content": row.reward_content, "claimed_at": dt(row.claimed_at),
+        "role_name": purchase.role_name, "server_name": purchase.server_name, "card_name": purchase.card_name,
     }
 
 
@@ -2314,6 +2481,104 @@ def platform_payment_success(
     return _mark_platform_order_paid(db, row, operator="payment-callback")
 
 
+
+@app.get("/api/player-behavior-test/characters")
+def player_behavior_test_characters(
+    keyword: str = Query(default=""),
+    limit: int = Query(default=30, ge=1, le=80),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("payment.test")),
+):
+    q = db.query(PlayerCharacter, Player).join(Player, Player.id == PlayerCharacter.player_id).filter(Player.status == "active")
+    keyword = keyword.strip()
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter(
+            (Player.username.ilike(like)) | (Player.player_id.ilike(like)) |
+            (PlayerCharacter.role_name.ilike(like)) | (PlayerCharacter.server_name.ilike(like))
+        )
+    rows = q.order_by(Player.id.desc(), PlayerCharacter.is_primary.desc(), PlayerCharacter.id.asc()).limit(limit).all()
+    return [{
+        "character_id": c.id, "player_id": p.player_id, "player_pk": p.id, "username": p.username,
+        "role_name": c.role_name, "server_name": c.server_name,
+        "platform_coin_balance": int(p.platform_coin_balance or 0),
+    } for c, p in rows]
+
+
+@app.post("/api/player-behavior-test/mall-purchase")
+def player_behavior_test_mall_purchase(
+    body: PlayerBehaviorMallPurchase,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("payment.test")),
+):
+    character = db.get(PlayerCharacter, body.character_id)
+    if not character:
+        raise HTTPException(404, "角色不存在")
+    player = db.get(Player, character.player_id)
+    if not player or player.status != "active":
+        raise HTTPException(404, "玩家不存在或已停用")
+    result = player_mall_purchase(
+        body.product_id, PlayerMallPurchase(quantity=1, character_id=character.id), player=player, db=db
+    )
+    result["test_operator"] = principal.username
+    return result
+
+
+@app.post("/api/player-behavior-test/privilege-purchase")
+def player_behavior_test_privilege_purchase(
+    body: PlayerBehaviorPrivilegePurchase,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("payment.test")),
+):
+    character = db.get(PlayerCharacter, body.character_id)
+    if not character:
+        raise HTTPException(404, "角色不存在")
+    player = db.get(Player, character.player_id)
+    if not player or player.status != "active":
+        raise HTTPException(404, "玩家不存在或已停用")
+    result = player_privilege_purchase(
+        body.card_id, PlayerPrivilegePurchase(character_id=character.id), player=player, db=db
+    )
+    result["test_operator"] = principal.username
+    return result
+
+
+@app.get("/api/player-behavior-test/cumulative")
+def player_behavior_test_cumulative(
+    character_id: int = Query(gt=0),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("payment.test")),
+):
+    character = db.get(PlayerCharacter, character_id)
+    if not character:
+        raise HTTPException(404, "角色不存在")
+    player = db.get(Player, character.player_id)
+    if not player:
+        raise HTTPException(404, "玩家不存在")
+    return player_cumulative_recharge(
+        character_id=character.id, claimable_only=True, player=player, db=db
+    )
+
+
+@app.post("/api/player-behavior-test/cumulative-claim")
+def player_behavior_test_cumulative_claim(
+    body: PlayerBehaviorCumulativeClaim,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("payment.test")),
+):
+    character = db.get(PlayerCharacter, body.character_id)
+    if not character:
+        raise HTTPException(404, "角色不存在")
+    player = db.get(Player, character.player_id)
+    if not player:
+        raise HTTPException(404, "玩家不存在")
+    result = player_claim_cumulative_recharge(
+        body.rule_id, character_id=character.id, player=player, db=db
+    )
+    result["test_operator"] = principal.username
+    return result
+
+
 @app.get("/api/payment-test/players")
 def payment_test_players(
     keyword: str = Query(default=""),
@@ -2534,6 +2799,91 @@ def create_shipment(body: ShipmentCreate, db: Session = Depends(get_db), _=Depen
     elif body.status == "failed": order.delivery_status = "failed"
     db.commit();
     return {"message": "发货状态已更新"}
+
+
+# ---------- 特权卡管理（仅超管） ----------
+@app.get("/api/privilege-cards")
+def privilege_cards_admin(db: Session = Depends(get_db), _=Depends(require_permission("privilege.manage"))):
+    rows = db.query(PrivilegeCardRule).order_by(PrivilegeCardRule.id.asc()).all()
+    return [{
+        "id": x.id, "name": x.name, "card_type": x.card_type,
+        "card_type_name": PRIVILEGE_CARD_NAMES.get(x.card_type, x.card_type),
+        "duration_days": int(x.duration_days or 0), "price_coins": int(x.price_coins or 0),
+        "daily_reward_content": x.daily_reward_content or "", "enabled": bool(x.enabled),
+        "created_at": dt(x.created_at),
+    } for x in rows]
+
+
+@app.post("/api/privilege-cards")
+def create_privilege_card(body: PrivilegeCardCreate, db: Session = Depends(get_db), _=Depends(require_permission("privilege.manage"))):
+    card_type = body.card_type.strip().lower()
+    duration = privilege_card_duration(card_type)
+    name = body.name.strip()
+    if db.query(PrivilegeCardRule.id).filter(PrivilegeCardRule.name == name).first():
+        raise HTTPException(409, "特权卡名称已存在")
+    row = PrivilegeCardRule(
+        name=name, card_type=card_type, duration_days=duration, price_coins=body.price_coins,
+        daily_reward_content=body.daily_reward_content.strip(), enabled=body.enabled,
+    )
+    db.add(row); db.commit(); db.refresh(row)
+    return {"id": row.id, "message": "特权卡创建成功"}
+
+
+@app.put("/api/privilege-cards/{card_id}")
+def update_privilege_card(card_id: int, body: PrivilegeCardUpdate, db: Session = Depends(get_db), _=Depends(require_permission("privilege.manage"))):
+    row = db.get(PrivilegeCardRule, card_id)
+    if not row:
+        raise HTTPException(404, "特权卡不存在")
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data:
+        name = str(data["name"]).strip()
+        duplicate = db.query(PrivilegeCardRule.id).filter(PrivilegeCardRule.name == name, PrivilegeCardRule.id != row.id).first()
+        if duplicate:
+            raise HTTPException(409, "特权卡名称已存在")
+        row.name = name
+    if "card_type" in data:
+        row.card_type = str(data["card_type"]).strip().lower()
+        row.duration_days = privilege_card_duration(row.card_type)
+    if "price_coins" in data:
+        row.price_coins = int(data["price_coins"])
+    if "daily_reward_content" in data:
+        row.daily_reward_content = str(data["daily_reward_content"]).strip()
+    if "enabled" in data:
+        row.enabled = bool(data["enabled"])
+    db.commit(); db.refresh(row)
+    return {"message": "特权卡已更新"}
+
+
+@app.get("/api/privilege-card-records")
+def privilege_card_records(
+    account: str = "", role: str = "", server: str = "",
+    db: Session = Depends(get_db), _=Depends(require_permission("privilege.manage")),
+):
+    q = db.query(PrivilegeCardPurchase, Player).join(Player, Player.id == PrivilegeCardPurchase.player_id)
+    if account.strip(): q = q.filter(Player.username.ilike(f"%{account.strip()}%"))
+    if role.strip(): q = q.filter(PrivilegeCardPurchase.role_name.ilike(f"%{role.strip()}%"))
+    if server.strip(): q = q.filter(PrivilegeCardPurchase.server_name.ilike(f"%{server.strip()}%"))
+    rows = q.order_by(PrivilegeCardPurchase.id.desc()).limit(300).all()
+    today = business_today()
+    return [{**privilege_purchase_payload(x, db, today), "player_account": p.username} for x, p in rows]
+
+
+@app.get("/api/privilege-card-claims")
+def privilege_card_claim_records(
+    db: Session = Depends(get_db), _=Depends(require_permission("privilege.manage")),
+):
+    rows = (
+        db.query(PrivilegeCardClaim, PrivilegeCardPurchase, Player)
+        .join(PrivilegeCardPurchase, PrivilegeCardPurchase.id == PrivilegeCardClaim.purchase_id)
+        .join(Player, Player.id == PrivilegeCardClaim.player_id)
+        .order_by(PrivilegeCardClaim.id.desc()).limit(300).all()
+    )
+    return [{
+        "id": claim.id, "player_account": player.username, "card_name": purchase.card_name,
+        "role_name": purchase.role_name, "server_name": purchase.server_name, "claim_date": str(claim.claim_date),
+        "reward_content": claim.reward_content, "claimed_at": dt(claim.claimed_at),
+    } for claim, purchase, player in rows]
+
 
 # ---------- 商品管理 ----------
 @app.get("/api/products")

@@ -16,11 +16,12 @@ let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_da
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
 let paymentTestState = {players:[], selectedAccount:'', order:null};
+let playerBehaviorTestState = {characters:[], selectedCharacterId:0, keyword:'', gifts:[], cards:[], cumulative:{rules:[]}};
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
- players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','玩家中心使用平台币购买礼包后自动生成的订单记录'],
- shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], cdk:['兑换码列表','CDK 批次与兑换统计'],
+ players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], playerBehaviorTest:['玩家行为测试','按真实角色模拟礼包购买、特权卡购买与累充领取'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','玩家中心使用平台币购买礼包后自动生成的订单记录'],
+ shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], privilegeCards:['特权卡配置','周卡、月卡、年卡价格与每日奖励'], cdk:['兑换码列表','CDK 批次与兑换统计'],
  rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
 };
 
@@ -92,7 +93,7 @@ function logout(){ stopSystemMetricsPolling();token='';actorType='admin';current
 $('#logoutBtn').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();const btn=$('#loginForm button[type="submit"]');const feedback=$('#loginError');feedback.textContent='';feedback.classList.remove('success');if(btn)btn.disabled=true;try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=firstAllowedView();feedback.textContent='登录成功';feedback.classList.add('success');await new Promise(resolve=>setTimeout(resolve,420));await showApp();}catch(err){feedback.classList.remove('success');feedback.textContent=err.message}finally{if(btn)btn.disabled=false}};
 function hasPermission(code){return Boolean(currentUser?.permissions?.includes(code));}
-const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',platformOrders:'orders.view',paymentTest:'payment.test',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view'};
+const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',playerBehaviorTest:'payment.test',platformOrders:'orders.view',paymentTest:'payment.test',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',privilegeCards:'privilege.manage',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view'};
 function canView(view){const code=viewPermissions[view];return !code||hasPermission(code);}
 function firstAllowedView(){return Object.keys(viewPermissions).find(canView)||'dashboard';}
 function applyRoleUI(){
@@ -173,11 +174,13 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='agents') return renderAgents();
  if(view==='settlements') return renderSettlements();
  if(view==='players') return renderPlayers();
+ if(view==='playerBehaviorTest') return renderPlayerBehaviorTest();
  if(view==='platformOrders') return renderPlatformOrders();
  if(view==='paymentTest') return renderPaymentTest();
  if(view==='mallOrders') return renderMallOrders();
  if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',hasPermission('shipments.manage')?()=>openForm('更新发货',forms.shipment):null);
  if(view==='gifts') return renderProducts('gift'); if(view==='products') return renderProducts('product');
+ if(view==='privilegeCards') return renderPrivilegeCards();
  if(view==='cdk') return renderCDK();
  if(view==='rechargeRules') return renderList('/api/recharge-rules',ruleCols,'累充列表',hasPermission('recharge.manage')?()=>openForm('新增累充规则',forms.rule):null);
  if(view==='claims') return renderList('/api/claims',claimCols,'领取记录',hasPermission('claims.manage')?()=>openForm('新增领取记录',forms.claim):null);
@@ -538,6 +541,46 @@ async function renderPaymentTest(loadPlayers=true){
   bindPaymentTest();
 }
 
+
+function privilegeCardTypeText(v){return ({week:'周卡',month:'月卡',year:'年卡'})[v]||v||'-'}
+function openPrivilegeCardForm(row=null){
+ const cfg={...forms.privilege,defaults:row?{name:row.name,card_type:row.card_type,price_coins:row.price_coins,daily_reward_content:row.daily_reward_content,enabled:String(Boolean(row.enabled))}:{name:'',card_type:'week',price_coins:50,daily_reward_content:'',enabled:'true'}};
+ if(row){cfg.path=`/api/privilege-cards/${Number(row.id)}`;cfg.method='PUT'}
+ openForm(row?'编辑特权卡':'新增特权卡',cfg);
+}
+window.editPrivilegeCard=(id)=>{const row=(window.__privilegeRows||[]).find(x=>Number(x.id)===Number(id));if(row)openPrivilegeCardForm(row)};
+async function renderPrivilegeCards(){
+ const [rows,records,claims]=await Promise.all([api('/api/privilege-cards'),api('/api/privilege-card-records'),api('/api/privilege-card-claims')]);
+ window.__privilegeRows=rows;
+ const cols=[['名称','name'],['类型','card_type_name'],['有效天数','duration_days'],['平台币售价','price_coins'],['每日奖励','daily_reward_content'],['状态','enabled',v=>badge(v?'active':'disabled')],['操作','id',(v)=>`<button class="btn small" onclick="editPrivilegeCard(${Number(v)})">编辑</button>`]];
+ const recordCols=[['玩家账号','player_account'],['区服','server_name'],['角色','role_name'],['特权卡','card_name'],['价格','price_coins'],['有效期','start_date',(v,r)=>`${esc(r.start_date)} 至 ${esc(r.end_date)}`],['状态','status',badge],['购买时间','created_at']];
+ const claimColsLocal=[['玩家账号','player_account'],['区服','server_name'],['角色','role_name'],['特权卡','card_name'],['领取日期','claim_date'],['奖励内容','reward_content'],['领取时间','claimed_at']];
+ $('#content').innerHTML=panel('特权卡配置',`${table(rows,cols)}<div class="section-gap"></div><h4>最近购买记录</h4>${table(records,recordCols)}<div class="section-gap"></div><h4>最近每日领取记录</h4>${table(claims,claimColsLocal)}`,'<button class="btn primary" id="addPrivilegeBtn">＋ 新增特权卡</button>');
+ $('#addPrivilegeBtn').onclick=()=>openPrivilegeCardForm();
+}
+
+function behaviorCharacterOptions(){const rows=playerBehaviorTestState.characters||[];return `<option value="">请选择玩家角色 / 区服</option>${rows.map(x=>`<option value="${Number(x.character_id)}" ${Number(x.character_id)===Number(playerBehaviorTestState.selectedCharacterId)?'selected':''}>${esc(x.username)} ｜ ${esc(x.server_name)} ｜ ${esc(x.role_name)} ｜ 余额 ${Number(x.platform_coin_balance||0).toLocaleString()}</option>`).join('')}`}
+async function loadBehaviorCumulative(){const id=Number(playerBehaviorTestState.selectedCharacterId||0);playerBehaviorTestState.cumulative=id?await api(`/api/player-behavior-test/cumulative?character_id=${id}`):{rules:[]}}
+function playerBehaviorTestPage(){
+ const s=playerBehaviorTestState,c=s.cumulative||{rules:[]},selected=s.characters.find(x=>Number(x.character_id)===Number(s.selectedCharacterId));
+ return `<div class="payment-test-warning"><strong>这里执行的是真实业务链路。</strong> 礼包购买会真实扣平台币并生成商城订单、增加该角色累充；特权卡购买会真实扣平台币并生成特权卡记录；累充领取会真实写入领取记录。请只使用测试玩家/测试角色。</div>
+ <div class="payment-test-card"><h4>1. 选择玩家角色</h4><div class="payment-test-search"><input id="behaviorKeyword" value="${esc(s.keyword)}" placeholder="玩家账号 / 玩家ID / 角色名 / 区服"><button class="btn" id="behaviorSearchBtn">搜索</button></div><label>玩家角色 / 区服</label><select id="behaviorCharacterSelect">${behaviorCharacterOptions()}</select>${selected?`<div class="query-scope-note">当前：${esc(selected.username)} · ${esc(selected.server_name)} · ${esc(selected.role_name)} · 平台币余额 ${Number(selected.platform_coin_balance||0).toLocaleString()}</div>`:''}</div>
+ <div class="payment-test-grid">
+   <div class="payment-test-card"><h4>2A. 真实模拟购买礼包</h4><label>礼包</label><select id="behaviorGiftSelect"><option value="">请选择礼包</option>${s.gifts.map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · ${Number(x.price).toLocaleString()} 平台币</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorGiftBtn">购买礼包</button></div>
+   <div class="payment-test-card"><h4>2B. 真实模拟购买特权卡</h4><label>特权卡</label><select id="behaviorCardSelect"><option value="">请选择特权卡</option>${s.cards.filter(x=>x.enabled).map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · ${Number(x.price_coins).toLocaleString()} 平台币</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorCardBtn">购买特权卡</button></div>
+ </div>
+ <div class="payment-test-card"><h4>2C. 真实模拟领取累充</h4>${s.selectedCharacterId?`<div class="query-scope-note">当日累充：${Number(c.today_recharge||0).toLocaleString()} 平台币 ｜ 永久累充：${Number(c.total_recharge||0).toLocaleString()} 平台币</div>`:'<div class="payment-test-empty">请先选择角色。</div>'}<label>当前可领取奖励</label><select id="behaviorRuleSelect"><option value="">请选择累充奖励</option>${(c.rules||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · 门槛 ${Number(x.threshold_amount||0).toLocaleString()}</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorClaimBtn">领取累充奖励</button></div>`;
+}
+async function searchBehaviorCharacters(){playerBehaviorTestState.keyword=$('#behaviorKeyword')?.value.trim()||'';const q=new URLSearchParams({keyword:playerBehaviorTestState.keyword});playerBehaviorTestState.characters=await api('/api/player-behavior-test/characters?'+q.toString());if(!playerBehaviorTestState.characters.some(x=>Number(x.character_id)===Number(playerBehaviorTestState.selectedCharacterId)))playerBehaviorTestState.selectedCharacterId=0;await loadBehaviorCumulative();await renderPlayerBehaviorTest(false)}
+function bindPlayerBehaviorTest(){
+ $('#behaviorSearchBtn').onclick=()=>searchBehaviorCharacters().catch(e=>showToast(e.message,'error',4200));$('#behaviorKeyword').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchBehaviorCharacters().catch(err=>showToast(err.message,'error',4200))}});
+ $('#behaviorCharacterSelect').onchange=async e=>{playerBehaviorTestState.selectedCharacterId=Number(e.target.value||0);try{await loadBehaviorCumulative();await renderPlayerBehaviorTest(false)}catch(err){showToast(err.message,'error',4200)}};
+ $('#behaviorGiftBtn').onclick=async()=>{const character_id=Number(playerBehaviorTestState.selectedCharacterId||0),product_id=Number($('#behaviorGiftSelect').value||0);if(!character_id||!product_id)return showToast('请先选择角色和礼包','error',3000);if(!confirm('确认执行真实礼包购买测试？会真实扣除该玩家平台币。'))return;try{const d=await api('/api/player-behavior-test/mall-purchase',{method:'POST',body:JSON.stringify({character_id,product_id})});showToast(`${d.message}：${d.order_no}`,'success',3200);await searchBehaviorCharacters()}catch(e){showToast(e.message,'error',4200)}};
+ $('#behaviorCardBtn').onclick=async()=>{const character_id=Number(playerBehaviorTestState.selectedCharacterId||0),card_id=Number($('#behaviorCardSelect').value||0);if(!character_id||!card_id)return showToast('请先选择角色和特权卡','error',3000);if(!confirm('确认执行真实特权卡购买测试？会真实扣除该玩家平台币。'))return;try{const d=await api('/api/player-behavior-test/privilege-purchase',{method:'POST',body:JSON.stringify({character_id,card_id})});showToast(d.message||'特权卡购买成功','success',3200);await searchBehaviorCharacters()}catch(e){showToast(e.message,'error',4200)}};
+ $('#behaviorClaimBtn').onclick=async()=>{const character_id=Number(playerBehaviorTestState.selectedCharacterId||0),rule_id=Number($('#behaviorRuleSelect').value||0);if(!character_id||!rule_id)return showToast('请先选择角色和可领取累充奖励','error',3000);if(!confirm('确认执行真实累充领取测试？领取后不能再次领取同一档奖励。'))return;try{const d=await api('/api/player-behavior-test/cumulative-claim',{method:'POST',body:JSON.stringify({character_id,rule_id})});showToast(d.message||'领取成功','success',3000);await loadBehaviorCumulative();await renderPlayerBehaviorTest(false)}catch(e){showToast(e.message,'error',4200)}};
+}
+async function renderPlayerBehaviorTest(load=true){if(load){const [characters,gifts,cards]=await Promise.all([api('/api/player-behavior-test/characters'),api('/api/products?category=gift'),api('/api/privilege-cards')]);playerBehaviorTestState.characters=characters;playerBehaviorTestState.gifts=gifts;playerBehaviorTestState.cards=cards;if(!characters.some(x=>Number(x.character_id)===Number(playerBehaviorTestState.selectedCharacterId)))playerBehaviorTestState.selectedCharacterId=0;await loadBehaviorCumulative()}$('#content').innerHTML=panel('玩家行为测试',playerBehaviorTestPage());bindPlayerBehaviorTest()}
+
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
 function agentLevelText(v){return ({1:'一级代理',2:'二级代理',3:'三级代理'})[Number(v)]||'-'}
 function agentSearchQuery(){
@@ -842,6 +885,7 @@ const forms={
  generateCDK:{path:null,fields:[['batch_id','CDK批次PK','number'],['count','生成数量','number'],['prefix','前缀']]},
  settlement:{path:'/api/settlements',fields:[['agent_id','代理PK','number'],['period_start','开始日期','date'],['period_end','结束日期','date']]},
  rule:{path:'/api/recharge-rules',fields:[['name','规则名称'],['threshold_amount','累充门槛','number'],['reward_content','奖励内容','textarea']]},
+ privilege:{path:'/api/privilege-cards',fields:[['name','特权卡名称'],['card_type','类型','select',true,{options:[{value:'week',label:'周卡（7天）'},{value:'month',label:'月卡（30天）'},{value:'year',label:'年卡（365天）'}]}],['price_coins','平台币售价','number',true,{min:1,step:1}],['daily_reward_content','每日奖励内容','textarea'],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,enabled:String(o.enabled)!=='false'})},
  claim:{path:'/api/claims',fields:[['player_id','玩家PK','number'],['rule_id','规则PK','number']]},
  mail:{path:'/api/mails',fields:[['title','邮件标题'],['content','邮件内容','textarea'],['target_type','目标类型(player/server/all)'],['target_value','玩家ID/区服，可空','text',false]]}
 };
