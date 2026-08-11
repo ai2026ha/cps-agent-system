@@ -1960,3 +1960,13 @@ def test_v57_mall_order_search_and_character_snapshot():
         assert any(x['order_no'] == order_no for x in by_product.json())
         by_sku = c.get('/api/orders/mall', headers=auth(admin), params={'product': 'V57-ROLE-GIFT'})
         assert any(x['order_no'] == order_no for x in by_sku.json())
+
+
+def test_v58_player_mall_uses_dropdown_and_auto_detail():
+    html = (Path(__file__).resolve().parent.parent / 'app' / 'static' / 'player_center.html').read_text(encoding='utf-8')
+    assert 'id="giftSelect"' in html
+    assert '请选择礼包' in html
+    assert 'id="giftDetail"' in html
+    assert '礼包内容' in html
+    assert '使用平台币直接购买；购买成功后自动生成商城订单' not in html
+    assert 'renderGiftDetail' in html
