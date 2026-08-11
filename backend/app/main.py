@@ -547,6 +547,26 @@ def ensure_player_character_data():
         db.close()
 
 
+def ensure_mall_order_character_columns():
+    """V57：给已上线商城订单补充“购买角色”快照字段。
+
+    历史订单没有可靠的购买角色证据，因此不猜测、不回填当前主角色；新订单会
+    在购买时记录 character_id + role_name + server_name，保证后续改名/转服也不会
+    改写历史订单展示。
+    """
+    inspector = inspect(engine)
+    if "mall_orders" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("mall_orders")}
+    with engine.begin() as conn:
+        if "character_id" not in columns:
+            conn.execute(text("ALTER TABLE mall_orders ADD COLUMN character_id INTEGER"))
+        if "role_name" not in columns:
+            conn.execute(text("ALTER TABLE mall_orders ADD COLUMN role_name VARCHAR(100)"))
+        if "server_name" not in columns:
+            conn.execute(text("ALTER TABLE mall_orders ADD COLUMN server_name VARCHAR(100)"))
+
+
 def player_character_payloads(db: Session, player_ids: list[int]) -> dict[int, list[dict]]:
     """批量读取玩家角色，主角色优先，其次按最近记录和主键排序。"""
     if not player_ids:
@@ -662,6 +682,7 @@ def startup():
     ensure_platform_order_columns()
     ensure_player_admin_columns()
     ensure_player_character_data()
+    ensure_mall_order_character_columns()
     ensure_agent_public_identity_format()
     sync_real_payment_aggregates()
     seed_admin()
@@ -1551,6 +1572,8 @@ def player_mall_orders(player: Player = Depends(current_player), db: Session = D
         "id": order.id,
         "order_no": order.order_no,
         "product_name": product.name,
+        "role_name": order.role_name or "历史订单未记录",
+        "server_name": order.server_name or "历史订单未记录",
         "quantity": int(order.quantity or 0),
         "coin_amount": int(Decimal(order.amount or 0)),
         "pay_status": order.pay_status,
@@ -1574,6 +1597,26 @@ def player_mall_purchase(
         raise HTTPException(404, "礼包不存在或已下架")
     if not locked_player or locked_player.status != "active":
         raise HTTPException(403, "玩家账号当前不可购买")
+
+    # V57：商城礼包必须归属到购买时使用的具体区服角色。
+    # 多角色玩家必须明确选择；单角色玩家可兼容自动选中；尚未绑定角色的历史/测试账号
+    # 仍允许购买，但订单会明确记录为“未绑定角色”，不会伪造角色信息。
+    characters = (
+        db.query(PlayerCharacter)
+        .filter(PlayerCharacter.player_id == locked_player.id)
+        .order_by(PlayerCharacter.is_primary.desc(), PlayerCharacter.id.asc())
+        .all()
+    )
+    selected_character = None
+    if body.character_id is not None:
+        selected_character = next((c for c in characters if c.id == int(body.character_id)), None)
+        if not selected_character:
+            raise HTTPException(400, "所选角色不存在或不属于当前玩家")
+    elif len(characters) == 1:
+        selected_character = characters[0]
+    elif len(characters) > 1:
+        raise HTTPException(400, "该账号有多个区服角色，请先选择购买角色")
+
     quantity = int(body.quantity)
     if int(product.stock or 0) < quantity:
         raise HTTPException(400, "礼包库存不足")
@@ -1598,6 +1641,9 @@ def player_mall_purchase(
         player_id=locked_player.id,
         agent_id=locked_player.agent_id,
         product_id=product.id,
+        character_id=selected_character.id if selected_character else None,
+        role_name=selected_character.role_name if selected_character else "未绑定角色",
+        server_name=selected_character.server_name if selected_character else "未绑定区服",
         quantity=quantity,
         amount=Decimal(total_coins),
         pay_status="paid",
@@ -1612,13 +1658,15 @@ def player_mall_purchase(
         delta=-total_coins,
         balance_after=int(locked_player.platform_coin_balance),
         operator=locked_player.username,
-        note=f"商城订单 {order_no} · {product.name} x{quantity}",
+        note=f"商城订单 {order_no} · {product.name} x{quantity} · {(selected_character.server_name + ' / ' + selected_character.role_name) if selected_character else '未绑定角色'}",
     ))
     db.commit(); db.refresh(order); db.refresh(locked_player)
     return {
         "message": "购买成功，商城订单已生成",
         "order_no": order.order_no,
         "platform_coin_balance": int(locked_player.platform_coin_balance or 0),
+        "role_name": order.role_name,
+        "server_name": order.server_name,
         "delivery_status": order.delivery_status,
     }
 
@@ -2159,7 +2207,13 @@ def disabled_manual_platform_order(_=Depends(require_permission("orders.manage")
 
 
 @app.get("/api/orders/mall")
-def mall_orders(db: Session = Depends(get_db), principal=Depends(require_permission("orders.view"))):
+def mall_orders(
+    account: str = "",
+    product: str = "",
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("orders.view")),
+):
+    """商城订单只来自玩家中心购买；支持按玩家账号、商品名称/SKU 查询。"""
     q = (
         db.query(MallOrder, Player, Product)
         .join(Player, Player.id == MallOrder.player_id)
@@ -2167,15 +2221,25 @@ def mall_orders(db: Session = Depends(get_db), principal=Depends(require_permiss
     )
     if principal.actor_type == "agent":
         q = q.filter(MallOrder.agent_id.in_(scoped_agent_ids(db, principal)))
+    account = account.strip()
+    product = product.strip()
+    if account:
+        q = q.filter(Player.username.ilike(f"%{account}%"))
+    if product:
+        like = f"%{product}%"
+        q = q.filter((Product.name.ilike(like)) | (Product.sku.ilike(like)))
     rows = q.order_by(MallOrder.created_at.desc(), MallOrder.id.desc()).all()
     return [{
         "id": order.id,
         "order_no": order.order_no,
         "player_id": order.player_id,
         "player_account": player.username,
+        "role_name": order.role_name or "历史订单未记录",
+        "server_name": order.server_name or "历史订单未记录",
         "agent_id": order.agent_id,
         "product_id": order.product_id,
-        "product_name": product.name,
+        "product_name": product_row.name,
+        "product_sku": product_row.sku,
         "quantity": int(order.quantity or 0),
         "amount": money(order.amount),
         "coin_amount": int(Decimal(order.amount or 0)),
@@ -2183,7 +2247,7 @@ def mall_orders(db: Session = Depends(get_db), principal=Depends(require_permiss
         "delivery_status": order.delivery_status,
         "created_at": dt(order.created_at),
         "paid_at": dt(order.paid_at),
-    } for order, player, product in rows]
+    } for order, player, product_row in rows]
 
 @app.post("/api/orders/mall")
 def disabled_manual_mall_order(_=Depends(require_permission("orders.manage"))):

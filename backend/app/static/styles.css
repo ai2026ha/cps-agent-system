@@ -430,3 +430,12 @@ html{scrollbar-gutter:stable}
 .platform-order-search-bar>.platform-date-field input[type="date"]{min-width:0;padding-left:8px;padding-right:7px}
 @media(max-width:900px){.platform-order-search-bar>.platform-date-field{flex:1 1 142px;width:auto}}
 @media(max-width:560px){.platform-order-search-bar>.platform-date-field{flex:1 0 100%;width:100%}}
+
+/* V57 商城订单查询：紧凑账号/商品搜索，不改变现有列表纵向密度。 */
+.mall-order-search-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 12px;margin-bottom:12px;padding:12px 14px;background:#f8f9fc;border:1px solid #e7ebf2;border-radius:12px}
+.mall-order-search-bar>.query-field{flex:0 0 190px;width:190px;min-width:0}
+.mall-order-search-bar>.query-field input{width:100%;height:38px;border:1px solid #dce2ed;border-radius:8px;background:#fff;padding:8px 10px;outline:none;color:#172033;font:inherit;font-size:13px}
+.mall-order-search-bar>.query-field input:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}
+.mall-order-search-bar .query-actions{flex:0 0 auto;padding-bottom:0}
+@media(max-width:720px){.mall-order-search-bar>.query-field{flex:1 1 180px;width:auto}.mall-order-search-bar .query-actions{flex:1 0 100%;justify-content:flex-start}}
+@media(max-width:520px){.mall-order-search-bar>.query-field{flex:1 0 100%}.mall-order-search-bar .query-actions{width:100%}}

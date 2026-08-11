@@ -69,6 +69,8 @@ class MallOrderCreate(BaseModel):
 
 class PlayerMallPurchase(BaseModel):
     quantity: int = Field(default=1, ge=1, le=99)
+    # 玩家有多个区服角色时必须明确选择购买角色；只有 0/1 个角色时后端可兼容自动处理。
+    character_id: int | None = Field(default=None, gt=0)
 
 class ShipmentCreate(BaseModel):
     mall_order_id: int

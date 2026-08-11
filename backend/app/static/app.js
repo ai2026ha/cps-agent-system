@@ -11,6 +11,7 @@ let currentUser = null;
 let agentSearch = {agent_account:'', public_agent_id:'', parent:''};
 let playerSearch = {account:'', role:'', parent:''};
 let platformOrderSearch = {order_no:'', account:'', payment_method:'', status:'', start_date:'', end_date:''};
+let mallOrderSearch = {account:'', product:''};
 let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
@@ -168,7 +169,7 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='players') return renderPlayers();
  if(view==='platformOrders') return renderPlatformOrders();
  if(view==='paymentTest') return renderPaymentTest();
- if(view==='mallOrders') return renderList('/api/orders/mall',mallCols,'商城订单');
+ if(view==='mallOrders') return renderMallOrders();
  if(view==='shipments') return renderList('/api/shipments',shipmentCols,'发货查询',hasPermission('shipments.manage')?()=>openForm('更新发货',forms.shipment):null);
  if(view==='gifts') return renderProducts('gift'); if(view==='products') return renderProducts('product');
  if(view==='cdk') return renderCDK();
@@ -400,6 +401,31 @@ async function renderPlatformOrders(){
  $('#content').innerHTML=panel('平台币订单',`${platformOrderSearchBar()}<div class="query-scope-note">订单由玩家充值/支付流程自动生成，后台不提供手工新增。默认显示全部订单并按创建时间从新到旧排序；日期仅在主动查询时生效。只有真实支付成功的订单进入流水；补发不会重复增加流水或分佣。</div><div class="table-scroll platform-order-table-scroll">${table(rows,platformCols)}</div>`);
  bindPlatformOrderSearch();
 }
+function mallOrderSearchQuery(){
+ const p=new URLSearchParams();
+ if(mallOrderSearch.account)p.set('account',mallOrderSearch.account);
+ if(mallOrderSearch.product)p.set('product',mallOrderSearch.product);
+ const qs=p.toString();return qs?`?${qs}`:'';
+}
+function mallOrderSearchBar(){
+ return `<div class="mall-order-search-bar">
+   <div class="query-field"><label>账号查询</label><input id="mallAccountQuery" value="${esc(mallOrderSearch.account)}" placeholder="输入玩家账号"></div>
+   <div class="query-field"><label>商品查询</label><input id="mallProductQuery" value="${esc(mallOrderSearch.product)}" placeholder="输入礼包名称 / SKU"></div>
+   <div class="query-actions"><button class="btn primary" id="mallQueryBtn">查询</button><button class="btn" id="mallResetBtn">重置</button></div>
+ </div>`;
+}
+function bindMallOrderSearch(){
+ const run=()=>{mallOrderSearch={account:$('#mallAccountQuery')?.value.trim()||'',product:$('#mallProductQuery')?.value.trim()||''};renderMallOrders()};
+ $('#mallQueryBtn').onclick=run;
+ $('#mallResetBtn').onclick=()=>{mallOrderSearch={account:'',product:''};renderMallOrders()};
+ ['#mallAccountQuery','#mallProductQuery'].forEach(sel=>{const el=$(sel);if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();run()}})});
+}
+async function renderMallOrders(){
+ const rows=await api('/api/orders/mall'+mallOrderSearchQuery());
+ $('#content').innerHTML=panel('商城订单',`${mallOrderSearchBar()}<div class="query-scope-note">商城订单仅由玩家中心使用平台币购买礼包自动生成。角色名与区服为购买瞬间的订单快照，玩家后续切换角色、改名或转服不会改写历史订单。</div><div class="table-scroll mall-order-table-scroll">${table(rows,mallCols)}</div>`);
+ bindMallOrderSearch();
+}
+
 async function resendPlatformOrder(id){
  if(!hasPermission('orders.manage'))return;
  if(!confirm('确认补发该平台币订单？补发仅针对已支付但发货失败的订单。'))return;
@@ -764,7 +790,7 @@ const platformCols=[
  ['支付方式','payment_method',platformPaymentMethodText],['状态','status',platformOrderStatusBadge],['发货','delivery_status',platformDeliveryBadge],
  ['创建时间','created_at'],['支付时间','paid_at'],['操作','id',platformResendCell]
 ];
-const mallCols=[['订单号','order_no'],['玩家账号','player_account'],['礼包名称','product_name'],['数量','quantity'],['平台币','coin_amount',v=>Number(v||0).toLocaleString()],['支付','pay_status',v=>v==='paid'?'<span class="badge ok">已支付</span>':badge(v)],['发货','delivery_status',v=>badge(({waiting:'待发货',sent:'已发货',success:'成功',failed:'失败'})[v]||v)],['创建时间','created_at']];
+const mallCols=[['订单号','order_no'],['玩家账号','player_account'],['角色名','role_name'],['区服','server_name'],['礼包名称','product_name'],['数量','quantity'],['平台币','coin_amount',v=>Number(v||0).toLocaleString()],['支付','pay_status',v=>v==='paid'?'<span class="badge ok">已支付</span>':badge(v)],['发货','delivery_status',v=>badge(({waiting:'待发货',sent:'已发货',success:'成功',failed:'失败'})[v]||v)],['创建时间','created_at']];
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
 const productCols=[['SKU','sku'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
 const cdkCols=[['CDK名称','name'],['总数','total_count'],['未兑换数','unused_count'],['已兑换数','redeemed_count'],['状态','enabled',v=>badge(v?'active':'disabled')],['创建时间','created_at']];

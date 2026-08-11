@@ -116,6 +116,11 @@ class MallOrder(Base):
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
     agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    # V57: 商城订单必须固化购买时选择的具体区服角色。character_id 用于追溯，
+    # role_name/server_name 是订单快照，避免玩家后续改名/转服后历史订单显示错误。
+    character_id: Mapped[int | None] = mapped_column(ForeignKey("player_characters.id"), nullable=True, index=True)
+    role_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    server_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
     pay_status: Mapped[str] = mapped_column(String(20), default="pending")

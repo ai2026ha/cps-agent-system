@@ -14,7 +14,7 @@ os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 from fastapi.testclient import TestClient
 from app.main import app, business_today, sync_real_payment_aggregates
 from app.database import SessionLocal
-from app.models import Player, PlatformCoinOrder, PlayerCoinLedger
+from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder
 
 
 def login(c, username, password):
@@ -1647,7 +1647,7 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     assert "player_center_path||'/player'" in register_html
     assert '玩家中心' in center_html and '/api/player/mall/purchase/' in center_html
-    assert "renderList('/api/orders/mall',mallCols,'商城订单');" in app_js
+    assert "if(view==='mallOrders') return renderMallOrders();" in app_js
     assert "['累计充值','total_recharge']" in app_js
     assert '新增商城订单' not in app_js.split("if(view==='mallOrders')", 1)[1].split("if(view==='shipments')", 1)[0]
 
@@ -1871,3 +1871,92 @@ def test_v55_manual_coin_compensation_after_real_payment_never_duplicates_turnov
             assert '不计流水' in (manual.note or '')
         finally:
             db.close()
+
+
+def test_v57_mall_order_search_and_character_snapshot():
+    """V57：商城订单支持账号/商品查询，并永久记录购买时选择的角色名与区服。"""
+    static_dir = Path(__file__).resolve().parent.parent / 'app' / 'static'
+    center_html = (static_dir / 'player_center.html').read_text(encoding='utf-8')
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    assert 'id="purchaseCharacter"' in center_html
+    assert '账号查询' in app_js and '商品查询' in app_js
+    assert "['角色名','role_name']" in app_js
+    assert "['区服','server_name']" in app_js
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v57_role_agent', 'V57角色代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        aid = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{aid}', json={
+            'username': 'v57_role_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        db = SessionLocal()
+        try:
+            c1 = PlayerCharacter(player_id=player_pk, role_name='剑心', server_name='一区·龙城', is_primary=True)
+            c2 = PlayerCharacter(player_id=player_pk, role_name='星河', server_name='二区·天启', is_primary=False)
+            db.add_all([c1, c2]); db.commit(); db.refresh(c1); db.refresh(c2)
+            char1_id, char2_id = c1.id, c2.id
+        finally:
+            db.close()
+
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'issue', 'coin_amount': 1000
+        })
+        assert issue.status_code == 200, issue.text
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V57-ROLE-GIFT', 'name': 'V57角色礼包', 'category': 'gift',
+            'price': 200, 'stock': 10, 'description': '角色快照测试'
+        })
+        assert gift.status_code == 200, gift.text
+
+        plogin = c.post('/api/player/auth/login', json={
+            'username': 'v57_role_player', 'password': 'PlayerPass123!'
+        })
+        assert plogin.status_code == 200, plogin.text
+        pt = plogin.json()['access_token']
+
+        # 多角色账号不传 character_id 时后端拒绝，防止订单归属到错误角色。
+        missing = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(pt), json={'quantity': 1})
+        assert missing.status_code == 400
+        assert '多个区服角色' in missing.json()['detail']
+
+        buy = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(pt), json={
+            'quantity': 1, 'character_id': char2_id
+        })
+        assert buy.status_code == 200, buy.text
+        assert buy.json()['role_name'] == '星河'
+        assert buy.json()['server_name'] == '二区·天启'
+        order_no = buy.json()['order_no']
+
+        # 即使之后主角色变化，订单快照仍必须保持购买时的二区角色。
+        db = SessionLocal()
+        try:
+            row1 = db.get(PlayerCharacter, char1_id)
+            row2 = db.get(PlayerCharacter, char2_id)
+            row1.is_primary = False
+            row2.is_primary = True
+            row2.role_name = '星河改名'
+            row2.server_name = '三区·苍穹'
+            db.commit()
+            order = db.query(MallOrder).filter(MallOrder.order_no == order_no).one()
+            assert order.role_name == '星河'
+            assert order.server_name == '二区·天启'
+        finally:
+            db.close()
+
+        by_account = c.get('/api/orders/mall', headers=auth(admin), params={'account': 'v57_role'})
+        assert by_account.status_code == 200, by_account.text
+        found = next(x for x in by_account.json() if x['order_no'] == order_no)
+        assert found['player_account'] == 'v57_role_player'
+        assert found['role_name'] == '星河'
+        assert found['server_name'] == '二区·天启'
+
+        by_product = c.get('/api/orders/mall', headers=auth(admin), params={'product': '角色礼包'})
+        assert by_product.status_code == 200, by_product.text
+        assert any(x['order_no'] == order_no for x in by_product.json())
+        by_sku = c.get('/api/orders/mall', headers=auth(admin), params={'product': 'V57-ROLE-GIFT'})
+        assert any(x['order_no'] == order_no for x in by_sku.json())
