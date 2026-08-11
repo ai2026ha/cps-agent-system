@@ -1703,30 +1703,33 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
         assert any(x['id'] == gift_id and x['coin_price'] == 250 for x in products.json())
         assert all(x['name'] != '非礼包商品' for x in products.json())
 
-        buy = c.post(f'/api/player/mall/purchase/{gift_id}', headers=auth(player_token), json={'quantity': 2})
+        # V63：商城每次固定只能购买 1 个礼包，批量购买由后端直接拒绝。
+        multi = c.post(f'/api/player/mall/purchase/{gift_id}', headers=auth(player_token), json={'quantity': 2})
+        assert multi.status_code == 422
+        buy = c.post(f'/api/player/mall/purchase/{gift_id}', headers=auth(player_token), json={'quantity': 1})
         assert buy.status_code == 200, buy.text
-        assert buy.json()['platform_coin_balance'] == 500
+        assert buy.json()['platform_coin_balance'] == 750
         assert buy.json()['order_no'].startswith('MO')
         order_no = buy.json()['order_no']
 
         me = c.get('/api/player/me', headers=auth(player_token))
         assert me.status_code == 200
-        assert me.json()['platform_coin_balance'] == 500
+        assert me.json()['platform_coin_balance'] == 750
         # V61：概览当日/永久累充都只来自商城平台币消费。
-        assert me.json()['today_cumulative_recharge'] == 500.0
-        assert me.json()['permanent_cumulative_recharge'] == 500.0
+        assert me.json()['today_cumulative_recharge'] == 250.0
+        assert me.json()['permanent_cumulative_recharge'] == 250.0
 
         # V53：商城消费增加累计充值奖励进度，但不增加今日真实充值。
         player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v52_mall_player'}).json() if x['id'] == player_pk)
-        assert player_row['total_recharge'] == 500
+        assert player_row['total_recharge'] == 250
         assert player_row['today_recharge'] == 0
 
         own_orders = c.get('/api/player/mall/orders', headers=auth(player_token))
         assert own_orders.status_code == 200
         own = next(x for x in own_orders.json() if x['order_no'] == order_no)
         assert own['product_name'] == 'V52网页礼包'
-        assert own['quantity'] == 2
-        assert own['coin_amount'] == 500
+        assert own['quantity'] == 1
+        assert own['coin_amount'] == 250
         assert own['pay_status'] == 'paid'
         assert own['delivery_status'] == 'waiting'
 
@@ -1735,7 +1738,7 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
         admin_order = next(x for x in admin_orders.json() if x['order_no'] == order_no)
         assert admin_order['player_account'] == 'v52_mall_player'
         assert admin_order['product_name'] == 'V52网页礼包'
-        assert admin_order['coin_amount'] == 500
+        assert admin_order['coin_amount'] == 250
 
         manual = c.post('/api/orders/mall', headers=auth(admin), json={
             'order_no': 'MANUAL-V52', 'player_id': player_pk, 'product_id': gift_id,
@@ -1749,7 +1752,7 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
         assert after_turnover == before_turnover
 
         rule = c.post('/api/recharge-rules', headers=auth(admin), json={
-            'name': 'V53商城累充500', 'threshold_amount': 500, 'reward_content': 'V53测试奖励'
+            'name': 'V53商城累充250', 'threshold_amount': 250, 'reward_content': 'V53测试奖励'
         })
         assert rule.status_code == 200, rule.text
         claim = c.post('/api/claims', headers=auth(admin), json={
@@ -1765,7 +1768,7 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
                 PlayerCoinLedger.note.like(f'%{order_no}%'),
             ).first()
             assert ledger is not None
-            assert ledger.delta == -500
+            assert ledger.delta == -250
         finally:
             db.close()
 
@@ -1801,10 +1804,10 @@ def test_v54_real_platform_payment_does_not_increase_cumulative_recharge_but_mal
         assert gift.status_code == 200, gift.text
         plogin = c.post('/api/player/auth/login', json={'username': 'v54_player', 'password': 'PlayerPass123!'})
         assert plogin.status_code == 200, plogin.text
-        buy = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(plogin.json()['access_token']), json={'quantity': 2})
+        buy = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(plogin.json()['access_token']), json={'quantity': 1})
         assert buy.status_code == 200, buy.text
         after_buy = c.get('/api/players', headers=auth(admin), params={'account': 'v54_player'}).json()[0]
-        assert after_buy['total_recharge'] == 1200
+        assert after_buy['total_recharge'] == 600
         # 商城消费不增加真实支付流水。
         agent_row2 = c.get('/api/agents', headers=auth(admin), params={'public_agent_id': agent['agent_id']}).json()[0]
         assert agent_row2['total_turnover'] == 88.0
@@ -1819,7 +1822,7 @@ def test_v54_real_platform_payment_does_not_increase_cumulative_recharge_but_mal
             db.close()
         sync_real_payment_aggregates()
         corrected = c.get('/api/players', headers=auth(admin), params={'account': 'v54_player'}).json()[0]
-        assert corrected['total_recharge'] == 1200
+        assert corrected['total_recharge'] == 600
 
 
 def test_v55_manual_coin_compensation_after_real_payment_never_duplicates_turnover_commission_or_cumulative():

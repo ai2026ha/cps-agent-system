@@ -68,7 +68,8 @@ class MallOrderCreate(BaseModel):
     pay_status: str = "paid"
 
 class PlayerMallPurchase(BaseModel):
-    quantity: int = Field(default=1, ge=1, le=99)
+    quantity: int = Field(default=1, ge=1, le=1)
+    # V63：每笔玩家商城购买固定只能购买 1 个礼包；前后端双重限制。
     # 玩家有多个区服角色时必须明确选择购买角色；只有 0/1 个角色时后端可兼容自动处理。
     character_id: int | None = Field(default=None, gt=0)
 

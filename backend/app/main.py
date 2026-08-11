@@ -1627,11 +1627,14 @@ def player_mall_purchase(
     elif len(characters) > 1:
         raise HTTPException(400, "该账号有多个区服角色，请先选择购买角色")
 
+    # V63：一次请求只能购买 1 个礼包。schema 已限制，这里再次防御校验，避免绕过前端批量购买。
     quantity = int(body.quantity)
-    if int(product.stock or 0) < quantity:
+    if quantity != 1:
+        raise HTTPException(400, "每次只能购买 1 个礼包")
+    if int(product.stock or 0) < 1:
         raise HTTPException(400, "礼包库存不足")
     unit_price = product_platform_coin_price(product)
-    total_coins = unit_price * quantity
+    total_coins = unit_price
     balance = int(locked_player.platform_coin_balance or 0)
     if balance < total_coins:
         raise HTTPException(400, "平台币余额不足")

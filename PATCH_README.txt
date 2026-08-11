@@ -1,3 +1,3 @@
-V61 -> V62
-直接按目录覆盖同名文件即可。
-本版本不新增数据库字段，不需要删除或重建 PostgreSQL。
+V63 patch for V62.
+Overlay this package on the repository root.
+Changes: gift dropdown hides price, gift detail shows item content only, price is on buy button, one gift per purchase enforced by frontend+backend.
