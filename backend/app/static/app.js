@@ -599,7 +599,10 @@ async function searchBehaviorCharacters(){
  }finally{if(btn&&document.body.contains(btn))btn.disabled=false}
 }
 function bindPlayerBehaviorTest(){
- $('#behaviorSearchBtn').onclick=()=>searchBehaviorCharacters().catch(e=>showToast(e.message,'error',4200));$('#behaviorKeyword').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchBehaviorCharacters().catch(err=>showToast(err.message,'error',4200))}});
+ const searchBtn=$('#behaviorSearchBtn'),keywordInput=$('#behaviorKeyword');
+ const runSearch=()=>searchBehaviorCharacters().catch(e=>showToast(e.message,'error',4200));
+ if(searchBtn){searchBtn.disabled=false;searchBtn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();runSearch()})}
+ if(keywordInput)keywordInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();runSearch()}});
  $('#behaviorCharacterSelect').onchange=async e=>{playerBehaviorTestState.selectedCharacterId=Number(e.target.value||0);try{await loadBehaviorCumulative();await renderPlayerBehaviorTest(false)}catch(err){showToast(err.message,'error',4200)}};
  $('#behaviorGiftBtn').onclick=async()=>{const character_id=Number(playerBehaviorTestState.selectedCharacterId||0),product_id=Number($('#behaviorGiftSelect').value||0);if(!character_id||!product_id)return showToast('请先选择角色和礼包','error',3000);if(!confirm('确认执行真实礼包购买测试？会真实扣除该玩家平台币。'))return;try{const d=await api('/api/player-behavior-test/mall-purchase',{method:'POST',body:JSON.stringify({character_id,product_id})});showToast(`${d.message}：${d.order_no}`,'success',3200);await searchBehaviorCharacters()}catch(e){showToast(e.message,'error',4200)}};
  $('#behaviorCardBtn').onclick=async()=>{const character_id=Number(playerBehaviorTestState.selectedCharacterId||0),card_id=Number($('#behaviorCardSelect').value||0);if(!character_id||!card_id)return showToast('请先选择角色和特权卡','error',3000);if(!confirm('确认执行真实特权卡购买测试？会真实扣除该玩家平台币。'))return;try{const d=await api('/api/player-behavior-test/privilege-purchase',{method:'POST',body:JSON.stringify({character_id,card_id})});showToast(d.message||'特权卡购买成功','success',3200);await searchBehaviorCharacters()}catch(e){showToast(e.message,'error',4200)}};

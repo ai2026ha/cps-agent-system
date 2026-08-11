@@ -2515,3 +2515,15 @@ def test_v72_behavior_character_search_returns_clear_result_and_unbound_message_
         assert found.json()['count'] == 1
         assert found.json()['items'][0]['character_id'] == char_id
         assert found.json()['items'][0]['server_name'] == 'V72一区'
+
+
+def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    assert 'id="behaviorSearchBtn"' in app_js
+    assert 'type="button" class="btn" id="behaviorSearchBtn"' in app_js
+    assert "searchBtn.addEventListener('click'" in app_js
+    assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
+    assert '/api/player-behavior-test/character-search?' in app_js
+    assert '/static/app.js?v=v73-behavior-search' in index_html
