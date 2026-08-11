@@ -1525,11 +1525,21 @@ def player_login(body: LoginIn, request: Request, db: Session = Depends(get_db))
 def player_me(player: Player = Depends(current_player), db: Session = Depends(get_db)):
     owner = db.get(Agent, player.agent_id) if player.agent_id else None
     chars = player_character_payloads(db, [player.id]).get(player.id, [])
+    # V61：玩家中心概览的“当日累充 / 永久累充”只统计网页商城实际消耗的平台币。
+    # 真实平台币充值只计算流水/分佣；超管手工发币只调整余额，两者都不会进入累充。
+    today = business_today()
+    today_start, tomorrow_start = business_date_bounds(today, today)
+    today_cumulative = paid_mall_cumulative_recharge(
+        db, player_ids=[player.id], start_dt=today_start, end_dt=tomorrow_start
+    )
+    permanent_cumulative = player_cumulative_recharge_total(db, [player.id])
     return {
         "player_id": player.player_id,
         "username": player.username,
         "status": player.status,
         "platform_coin_balance": int(player.platform_coin_balance or 0),
+        "today_cumulative_recharge": money(today_cumulative),
+        "permanent_cumulative_recharge": money(permanent_cumulative),
         "agent_id": owner.agent_id if owner else "超管",
         "agent_name": owner.agent_name if owner else "总平台主管",
         "characters": chars,

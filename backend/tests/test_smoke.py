@@ -1712,6 +1712,9 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
         me = c.get('/api/player/me', headers=auth(player_token))
         assert me.status_code == 200
         assert me.json()['platform_coin_balance'] == 500
+        # V61：概览当日/永久累充都只来自商城平台币消费。
+        assert me.json()['today_cumulative_recharge'] == 500.0
+        assert me.json()['permanent_cumulative_recharge'] == 500.0
 
         # V53：商城消费增加累计充值奖励进度，但不增加今日真实充值。
         player_row = next(x for x in c.get('/api/players', headers=auth(admin), params={'account': 'v52_mall_player'}).json() if x['id'] == player_pk)
