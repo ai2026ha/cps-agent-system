@@ -1665,7 +1665,7 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
         player_pk = reg.json()['id']
         page = c.get('/player')
         assert page.status_code == 200
-        assert '玩家登录' in page.text and '礼包商城' in page.text
+        assert '玩家登录' in page.text and '购买礼包' in page.text
 
         player_login = c.post('/api/player/auth/login', json={
             'username': 'v52_mall_player', 'password': 'PlayerPass123!'
@@ -1970,3 +1970,55 @@ def test_v58_player_mall_uses_dropdown_and_auto_detail():
     assert '礼包内容' in html
     assert '使用平台币直接购买；购买成功后自动生成商城订单' not in html
     assert 'renderGiftDetail' in html
+
+
+def test_v59_player_center_feature_order_and_player_cumulative_claim():
+    """V59：玩家中心一级入口固定为充值→礼包→累充→特权卡，累充可由玩家本人领取。"""
+    html = (Path(__file__).resolve().parent.parent / 'app' / 'static' / 'player_center.html').read_text(encoding='utf-8')
+    labels = ['平台币充值', '购买礼包', '领取累充', '特权卡']
+    positions = [html.index(f'>{label}</button>') for label in labels]
+    assert positions == sorted(positions)
+    assert 'data-tab="recharge"' in html
+    assert 'data-tab="mall"' in html
+    assert 'data-tab="cumulative"' in html
+    assert 'data-tab="privilege"' in html
+    assert '>网页商城</button>' not in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v59_agent', 'V59代理', 1, 2, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        aid = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{aid}', json={
+            'username': 'v59_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'issue', 'coin_amount': 500
+        })
+        assert issue.status_code == 200, issue.text
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V59-GIFT', 'name': 'V59礼包', 'category': 'gift',
+            'price': 100, 'stock': 5, 'description': 'V59礼包内容'
+        })
+        assert gift.status_code == 200, gift.text
+        rule = c.post('/api/recharge-rules', headers=auth(admin), json={
+            'name': 'V59累充100', 'threshold_amount': 100, 'reward_content': 'V59奖励'
+        })
+        assert rule.status_code == 200, rule.text
+        pt = c.post('/api/player/auth/login', json={
+            'username': 'v59_player', 'password': 'PlayerPass123!'
+        }).json()['access_token']
+        buy = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(pt), json={'quantity': 1})
+        assert buy.status_code == 200, buy.text
+        info = c.get('/api/player/cumulative-recharge', headers=auth(pt))
+        assert info.status_code == 200, info.text
+        matching = next(x for x in info.json()['rules'] if x['id'] == rule.json()['id'])
+        assert info.json()['total_recharge'] == 100.0
+        assert matching['eligible'] is True and matching['claimed'] is False
+        claim = c.post(f"/api/player/cumulative-recharge/{rule.json()['id']}/claim", headers=auth(pt))
+        assert claim.status_code == 200, claim.text
+        after = c.get('/api/player/cumulative-recharge', headers=auth(pt)).json()
+        matching_after = next(x for x in after['rules'] if x['id'] == rule.json()['id'])
+        assert matching_after['claimed'] is True

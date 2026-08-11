@@ -1671,6 +1671,53 @@ def player_mall_purchase(
     }
 
 
+@app.get("/api/player/cumulative-recharge")
+def player_cumulative_recharge(player: Player = Depends(current_player), db: Session = Depends(get_db)):
+    """玩家中心领取累充：累计值仅来自网页商城实际平台币消费。"""
+    rules = (
+        db.query(RechargeRule)
+        .filter(RechargeRule.enabled.is_(True))
+        .order_by(RechargeRule.threshold_amount.asc(), RechargeRule.id.asc())
+        .all()
+    )
+    claimed_ids = {
+        row[0] for row in db.query(ClaimRecord.rule_id).filter(ClaimRecord.player_id == player.id).all()
+    }
+    total = Decimal(player.total_recharge or 0)
+    return {
+        "total_recharge": money(total),
+        "rules": [{
+            "id": rule.id,
+            "name": rule.name,
+            "threshold_amount": money(rule.threshold_amount),
+            "reward_content": rule.reward_content,
+            "claimed": rule.id in claimed_ids,
+            "eligible": total >= Decimal(rule.threshold_amount or 0),
+        } for rule in rules],
+    }
+
+
+@app.post("/api/player/cumulative-recharge/{rule_id}/claim")
+def player_claim_cumulative_recharge(
+    rule_id: int,
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
+    rule = db.get(RechargeRule, rule_id)
+    if not rule or not rule.enabled:
+        raise HTTPException(404, "累充奖励不存在或已停用")
+    if Decimal(player.total_recharge or 0) < Decimal(rule.threshold_amount or 0):
+        raise HTTPException(400, "累计充值未达到领取门槛")
+    existing = db.query(ClaimRecord).filter(
+        ClaimRecord.player_id == player.id, ClaimRecord.rule_id == rule.id
+    ).first()
+    if existing:
+        raise HTTPException(409, "该奖励已经领取")
+    row = ClaimRecord(player_id=player.id, rule_id=rule.id, status="claimed")
+    db.add(row); db.commit(); db.refresh(row)
+    return {"id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at)}
+
+
 @app.get("/api/players")
 def list_players(
     account: str = "",
