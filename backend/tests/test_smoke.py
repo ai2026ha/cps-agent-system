@@ -2075,3 +2075,171 @@ def test_v62_player_center_removes_order_list_and_supports_cdk_redeem():
         current = next(x for x in rows.json() if x['id'] == batch.json()['id'])
         assert current['redeemed_count'] == 1
         assert current['unused_count'] == 0
+
+
+def test_v64_cumulative_claim_selects_character_then_only_shows_claimable_rewards():
+    """V64：玩家先选角色/区服，再获取该角色可领取累充；顶部不再展示当日/永久累充。"""
+    html = (Path(__file__).resolve().parent.parent / 'app' / 'static' / 'player_center.html').read_text(encoding='utf-8')
+    assert 'id="cumulativeCharacter"' in html
+    assert '领取角色 / 区服' in html
+    assert 'claimable_only=true' in html
+    assert 'id="permanentCumulative"' not in html
+    assert 'id="todayCumulative"' not in html
+    assert '请先选择角色 / 区服' in html
+    assert '该角色当前暂无可领取的累充奖励' in html
+    assert '选择可领取奖励' in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v64_agent', 'V64代理', 1, 1, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        reg = c.post(f"/api/public/registration/{agent_resp.json()['agent_id']}", json={
+            'username': 'v64_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        db = SessionLocal()
+        try:
+            c1 = PlayerCharacter(player_id=player_pk, role_name='剑一', server_name='一区', is_primary=True)
+            c2 = PlayerCharacter(player_id=player_pk, role_name='剑二', server_name='二区', is_primary=False)
+            db.add_all([c1, c2]); db.commit(); db.refresh(c1); db.refresh(c2)
+            char1_id, char2_id = c1.id, c2.id
+        finally:
+            db.close()
+
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'issue', 'coin_amount': 1000
+        })
+        assert issue.status_code == 200, issue.text
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V64-GIFT', 'name': 'V64礼包', 'category': 'gift',
+            'price': 200, 'stock': 10, 'description': '元宝 × 1000\n强化石 × 20'
+        })
+        assert gift.status_code == 200, gift.text
+        rule = c.post('/api/recharge-rules', headers=auth(admin), json={
+            'name': 'V64累充200', 'threshold_amount': 200,
+            'reward_content': '钻石 × 50\n宝箱 × 1'
+        })
+        assert rule.status_code == 200, rule.text
+        rule_id = rule.json()['id']
+
+        pt = c.post('/api/player/auth/login', json={
+            'username': 'v64_player', 'password': 'PlayerPass123!'
+        }).json()['access_token']
+
+        # 二区角色先消费 200 平台币，只有二区角色达到领取条件。
+        buy2 = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(pt), json={
+            'quantity': 1, 'character_id': char2_id
+        })
+        assert buy2.status_code == 200, buy2.text
+
+        char1_rewards = c.get('/api/player/cumulative-recharge', headers=auth(pt), params={
+            'character_id': char1_id, 'claimable_only': 'true'
+        })
+        assert char1_rewards.status_code == 200, char1_rewards.text
+        assert char1_rewards.json()['role_name'] == '剑一'
+        assert char1_rewards.json()['server_name'] == '一区'
+        assert char1_rewards.json()['rules'] == []
+
+        char2_rewards = c.get('/api/player/cumulative-recharge', headers=auth(pt), params={
+            'character_id': char2_id, 'claimable_only': 'true'
+        })
+        assert char2_rewards.status_code == 200, char2_rewards.text
+        assert char2_rewards.json()['role_name'] == '剑二'
+        assert char2_rewards.json()['server_name'] == '二区'
+        ids2 = [x['id'] for x in char2_rewards.json()['rules']]
+        assert rule_id in ids2
+        own_rule2 = next(x for x in char2_rewards.json()['rules'] if x['id'] == rule_id)
+        assert own_rule2['eligible'] is True
+        assert own_rule2['claimed'] is False
+
+        claim2 = c.post(f'/api/player/cumulative-recharge/{rule_id}/claim', headers=auth(pt), params={
+            'character_id': char2_id
+        })
+        assert claim2.status_code == 200, claim2.text
+        assert claim2.json()['role_name'] == '剑二'
+        assert claim2.json()['server_name'] == '二区'
+
+        # 已领取奖励不会再出现在该角色“可领取奖励”下拉框。
+        char2_after = c.get('/api/player/cumulative-recharge', headers=auth(pt), params={
+            'character_id': char2_id, 'claimable_only': 'true'
+        })
+        assert char2_after.status_code == 200, char2_after.text
+        assert rule_id not in [x['id'] for x in char2_after.json()['rules']]
+
+        # 同账号另一个区服角色独立累计、独立领取同一档奖励。
+        buy1 = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(pt), json={
+            'quantity': 1, 'character_id': char1_id
+        })
+        assert buy1.status_code == 200, buy1.text
+        char1_after_buy = c.get('/api/player/cumulative-recharge', headers=auth(pt), params={
+            'character_id': char1_id, 'claimable_only': 'true'
+        })
+        assert rule_id in [x['id'] for x in char1_after_buy.json()['rules']]
+        claim1 = c.post(f'/api/player/cumulative-recharge/{rule_id}/claim', headers=auth(pt), params={
+            'character_id': char1_id
+        })
+        assert claim1.status_code == 200, claim1.text
+        assert claim1.json()['role_name'] == '剑一'
+
+
+def test_v65_selected_character_shows_today_and_permanent_cumulative_before_rewards():
+    """V65：领取累充选定角色后，先显示该角色当日/永久累充，再展示可领取奖励。"""
+    html = (Path(__file__).resolve().parent.parent / 'app' / 'static' / 'player_center.html').read_text(encoding='utf-8')
+    assert 'cumulative-stats' in html
+    assert '<span>当日累充</span>' in html
+    assert '<span>永久累充</span>' in html
+    assert 'cumulativeData.today_recharge' in html
+    assert 'cumulativeData.total_recharge' in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v65_agent', 'V65代理', 1, 1, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        reg = c.post(f"/api/public/registration/{agent_resp.json()['agent_id']}", json={
+            'username': 'v65_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+
+        db = SessionLocal()
+        try:
+            c1 = PlayerCharacter(player_id=player_pk, role_name='今日剑', server_name='一区', is_primary=True)
+            c2 = PlayerCharacter(player_id=player_pk, role_name='永久剑', server_name='二区', is_primary=False)
+            db.add_all([c1, c2]); db.commit(); db.refresh(c1); db.refresh(c2)
+            char1_id, char2_id = c1.id, c2.id
+        finally:
+            db.close()
+
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={
+            'coin_action': 'issue', 'coin_amount': 1000
+        })
+        assert issue.status_code == 200, issue.text
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku': 'V65-GIFT', 'name': 'V65礼包', 'category': 'gift',
+            'price': 300, 'stock': 10, 'description': '元宝 × 300'
+        })
+        assert gift.status_code == 200, gift.text
+        pt = c.post('/api/player/auth/login', json={
+            'username': 'v65_player', 'password': 'PlayerPass123!'
+        }).json()['access_token']
+
+        buy = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(pt), json={
+            'quantity': 1, 'character_id': char1_id
+        })
+        assert buy.status_code == 200, buy.text
+
+        char1 = c.get('/api/player/cumulative-recharge', headers=auth(pt), params={
+            'character_id': char1_id, 'claimable_only': 'true'
+        })
+        assert char1.status_code == 200, char1.text
+        assert char1.json()['today_recharge'] == 300.0
+        assert char1.json()['total_recharge'] == 300.0
+
+        char2 = c.get('/api/player/cumulative-recharge', headers=auth(pt), params={
+            'character_id': char2_id, 'claimable_only': 'true'
+        })
+        assert char2.status_code == 200, char2.text
+        assert char2.json()['today_recharge'] == 0.0
+        assert char2.json()['total_recharge'] == 0.0

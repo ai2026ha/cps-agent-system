@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
     AdminUser, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
-    RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, MailRecord,
+    RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord, MailRecord,
 )
 from .schemas import (
     LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
@@ -277,6 +277,7 @@ def paid_mall_cumulative_recharge(
     db: Session,
     *,
     player_ids: list[int] | None = None,
+    character_id: int | None = None,
     start_dt: datetime | None = None,
     end_dt: datetime | None = None,
 ) -> Decimal:
@@ -291,6 +292,8 @@ def paid_mall_cumulative_recharge(
     )
     if player_ids is not None:
         q = q.filter(MallOrder.player_id.in_(player_ids))
+    if character_id is not None:
+        q = q.filter(MallOrder.character_id == character_id)
     if start_dt is not None:
         q = q.filter(MallOrder.paid_at >= start_dt)
     if end_dt is not None:
@@ -1521,6 +1524,35 @@ def player_login(body: LoginIn, request: Request, db: Session = Depends(get_db))
     }
 
 
+def resolve_player_character(
+    db: Session,
+    player: Player,
+    character_id: int | None,
+) -> PlayerCharacter | None:
+    """解析玩家当前选择的区服角色。
+
+    多角色账号必须传 character_id；单角色账号可自动选择；没有角色的历史账号
+    返回 None 以兼容旧数据。所有按角色统计/领取接口都复用这里，防止越权读取
+    其他玩家的角色数据。
+    """
+    rows = (
+        db.query(PlayerCharacter)
+        .filter(PlayerCharacter.player_id == player.id)
+        .order_by(PlayerCharacter.is_primary.desc(), PlayerCharacter.id.asc())
+        .all()
+    )
+    if character_id is not None:
+        selected = next((row for row in rows if row.id == int(character_id)), None)
+        if not selected:
+            raise HTTPException(400, "所选角色不存在或不属于当前玩家")
+        return selected
+    if len(rows) == 1:
+        return rows[0]
+    if len(rows) > 1:
+        raise HTTPException(400, "该账号有多个区服角色，请先选择角色")
+    return None
+
+
 @app.get("/api/player/me")
 def player_me(player: Player = Depends(current_player), db: Session = Depends(get_db)):
     owner = db.get(Agent, player.agent_id) if player.agent_id else None
@@ -1730,50 +1762,121 @@ def player_redeem_cdk(
 
 
 @app.get("/api/player/cumulative-recharge")
-def player_cumulative_recharge(player: Player = Depends(current_player), db: Session = Depends(get_db)):
-    """玩家中心领取累充：累计值仅来自网页商城实际平台币消费。"""
+def player_cumulative_recharge(
+    character_id: int | None = Query(default=None, gt=0),
+    claimable_only: bool = Query(default=False),
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
+    """V64：按玩家选择的具体角色/区服计算累充资格。
+
+    玩家中心传 claimable_only=true，只返回当前角色已经达标且尚未领取的奖励。
+    默认保留完整规则列表，兼容既有接口和后台测试。
+    """
     rules = (
         db.query(RechargeRule)
         .filter(RechargeRule.enabled.is_(True))
         .order_by(RechargeRule.threshold_amount.asc(), RechargeRule.id.asc())
         .all()
     )
-    claimed_ids = {
-        row[0] for row in db.query(ClaimRecord.rule_id).filter(ClaimRecord.player_id == player.id).all()
-    }
-    total = Decimal(player.total_recharge or 0)
-    return {
-        "total_recharge": money(total),
-        "rules": [{
+    character = resolve_player_character(db, player, character_id)
+    today = business_today()
+    today_start, tomorrow_start = business_date_bounds(today, today)
+    if character is None:
+        # 兼容尚未绑定角色的历史账号：继续沿用旧的玩家级累充/领取记录。
+        claimed_ids = {
+            row[0] for row in db.query(ClaimRecord.rule_id).filter(ClaimRecord.player_id == player.id).all()
+        }
+        total = Decimal(player.total_recharge or 0)
+        today_total = paid_mall_cumulative_recharge(
+            db, player_ids=[player.id], start_dt=today_start, end_dt=tomorrow_start
+        )
+        role_name, server_name, resolved_character_id = "未绑定角色", "未绑定区服", None
+    else:
+        claimed_ids = {
+            row[0] for row in db.query(CharacterClaimRecord.rule_id).filter(
+                CharacterClaimRecord.player_id == player.id,
+                CharacterClaimRecord.character_id == character.id,
+            ).all()
+        }
+        total = paid_mall_cumulative_recharge(
+            db, player_ids=[player.id], character_id=character.id
+        )
+        today_total = paid_mall_cumulative_recharge(
+            db, player_ids=[player.id], character_id=character.id,
+            start_dt=today_start, end_dt=tomorrow_start,
+        )
+        role_name, server_name, resolved_character_id = character.role_name, character.server_name, character.id
+
+    payload = []
+    for rule in rules:
+        claimed = rule.id in claimed_ids
+        eligible = total >= Decimal(rule.threshold_amount or 0)
+        if claimable_only and (claimed or not eligible):
+            continue
+        payload.append({
             "id": rule.id,
             "name": rule.name,
             "threshold_amount": money(rule.threshold_amount),
             "reward_content": rule.reward_content,
-            "claimed": rule.id in claimed_ids,
-            "eligible": total >= Decimal(rule.threshold_amount or 0),
-        } for rule in rules],
+            "claimed": claimed,
+            "eligible": eligible,
+        })
+    return {
+        "character_id": resolved_character_id,
+        "role_name": role_name,
+        "server_name": server_name,
+        "today_recharge": money(today_total),
+        "total_recharge": money(total),
+        "rules": payload,
     }
 
 
 @app.post("/api/player/cumulative-recharge/{rule_id}/claim")
 def player_claim_cumulative_recharge(
     rule_id: int,
+    character_id: int | None = Query(default=None, gt=0),
     player: Player = Depends(current_player),
     db: Session = Depends(get_db),
 ):
     rule = db.get(RechargeRule, rule_id)
     if not rule or not rule.enabled:
         raise HTTPException(404, "累充奖励不存在或已停用")
-    if Decimal(player.total_recharge or 0) < Decimal(rule.threshold_amount or 0):
-        raise HTTPException(400, "累计充值未达到领取门槛")
-    existing = db.query(ClaimRecord).filter(
-        ClaimRecord.player_id == player.id, ClaimRecord.rule_id == rule.id
+    character = resolve_player_character(db, player, character_id)
+    if character is None:
+        # 兼容未绑定角色的历史账号。
+        total = Decimal(player.total_recharge or 0)
+        if total < Decimal(rule.threshold_amount or 0):
+            raise HTTPException(400, "累计充值未达到领取门槛")
+        existing = db.query(ClaimRecord).filter(
+            ClaimRecord.player_id == player.id, ClaimRecord.rule_id == rule.id
+        ).first()
+        if existing:
+            raise HTTPException(409, "该奖励已经领取")
+        row = ClaimRecord(player_id=player.id, rule_id=rule.id, status="claimed")
+        db.add(row); db.commit(); db.refresh(row)
+        return {"id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at)}
+
+    total = paid_mall_cumulative_recharge(
+        db, player_ids=[player.id], character_id=character.id
+    )
+    if total < Decimal(rule.threshold_amount or 0):
+        raise HTTPException(400, "该角色永久累充未达到领取门槛")
+    existing = db.query(CharacterClaimRecord).filter(
+        CharacterClaimRecord.player_id == player.id,
+        CharacterClaimRecord.character_id == character.id,
+        CharacterClaimRecord.rule_id == rule.id,
     ).first()
     if existing:
-        raise HTTPException(409, "该奖励已经领取")
-    row = ClaimRecord(player_id=player.id, rule_id=rule.id, status="claimed")
+        raise HTTPException(409, "该角色已经领取此奖励")
+    row = CharacterClaimRecord(
+        player_id=player.id, character_id=character.id, rule_id=rule.id, status="claimed"
+    )
     db.add(row); db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at)}
+    return {
+        "id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at),
+        "character_id": character.id, "role_name": character.role_name, "server_name": character.server_name,
+    }
 
 
 @app.get("/api/players")
