@@ -16,7 +16,7 @@ let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_da
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
 let paymentTestState = {players:[], selectedAccount:'', order:null};
-let playerBehaviorTestState = {characters:[], selectedCharacterId:0, keyword:'', gifts:[], cards:[], cumulative:{rules:[]}};
+let playerBehaviorTestState = {characters:[], selectedCharacterId:0, keyword:'', gifts:[], cards:[], cumulative:{rules:[]}, searchMessage:''};
 
 const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
@@ -564,14 +564,40 @@ async function loadBehaviorCumulative(){const id=Number(playerBehaviorTestState.
 function playerBehaviorTestPage(){
  const s=playerBehaviorTestState,c=s.cumulative||{rules:[]},selected=s.characters.find(x=>Number(x.character_id)===Number(s.selectedCharacterId));
  return `<div class="payment-test-warning"><strong>这里执行的是真实业务链路。</strong> 礼包购买会真实扣平台币并生成商城订单、增加该角色累充；特权卡购买会真实扣平台币并生成特权卡记录；累充领取会真实写入领取记录。请只使用测试玩家/测试角色。</div>
- <div class="payment-test-card"><h4>1. 选择玩家角色</h4><div class="payment-test-search"><input id="behaviorKeyword" value="${esc(s.keyword)}" placeholder="玩家账号 / 玩家ID / 角色名 / 区服"><button class="btn" id="behaviorSearchBtn">搜索</button></div><label>玩家角色 / 区服</label><select id="behaviorCharacterSelect">${behaviorCharacterOptions()}</select>${selected?`<div class="query-scope-note">当前：${esc(selected.username)} · ${esc(selected.server_name)} · ${esc(selected.role_name)} · 平台币余额 ${Number(selected.platform_coin_balance||0).toLocaleString()}</div>`:''}</div>
+ <div class="payment-test-card"><h4>1. 选择玩家角色</h4><div class="payment-test-search"><input id="behaviorKeyword" value="${esc(s.keyword)}" placeholder="玩家账号 / 玩家ID / 角色名 / 区服"><button type="button" class="btn" id="behaviorSearchBtn">搜索</button></div>${s.searchMessage?`<div class="query-scope-note behavior-search-message">${esc(s.searchMessage)}</div>`:''}<label>玩家角色 / 区服</label><select id="behaviorCharacterSelect">${behaviorCharacterOptions()}</select>${selected?`<div class="query-scope-note">当前：${esc(selected.username)} · ${esc(selected.server_name)} · ${esc(selected.role_name)} · 平台币余额 ${Number(selected.platform_coin_balance||0).toLocaleString()}</div>`:''}</div>
  <div class="payment-test-grid">
    <div class="payment-test-card"><h4>2A. 真实模拟购买礼包</h4><label>礼包</label><select id="behaviorGiftSelect"><option value="">请选择礼包</option>${s.gifts.map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · ${Number(x.price).toLocaleString()} 平台币</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorGiftBtn">购买礼包</button></div>
    <div class="payment-test-card"><h4>2B. 真实模拟购买特权卡</h4><label>特权卡</label><select id="behaviorCardSelect"><option value="">请选择特权卡</option>${s.cards.filter(x=>x.enabled).map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · ${Number(x.price_coins).toLocaleString()} 平台币</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorCardBtn">购买特权卡</button></div>
  </div>
  <div class="payment-test-card"><h4>2C. 真实模拟领取累充</h4>${s.selectedCharacterId?`<div class="query-scope-note">当日累充：${Number(c.today_recharge||0).toLocaleString()} 平台币 ｜ 永久累充：${Number(c.total_recharge||0).toLocaleString()} 平台币</div>`:'<div class="payment-test-empty">请先选择角色。</div>'}<label>当前可领取奖励</label><select id="behaviorRuleSelect"><option value="">请选择累充奖励</option>${(c.rules||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · 门槛 ${Number(x.threshold_amount||0).toLocaleString()}</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorClaimBtn">领取累充奖励</button></div>`;
 }
-async function searchBehaviorCharacters(){playerBehaviorTestState.keyword=$('#behaviorKeyword')?.value.trim()||'';const q=new URLSearchParams({keyword:playerBehaviorTestState.keyword});playerBehaviorTestState.characters=await api('/api/player-behavior-test/characters?'+q.toString());if(!playerBehaviorTestState.characters.some(x=>Number(x.character_id)===Number(playerBehaviorTestState.selectedCharacterId)))playerBehaviorTestState.selectedCharacterId=0;await loadBehaviorCumulative();await renderPlayerBehaviorTest(false)}
+async function searchBehaviorCharacters(){
+ const keyword=$('#behaviorKeyword')?.value.trim()||'';
+ playerBehaviorTestState.keyword=keyword;
+ playerBehaviorTestState.searchMessage='';
+ if(!keyword){
+   playerBehaviorTestState.characters=[];playerBehaviorTestState.selectedCharacterId=0;playerBehaviorTestState.cumulative={rules:[]};
+   playerBehaviorTestState.searchMessage='请输入玩家账号、玩家ID、角色名或区服后再搜索';
+   await renderPlayerBehaviorTest(false);return;
+ }
+ const btn=$('#behaviorSearchBtn');if(btn)btn.disabled=true;
+ try{
+   const q=new URLSearchParams({keyword});
+   const result=await api('/api/player-behavior-test/character-search?'+q.toString());
+   playerBehaviorTestState.characters=Array.isArray(result.items)?result.items:[];
+   if(!playerBehaviorTestState.characters.some(x=>Number(x.character_id)===Number(playerBehaviorTestState.selectedCharacterId)))playerBehaviorTestState.selectedCharacterId=0;
+   playerBehaviorTestState.cumulative={rules:[]};
+   if(playerBehaviorTestState.characters.length){
+     playerBehaviorTestState.searchMessage=`找到 ${playerBehaviorTestState.characters.length} 个角色，请在下方选择`;
+   }else if((result.unbound_players||[]).length){
+     const names=result.unbound_players.slice(0,3).map(x=>x.username).join('、');
+     playerBehaviorTestState.searchMessage=`已找到玩家 ${names}，但该玩家尚未绑定角色 / 区服`;
+   }else{
+     playerBehaviorTestState.searchMessage='未找到匹配的玩家角色';
+   }
+   await renderPlayerBehaviorTest(false);
+ }finally{if(btn&&document.body.contains(btn))btn.disabled=false}
+}
 function bindPlayerBehaviorTest(){
  $('#behaviorSearchBtn').onclick=()=>searchBehaviorCharacters().catch(e=>showToast(e.message,'error',4200));$('#behaviorKeyword').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchBehaviorCharacters().catch(err=>showToast(err.message,'error',4200))}});
  $('#behaviorCharacterSelect').onchange=async e=>{playerBehaviorTestState.selectedCharacterId=Number(e.target.value||0);try{await loadBehaviorCumulative();await renderPlayerBehaviorTest(false)}catch(err){showToast(err.message,'error',4200)}};
@@ -579,7 +605,7 @@ function bindPlayerBehaviorTest(){
  $('#behaviorCardBtn').onclick=async()=>{const character_id=Number(playerBehaviorTestState.selectedCharacterId||0),card_id=Number($('#behaviorCardSelect').value||0);if(!character_id||!card_id)return showToast('请先选择角色和特权卡','error',3000);if(!confirm('确认执行真实特权卡购买测试？会真实扣除该玩家平台币。'))return;try{const d=await api('/api/player-behavior-test/privilege-purchase',{method:'POST',body:JSON.stringify({character_id,card_id})});showToast(d.message||'特权卡购买成功','success',3200);await searchBehaviorCharacters()}catch(e){showToast(e.message,'error',4200)}};
  $('#behaviorClaimBtn').onclick=async()=>{const character_id=Number(playerBehaviorTestState.selectedCharacterId||0),rule_id=Number($('#behaviorRuleSelect').value||0);if(!character_id||!rule_id)return showToast('请先选择角色和可领取累充奖励','error',3000);if(!confirm('确认执行真实累充领取测试？领取后不能再次领取同一档奖励。'))return;try{const d=await api('/api/player-behavior-test/cumulative-claim',{method:'POST',body:JSON.stringify({character_id,rule_id})});showToast(d.message||'领取成功','success',3000);await loadBehaviorCumulative();await renderPlayerBehaviorTest(false)}catch(e){showToast(e.message,'error',4200)}};
 }
-async function renderPlayerBehaviorTest(load=true){if(load){const [characters,gifts,cards]=await Promise.all([api('/api/player-behavior-test/characters'),api('/api/products?category=gift'),api('/api/privilege-cards')]);playerBehaviorTestState.characters=characters;playerBehaviorTestState.gifts=gifts;playerBehaviorTestState.cards=cards;if(!characters.some(x=>Number(x.character_id)===Number(playerBehaviorTestState.selectedCharacterId)))playerBehaviorTestState.selectedCharacterId=0;await loadBehaviorCumulative()}$('#content').innerHTML=panel('玩家行为测试',playerBehaviorTestPage());bindPlayerBehaviorTest()}
+async function renderPlayerBehaviorTest(load=true){if(load){const [gifts,cards]=await Promise.all([api('/api/products?category=gift'),api('/api/privilege-cards')]);playerBehaviorTestState.characters=[];playerBehaviorTestState.selectedCharacterId=0;playerBehaviorTestState.keyword='';playerBehaviorTestState.searchMessage='请先搜索玩家，再选择具体角色 / 区服';playerBehaviorTestState.cumulative={rules:[]};playerBehaviorTestState.gifts=gifts;playerBehaviorTestState.cards=cards}$('#content').innerHTML=panel('玩家行为测试',playerBehaviorTestPage());bindPlayerBehaviorTest()}
 
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
 function agentLevelText(v){return ({1:'一级代理',2:'二级代理',3:'三级代理'})[Number(v)]||'-'}

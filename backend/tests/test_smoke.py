@@ -2481,3 +2481,37 @@ def test_v71_superadmin_real_player_behavior_test_reuses_business_paths():
         card_buy = c.post('/api/player-behavior-test/privilege-purchase', headers=auth(admin), json={'character_id':char_id,'card_id':card.json()['id']})
         assert card_buy.status_code == 200, card_buy.text
         assert card_buy.json()['purchase']['duration_days'] == 30
+
+
+def test_v72_behavior_character_search_returns_clear_result_and_unbound_message_data():
+    """V72：行为测试搜索必须返回可选角色；账号存在但未绑定角色时要可识别。"""
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    assert '/api/player-behavior-test/character-search' in app_js
+    assert '找到 ${playerBehaviorTestState.characters.length} 个角色' in app_js
+    assert '尚未绑定角色 / 区服' in app_js
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent = create_agent(c, admin, 'v72_search_agent', 'V72搜索代理', 1, 1, 0.1)
+        reg = c.post(f"/api/public/registration/{agent.json()['agent_id']}", json={
+            'username':'v72_unbound', 'password':'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        unbound = c.get('/api/player-behavior-test/character-search', headers=auth(admin), params={'keyword':'v72_unbound'})
+        assert unbound.status_code == 200, unbound.text
+        assert unbound.json()['items'] == []
+        assert unbound.json()['unbound_players'][0]['username'] == 'v72_unbound'
+
+        player_pk = reg.json()['id']
+        db = SessionLocal()
+        try:
+            char = PlayerCharacter(player_id=player_pk, role_name='V72战士', server_name='V72一区', is_primary=True)
+            db.add(char); db.commit(); db.refresh(char); char_id = char.id
+        finally:
+            db.close()
+        found = c.get('/api/player-behavior-test/character-search', headers=auth(admin), params={'keyword':'V72战士'})
+        assert found.status_code == 200, found.text
+        assert found.json()['count'] == 1
+        assert found.json()['items'][0]['character_id'] == char_id
+        assert found.json()['items'][0]['server_name'] == 'V72一区'

@@ -2482,13 +2482,7 @@ def platform_payment_success(
 
 
 
-@app.get("/api/player-behavior-test/characters")
-def player_behavior_test_characters(
-    keyword: str = Query(default=""),
-    limit: int = Query(default=30, ge=1, le=80),
-    db: Session = Depends(get_db),
-    _=Depends(require_permission("payment.test")),
-):
+def _player_behavior_character_rows(db: Session, keyword: str, limit: int):
     q = db.query(PlayerCharacter, Player).join(Player, Player.id == PlayerCharacter.player_id).filter(Player.status == "active")
     keyword = keyword.strip()
     if keyword:
@@ -2503,6 +2497,56 @@ def player_behavior_test_characters(
         "role_name": c.role_name, "server_name": c.server_name,
         "platform_coin_balance": int(p.platform_coin_balance or 0),
     } for c, p in rows]
+
+
+@app.get("/api/player-behavior-test/characters")
+def player_behavior_test_characters(
+    keyword: str = Query(default=""),
+    limit: int = Query(default=30, ge=1, le=80),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("payment.test")),
+):
+    # 保留 V71 列表接口，供旧前端兼容。
+    return _player_behavior_character_rows(db, keyword, limit)
+
+
+@app.get("/api/player-behavior-test/character-search")
+def player_behavior_test_character_search(
+    keyword: str = Query(default=""),
+    limit: int = Query(default=30, ge=1, le=80),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("payment.test")),
+):
+    """V72：行为测试角色搜索返回明确状态，避免“搜索后下拉框空白”没有反馈。
+
+    items 只返回已经绑定的区服角色；同时检查账号/玩家ID是否存在。若玩家存在但
+    尚未绑定角色，前端可以明确提示，而不是让用户误以为搜索按钮失效。
+    """
+    keyword = keyword.strip()
+    items = _player_behavior_character_rows(db, keyword, limit)
+    matched_players = 0
+    unbound_players = []
+    if keyword:
+        like = f"%{keyword}%"
+        player_q = db.query(Player).filter(
+            Player.status == "active",
+            (Player.username.ilike(like)) | (Player.player_id.ilike(like)),
+        )
+        players = player_q.order_by(Player.id.desc()).limit(limit).all()
+        matched_players = len(players)
+        if players:
+            player_ids = [p.id for p in players]
+            bound_ids = {row[0] for row in db.query(PlayerCharacter.player_id).filter(PlayerCharacter.player_id.in_(player_ids)).distinct().all()}
+            unbound_players = [
+                {"player_id": p.player_id, "username": p.username}
+                for p in players if p.id not in bound_ids
+            ]
+    return {
+        "items": items,
+        "count": len(items),
+        "matched_players": matched_players,
+        "unbound_players": unbound_players,
+    }
 
 
 @app.post("/api/player-behavior-test/mall-purchase")
