@@ -570,6 +570,25 @@ def ensure_mall_order_character_columns():
             conn.execute(text("ALTER TABLE mall_orders ADD COLUMN server_name VARCHAR(100)"))
 
 
+def ensure_redemption_code_character_columns():
+    """V67：给兑换码补充兑换角色/区服快照字段。
+
+    历史已兑换 CDK 无法可靠判断当时发给了哪个角色，因此不猜测、不回填；
+    新的玩家中心兑换必须提交 character_id，并保存角色名、区服快照。
+    """
+    inspector = inspect(engine)
+    if "redemption_codes" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("redemption_codes")}
+    with engine.begin() as conn:
+        if "character_id" not in columns:
+            conn.execute(text("ALTER TABLE redemption_codes ADD COLUMN character_id INTEGER"))
+        if "role_name" not in columns:
+            conn.execute(text("ALTER TABLE redemption_codes ADD COLUMN role_name VARCHAR(100)"))
+        if "server_name" not in columns:
+            conn.execute(text("ALTER TABLE redemption_codes ADD COLUMN server_name VARCHAR(100)"))
+
+
 def player_character_payloads(db: Session, player_ids: list[int]) -> dict[int, list[dict]]:
     """批量读取玩家角色，主角色优先，其次按最近记录和主键排序。"""
     if not player_ids:
@@ -686,6 +705,7 @@ def startup():
     ensure_player_admin_columns()
     ensure_player_character_data()
     ensure_mall_order_character_columns()
+    ensure_redemption_code_character_columns()
     ensure_agent_public_identity_format()
     sync_real_payment_aggregates()
     seed_admin()
@@ -1722,10 +1742,21 @@ def player_redeem_cdk(
     player: Player = Depends(current_player),
     db: Session = Depends(get_db),
 ):
-    """玩家中心自助兑换 CDK。兑换只绑定当前登录玩家，不能伪造 player_id。"""
+    """玩家中心自助兑换 CDK，必须绑定当前玩家拥有的具体角色/区服。"""
     code_text = body.code.strip().upper()
     if not code_text:
         raise HTTPException(400, "请输入CDK兑换码")
+
+    selected_character = (
+        db.query(PlayerCharacter)
+        .filter(
+            PlayerCharacter.id == body.character_id,
+            PlayerCharacter.player_id == player.id,
+        )
+        .first()
+    )
+    if not selected_character:
+        raise HTTPException(404, "所选角色 / 区服不存在或不属于当前玩家")
 
     code = (
         db.query(RedemptionCode)
@@ -1751,12 +1782,18 @@ def player_redeem_cdk(
 
     code.status = "redeemed"
     code.player_id = player.id
+    code.character_id = selected_character.id
+    code.role_name = selected_character.role_name
+    code.server_name = selected_character.server_name
     code.redeemed_at = utc_now_naive()
     batch.redeemed_count = int(batch.redeemed_count or 0) + 1
     db.commit()
     return {
         "message": "CDK兑换成功",
         "cdk_name": batch.name,
+        "character_id": selected_character.id,
+        "role_name": selected_character.role_name,
+        "server_name": selected_character.server_name,
         "redeemed_at": dt(code.redeemed_at),
     }
 

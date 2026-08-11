@@ -93,6 +93,7 @@ class RedeemIn(BaseModel):
 
 class PlayerCDKRedeem(BaseModel):
     code: str = Field(min_length=1, max_length=80)
+    character_id: int = Field(gt=0)
 
 class SettlementCreate(BaseModel):
     agent_id: int

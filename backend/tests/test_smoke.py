@@ -14,7 +14,7 @@ os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 from fastapi.testclient import TestClient
 from app.main import app, business_today, sync_real_payment_aggregates
 from app.database import SessionLocal
-from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder
+from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder, RedemptionCode
 
 
 def login(c, username, password):
@@ -2062,13 +2062,31 @@ def test_v62_player_center_removes_order_list_and_supports_cdk_redeem():
         pt = c.post('/api/player/auth/login', json={
             'username': 'v62_cdk_player', 'password': 'PlayerPass123!'
         }).json()['access_token']
+        db = SessionLocal()
+        try:
+            player = db.query(Player).filter(Player.username == 'v62_cdk_player').first()
+            character = PlayerCharacter(
+                player_id=player.id,
+                role_name='V62剑心',
+                server_name='V62一区',
+                is_primary=True,
+            )
+            db.add(character); db.commit(); db.refresh(character)
+            character_id = character.id
+        finally:
+            db.close()
 
-        redeem = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code': code.lower()})
+        missing_character = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code': code.lower()})
+        assert missing_character.status_code == 422
+
+        redeem = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code': code.lower(), 'character_id': character_id})
         assert redeem.status_code == 200, redeem.text
         assert redeem.json()['message'] == 'CDK兑换成功'
         assert redeem.json()['cdk_name'] == 'V62玩家兑换批次'
+        assert redeem.json()['role_name'] == 'V62剑心'
+        assert redeem.json()['server_name'] == 'V62一区'
 
-        again = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code': code})
+        again = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code': code, 'character_id': character_id})
         assert again.status_code == 409
 
         rows = c.get('/api/redemption-batches', headers=auth(admin))
@@ -2243,3 +2261,74 @@ def test_v65_selected_character_shows_today_and_permanent_cumulative_before_rewa
         assert char2.status_code == 200, char2.text
         assert char2.json()['today_recharge'] == 0.0
         assert char2.json()['total_recharge'] == 0.0
+
+
+
+def test_v67_cdk_redeem_requires_owned_character_and_saves_role_server_snapshot():
+    """V67：CDK 兑换必须先选当前玩家自己的角色/区服，并固化兑换时角色快照。"""
+    html = (Path(__file__).resolve().parent.parent / 'app' / 'static' / 'player_center.html').read_text(encoding='utf-8')
+    assert 'id="cdkCharacter"' in html
+    assert '请选择兑换角色 / 区服' in html
+    assert 'character_id:selectedCDKCharacterId' in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        batch = c.post('/api/redemption-batches', headers=auth(admin), json={'name': 'V67角色CDK批次'})
+        assert batch.status_code == 200, batch.text
+        generated = c.post(
+            f"/api/redemption-batches/{batch.json()['id']}/generate",
+            headers=auth(admin),
+            json={'count': 2, 'prefix': 'V67'},
+        )
+        assert generated.status_code == 200, generated.text
+        code1, code2 = generated.json()['codes']
+
+        agent = create_agent(c, admin, 'v67_agent', 'V67代理', 1, 1, 0.1)
+        assert agent.status_code == 200, agent.text
+        for username in ['v67_owner', 'v67_other']:
+            reg = c.post(f"/api/public/registration/{agent.json()['agent_id']}", json={
+                'username': username, 'password': 'PlayerPass123!'
+            })
+            assert reg.status_code == 200, reg.text
+
+        db = SessionLocal()
+        try:
+            owner = db.query(Player).filter(Player.username == 'v67_owner').first()
+            other = db.query(Player).filter(Player.username == 'v67_other').first()
+            owner_char = PlayerCharacter(player_id=owner.id, role_name='星河', server_name='二区·天启', is_primary=True)
+            other_char = PlayerCharacter(player_id=other.id, role_name='夜雨', server_name='三区·苍穹', is_primary=True)
+            db.add_all([owner_char, other_char]); db.commit(); db.refresh(owner_char); db.refresh(other_char)
+            owner_id = owner.id
+            owner_char_id, other_char_id = owner_char.id, other_char.id
+        finally:
+            db.close()
+
+        token = c.post('/api/player/auth/login', json={
+            'username': 'v67_owner', 'password': 'PlayerPass123!'
+        }).json()['access_token']
+
+        foreign = c.post('/api/player/cdk/redeem', headers=auth(token), json={
+            'code': code1, 'character_id': other_char_id
+        })
+        assert foreign.status_code == 404
+
+        ok = c.post('/api/player/cdk/redeem', headers=auth(token), json={
+            'code': code1, 'character_id': owner_char_id
+        })
+        assert ok.status_code == 200, ok.text
+        assert ok.json()['character_id'] == owner_char_id
+        assert ok.json()['role_name'] == '星河'
+        assert ok.json()['server_name'] == '二区·天启'
+
+        db = SessionLocal()
+        try:
+            row = db.query(RedemptionCode).filter(RedemptionCode.code == code1).first()
+            assert row.player_id == owner_id
+            assert row.character_id == owner_char_id
+            assert row.role_name == '星河'
+            assert row.server_name == '二区·天启'
+        finally:
+            db.close()
+
+        no_character = c.post('/api/player/cdk/redeem', headers=auth(token), json={'code': code2})
+        assert no_character.status_code == 422

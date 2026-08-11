@@ -155,6 +155,11 @@ class RedemptionCode(Base):
     code: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default="unused")
     player_id: Mapped[int | None] = mapped_column(ForeignKey("players.id"), nullable=True)
+    # V67: 玩家中心兑换 CDK 时必须选择具体角色/区服。
+    # character_id 用于追溯，role_name/server_name 保存兑换时快照，避免后续改名/转服影响历史记录。
+    character_id: Mapped[int | None] = mapped_column(ForeignKey("player_characters.id"), nullable=True, index=True)
+    role_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    server_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     redeemed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
