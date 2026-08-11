@@ -1534,6 +1534,7 @@ def player_login(body: LoginIn, request: Request, db: Session = Depends(get_db))
     player.last_login_at = utc_now_naive()
     player.last_login_ip = request_client_ip(request)
     db.commit(); db.refresh(player)
+    chars = player_character_payloads(db, [player.id]).get(player.id, [])
     return {
         "access_token": create_token(player.username, "player", actor_type="player", actor_id=player.id),
         "token_type": "bearer",
@@ -1541,6 +1542,8 @@ def player_login(body: LoginIn, request: Request, db: Session = Depends(get_db))
         "player_id": player.player_id,
         "username": player.username,
         "platform_coin_balance": int(player.platform_coin_balance or 0),
+        # 登录成功后玩家中心可直接渲染，无需再等待 /api/player/me。
+        "characters": chars,
     }
 
 
@@ -1574,29 +1577,34 @@ def resolve_player_character(
 
 
 @app.get("/api/player/me")
-def player_me(player: Player = Depends(current_player), db: Session = Depends(get_db)):
+def player_me(
+    include_cumulative: bool = True,
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
     owner = db.get(Agent, player.agent_id) if player.agent_id else None
     chars = player_character_payloads(db, [player.id]).get(player.id, [])
-    # V61：玩家中心概览的“当日累充 / 永久累充”只统计网页商城实际消耗的平台币。
-    # 真实平台币充值只计算流水/分佣；超管手工发币只调整余额，两者都不会进入累充。
-    today = business_today()
-    today_start, tomorrow_start = business_date_bounds(today, today)
-    today_cumulative = paid_mall_cumulative_recharge(
-        db, player_ids=[player.id], start_dt=today_start, end_dt=tomorrow_start
-    )
-    permanent_cumulative = player_cumulative_recharge_total(db, [player.id])
-    return {
+    result = {
         "player_id": player.player_id,
         "username": player.username,
         "status": player.status,
         "platform_coin_balance": int(player.platform_coin_balance or 0),
-        "today_cumulative_recharge": money(today_cumulative),
-        "permanent_cumulative_recharge": money(permanent_cumulative),
         "agent_id": owner.agent_id if owner else "超管",
         "agent_name": owner.agent_name if owner else "总平台主管",
         "characters": chars,
         "last_login_at": dt(player.last_login_at),
     }
+    # 兼容旧调用；玩家中心普通刷新不需要账号级累充，因此可跳过两次聚合查询以加快进入速度。
+    if include_cumulative:
+        today = business_today()
+        today_start, tomorrow_start = business_date_bounds(today, today)
+        today_cumulative = paid_mall_cumulative_recharge(
+            db, player_ids=[player.id], start_dt=today_start, end_dt=tomorrow_start
+        )
+        permanent_cumulative = player_cumulative_recharge_total(db, [player.id])
+        result["today_cumulative_recharge"] = money(today_cumulative)
+        result["permanent_cumulative_recharge"] = money(permanent_cumulative)
+    return result
 
 
 @app.get("/api/player/mall/products")

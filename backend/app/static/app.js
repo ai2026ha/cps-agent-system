@@ -84,9 +84,13 @@ async function api(path, options={}){
   if(!r.ok) throw new Error(formatApiError(data.detail));
   return data;
 }
-function logout(){ stopSystemMetricsPolling();token='';actorType='admin';currentUser=null;localStorage.removeItem('cps_token');localStorage.removeItem('cps_actor_type');$('#app').classList.add('hidden');$('#login').classList.remove('hidden'); }
+function showLogin(){
+  $('#app').classList.add('hidden');
+  $('#login').classList.remove('hidden');
+}
+function logout(){ stopSystemMetricsPolling();token='';actorType='admin';currentUser=null;localStorage.removeItem('cps_token');localStorage.removeItem('cps_actor_type');showLogin(); }
 $('#logoutBtn').onclick=logout;
-$('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=firstAllowedView();await showApp();}catch(err){$('#loginError').textContent=err.message}};
+$('#loginForm').onsubmit=async e=>{e.preventDefault();const btn=$('#loginForm button[type="submit"]');$('#loginError').textContent='';if(btn)btn.disabled=true;try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=firstAllowedView();await showApp();showToast('登录成功','success',1800);}catch(err){$('#loginError').textContent=err.message}finally{if(btn)btn.disabled=false}};
 function hasPermission(code){return Boolean(currentUser?.permissions?.includes(code));}
 const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',platformOrders:'orders.view',paymentTest:'payment.test',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view'};
 function canView(view){const code=viewPermissions[view];return !code||hasPermission(code);}
@@ -153,8 +157,10 @@ function syncNavToView(view){
 
 $('#refreshBtn').onclick=()=>loadView(currentView);
 
-// 必须在菜单 DOM 与事件全部初始化以后再恢复登录状态，避免 token 已存在时脚本提前中断。
-if(token) showApp();
+// 首屏不先渲染登录页：先检查本地登录令牌，确认后再显示后台或登录界面。
+// 这样刷新时不会出现“登录页 -> 后台”的闪跳。
+if(token) showApp().catch(()=>showLogin());
+else showLogin();
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function percent(v){const n=Number(v);if(!Number.isFinite(n))return '-';const p=n*100;const text=Number.isInteger(p)?String(p):p.toFixed(2).replace(/0+$/,'').replace(/\.$/,'');return `${text}%`}

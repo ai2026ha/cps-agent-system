@@ -1672,6 +1672,11 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
         })
         assert player_login.status_code == 200, player_login.text
         player_token = player_login.json()['access_token']
+        assert isinstance(player_login.json().get('characters'), list)
+        fast_me = c.get('/api/player/me?include_cumulative=false', headers=auth(player_token))
+        assert fast_me.status_code == 200, fast_me.text
+        assert 'today_cumulative_recharge' not in fast_me.json()
+        assert 'permanent_cumulative_recharge' not in fast_me.json()
         assert player_login.json()['actor_type'] == 'player'
 
         # 玩家 token 与代理后台 token 隔离。
@@ -2332,3 +2337,19 @@ def test_v67_cdk_redeem_requires_owned_character_and_saves_role_server_snapshot(
 
         no_character = c.post('/api/player/cdk/redeem', headers=auth(token), json={'code': code2})
         assert no_character.status_code == 422
+
+
+def test_v68_login_pages_do_not_flash_or_ship_default_credentials():
+    static_dir = Path(__file__).resolve().parents[1] / "app" / "static"
+    index = (static_dir / "index.html").read_text(encoding="utf-8")
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    player = (static_dir / "player_center.html").read_text(encoding="utf-8")
+
+    assert 'id="login" class="login-page hidden"' in index
+    assert 'id="loginUser" value="admin"' not in index
+    assert 'value="ChangeMe123!"' not in index
+    assert 'placeholder="请输入登录账号"' in index
+    assert "if(token) showApp().catch(()=>showLogin());" in app_js
+    assert "else showLogin();" in app_js
+    assert 'id="loginView" class="login-wrap hidden"' in player
+    assert "if(token)enterCenter();else $('#loginView').classList.remove('hidden');" in player
