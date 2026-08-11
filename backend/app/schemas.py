@@ -90,6 +90,9 @@ class RedeemIn(BaseModel):
     code: str
     player_id: int
 
+class PlayerCDKRedeem(BaseModel):
+    code: str = Field(min_length=1, max_length=80)
+
 class SettlementCreate(BaseModel):
     agent_id: int
     period_start: date

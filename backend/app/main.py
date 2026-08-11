@@ -19,7 +19,7 @@ from .models import (
 )
 from .schemas import (
     LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
-    ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, SettlementCreate,
+    ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, MailCreate,
 )
 from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player
@@ -1678,6 +1678,51 @@ def player_mall_purchase(
         "role_name": order.role_name,
         "server_name": order.server_name,
         "delivery_status": order.delivery_status,
+    }
+
+
+@app.post("/api/player/cdk/redeem")
+def player_redeem_cdk(
+    body: PlayerCDKRedeem,
+    player: Player = Depends(current_player),
+    db: Session = Depends(get_db),
+):
+    """玩家中心自助兑换 CDK。兑换只绑定当前登录玩家，不能伪造 player_id。"""
+    code_text = body.code.strip().upper()
+    if not code_text:
+        raise HTTPException(400, "请输入CDK兑换码")
+
+    code = (
+        db.query(RedemptionCode)
+        .filter(func.upper(RedemptionCode.code) == code_text)
+        .with_for_update()
+        .first()
+    )
+    if not code:
+        raise HTTPException(404, "CDK兑换码不存在")
+    if code.status != "unused":
+        raise HTTPException(409, "该CDK兑换码已使用")
+
+    batch = (
+        db.query(RedemptionBatch)
+        .filter(RedemptionBatch.id == code.batch_id)
+        .with_for_update()
+        .first()
+    )
+    if not batch:
+        raise HTTPException(404, "CDK批次不存在")
+    if not batch.enabled:
+        raise HTTPException(400, "该CDK兑换码已停用")
+
+    code.status = "redeemed"
+    code.player_id = player.id
+    code.redeemed_at = utc_now_naive()
+    batch.redeemed_count = int(batch.redeemed_count or 0) + 1
+    db.commit()
+    return {
+        "message": "CDK兑换成功",
+        "cdk_name": batch.name,
+        "redeemed_at": dt(code.redeemed_at),
     }
 
 

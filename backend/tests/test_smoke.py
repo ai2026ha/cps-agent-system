@@ -2025,3 +2025,50 @@ def test_v59_player_center_feature_order_and_player_cumulative_claim():
         after = c.get('/api/player/cumulative-recharge', headers=auth(pt)).json()
         matching_after = next(x for x in after['rules'] if x['id'] == rule.json()['id'])
         assert matching_after['claimed'] is True
+
+
+def test_v62_player_center_removes_order_list_and_supports_cdk_redeem():
+    """V62：玩家中心不展示商城订单，新增玩家本人 CDK 自助兑换。"""
+    html = (Path(__file__).resolve().parent.parent / 'app' / 'static' / 'player_center.html').read_text(encoding='utf-8')
+    assert '我的商城订单' not in html
+    assert 'id="orders"' not in html
+    assert 'loadOrders()' not in html
+    assert 'data-tab="cdk"' in html
+    assert '>CDK兑换</button>' in html
+    assert 'id="cdkCode"' in html
+    assert '/api/player/cdk/redeem' in html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        batch = c.post('/api/redemption-batches', headers=auth(admin), json={'name': 'V62玩家兑换批次'})
+        assert batch.status_code == 200, batch.text
+        generated = c.post(
+            f"/api/redemption-batches/{batch.json()['id']}/generate",
+            headers=auth(admin),
+            json={'count': 1, 'prefix': 'V62'},
+        )
+        assert generated.status_code == 200, generated.text
+        code = generated.json()['codes'][0]
+
+        agent_resp = create_agent(c, admin, 'v62_agent', 'V62代理', 1, 1, 0.1)
+        assert agent_resp.status_code == 200, agent_resp.text
+        reg = c.post(f"/api/public/registration/{agent_resp.json()['agent_id']}", json={
+            'username': 'v62_cdk_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        pt = c.post('/api/player/auth/login', json={
+            'username': 'v62_cdk_player', 'password': 'PlayerPass123!'
+        }).json()['access_token']
+
+        redeem = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code': code.lower()})
+        assert redeem.status_code == 200, redeem.text
+        assert redeem.json()['message'] == 'CDK兑换成功'
+        assert redeem.json()['cdk_name'] == 'V62玩家兑换批次'
+
+        again = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code': code})
+        assert again.status_code == 409
+
+        rows = c.get('/api/redemption-batches', headers=auth(admin))
+        current = next(x for x in rows.json() if x['id'] == batch.json()['id'])
+        assert current['redeemed_count'] == 1
+        assert current['unused_count'] == 0
