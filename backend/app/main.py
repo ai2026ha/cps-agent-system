@@ -868,7 +868,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v82-brand-title-stable",
+            "X-CPS-Build": "v84-player-brand-logo-sync",
         },
     )
 
@@ -881,11 +881,27 @@ def player_registration_page(invite_code: str):
 @app.get("/player")
 def player_center_page():
     """玩家中心：注册成功后进入这里登录并使用平台币购买网页商城礼包。"""
-    return FileResponse(STATIC_DIR / "player_center.html")
+    return FileResponse(
+        STATIC_DIR / "player_center.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-CPS-Build": "v84-player-brand-logo-sync",
+        },
+    )
 
 @app.get("/player/login")
 def player_center_login_page():
-    return FileResponse(STATIC_DIR / "player_center.html")
+    return FileResponse(
+        STATIC_DIR / "player_center.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-CPS-Build": "v84-player-brand-logo-sync",
+        },
+    )
 
 @app.post("/api/auth/login")
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):

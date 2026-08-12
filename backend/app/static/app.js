@@ -161,14 +161,24 @@ function renderSidebarBrandName(brand,backendName){
 function applySystemBranding(data){
   if(!data)return;
   const backendName=String(data.backend_name||'CPS').trim()||'CPS';
-  const brand=$('#sidebarBrandName');
-  renderSidebarBrandName(brand,backendName);
-  const logo=$('#sidebarBrandLogo');
-  if(logo){
-    const icon=resolveBrandIcon(data);
-    logo.style.setProperty('--brand-logo-url',`url("${icon.path}")`);
-    logo.title=icon.name||'后台图标';
+  const icon=resolveBrandIcon(data);
+
+  // 登录后侧边栏品牌
+  renderSidebarBrandName($('#sidebarBrandName'),backendName);
+  const sidebarLogo=$('#sidebarBrandLogo');
+  if(sidebarLogo){
+    sidebarLogo.style.setProperty('--brand-logo-url',`url("${icon.path}")`);
+    sidebarLogo.title=icon.name||'后台图标';
   }
+
+  // 未登录页面也使用同一套后台名称与图标。
+  renderSidebarBrandName($('#loginBrandName'),backendName);
+  const loginLogo=$('#loginBrandLogo');
+  if(loginLogo){
+    loginLogo.style.setProperty('--brand-logo-url',`url("${icon.path}")`);
+    loginLogo.title=icon.name||'后台图标';
+  }
+
   document.title=`${backendName} · 管理后台`;
 }
 async function loadSystemBranding(){
@@ -221,8 +231,13 @@ $('#refreshBtn').onclick=()=>loadView(currentView);
 
 // 首屏不先渲染登录页：先检查本地登录令牌，确认后再显示后台或登录界面。
 // 这样刷新时不会出现“登录页 -> 后台”的闪跳。
-if(token) showApp().catch(()=>showLogin());
-else showLogin();
+async function bootstrapApp(){
+  // 即使未登录，也先读取公开品牌配置，避免登录页显示写死名称。
+  await loadSystemBranding();
+  if(token) showApp().catch(()=>showLogin());
+  else showLogin();
+}
+bootstrapApp();
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function percent(v){const n=Number(v);if(!Number.isFinite(n))return '-';const p=n*100;const text=Number.isInteger(p)?String(p):p.toFixed(2).replace(/0+$/,'').replace(/\.$/,'');return `${text}%`}
