@@ -18,6 +18,7 @@ class AdminCreate(BaseModel):
 class SystemBrandingUpdate(BaseModel):
     backend_name: str = Field(min_length=1, max_length=40)
     player_center_name: str = Field(min_length=1, max_length=40)
+    backend_logo: str = Field(default="dragon-spiral", min_length=1, max_length=64)
 
 class IPWhitelistCreate(BaseModel):
     ip_address: str = Field(min_length=2, max_length=64)

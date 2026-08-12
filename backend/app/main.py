@@ -868,7 +868,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v77-system-menu-fix",
+            "X-CPS-Build": "v78-brand-logo-picker",
         },
     )
 
@@ -986,15 +986,34 @@ def change_profile_password(
 
 DEFAULT_BACKEND_NAME = "CPS"
 DEFAULT_PLAYER_CENTER_NAME = "玩家中心"
+DEFAULT_BACKEND_LOGO = "dragon-spiral"
+BRAND_ICON_OPTIONS = [
+    {"id": "dragon-spiral", "name": "盘龙", "path": "/static/brand-icons/dragon-spiral.svg"},
+    {"id": "dragon-head", "name": "龙首", "path": "/static/brand-icons/dragon-head.svg"},
+    {"id": "spiked-dragon-head", "name": "战龙", "path": "/static/brand-icons/spiked-dragon-head.svg"},
+    {"id": "double-dragon", "name": "双龙", "path": "/static/brand-icons/double-dragon.svg"},
+    {"id": "dragon-shield", "name": "龙盾", "path": "/static/brand-icons/dragon-shield.svg"},
+    {"id": "sea-dragon", "name": "海龙", "path": "/static/brand-icons/sea-dragon.svg"},
+    {"id": "wyvern", "name": "飞龙", "path": "/static/brand-icons/wyvern.svg"},
+    {"id": "hydra", "name": "九头龙", "path": "/static/brand-icons/hydra.svg"},
+    {"id": "dragon-orb", "name": "龙珠", "path": "/static/brand-icons/dragon-orb.svg"},
+    {"id": "fire-breath", "name": "龙息", "path": "/static/brand-icons/fire-breath.svg"},
+]
+BRAND_ICON_IDS = {x["id"] for x in BRAND_ICON_OPTIONS}
 
 
 def system_branding_payload(db: Session) -> dict:
     rows = {x.key: x.value for x in db.query(SystemSetting).filter(
-        SystemSetting.key.in_(["backend_name", "player_center_name"])
+        SystemSetting.key.in_(["backend_name", "player_center_name", "backend_logo"])
     ).all()}
+    logo_id = (rows.get("backend_logo") or DEFAULT_BACKEND_LOGO).strip() or DEFAULT_BACKEND_LOGO
+    if logo_id not in BRAND_ICON_IDS:
+        logo_id = DEFAULT_BACKEND_LOGO
     return {
         "backend_name": (rows.get("backend_name") or DEFAULT_BACKEND_NAME).strip() or DEFAULT_BACKEND_NAME,
         "player_center_name": (rows.get("player_center_name") or DEFAULT_PLAYER_CENTER_NAME).strip() or DEFAULT_PLAYER_CENTER_NAME,
+        "backend_logo": logo_id,
+        "available_icons": BRAND_ICON_OPTIONS,
     }
 
 
@@ -1021,11 +1040,14 @@ def update_system_branding(
     values = {
         "backend_name": body.backend_name.strip(),
         "player_center_name": body.player_center_name.strip(),
+        "backend_logo": body.backend_logo.strip(),
     }
     if not values["backend_name"]:
         raise HTTPException(400, "后台名称不能为空")
     if not values["player_center_name"]:
         raise HTTPException(400, "玩家中心名称不能为空")
+    if values["backend_logo"] not in BRAND_ICON_IDS:
+        raise HTTPException(400, "后台图标不存在")
     for key, value in values.items():
         row = db.get(SystemSetting, key)
         if row:

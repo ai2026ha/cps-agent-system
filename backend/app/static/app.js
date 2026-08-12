@@ -115,11 +115,23 @@ function updateIdentityBadge(){
   if(!el||!currentUser)return;
   el.innerHTML=`<strong>${esc(currentUser.username||'-')}</strong><span>${esc(roleDisplayName(currentUser))}</span>`;
 }
+let brandIconOptions=[];
+function resolveBrandIcon(data){
+  if(Array.isArray(data?.available_icons)&&data.available_icons.length)brandIconOptions=data.available_icons;
+  const id=String(data?.backend_logo||'dragon-spiral');
+  return brandIconOptions.find(x=>x.id===id)||brandIconOptions.find(x=>x.id==='dragon-spiral')||{id:'dragon-spiral',path:'/static/brand-icons/dragon-spiral.svg'};
+}
 function applySystemBranding(data){
   if(!data)return;
   const backendName=String(data.backend_name||'CPS').trim()||'CPS';
   const brand=$('#sidebarBrandName');
   if(brand){brand.textContent=backendName;brand.title=backendName}
+  const logo=$('#sidebarBrandLogo');
+  if(logo){
+    const icon=resolveBrandIcon(data);
+    logo.style.setProperty('--brand-logo-url',`url("${icon.path}")`);
+    logo.title=icon.name||'后台图标';
+  }
   document.title=`${backendName} · 管理后台`;
 }
 async function loadSystemBranding(){
@@ -683,33 +695,51 @@ async function renderAdminManagers(){
 
 async function renderSystemEditor(){
  const d=await api('/api/system/branding');
+ const icons=Array.isArray(d.available_icons)?d.available_icons:[];
+ const currentLogo=String(d.backend_logo||'dragon-spiral');
+ const iconCards=icons.map(icon=>`<button type="button" class="brand-icon-option ${icon.id===currentLogo?'selected':''}" data-logo-id="${esc(icon.id)}" title="${esc(icon.name)}">
+   <span class="brand-icon-option-art" style="--brand-logo-url:url('${esc(icon.path)}')"></span>
+   <span>${esc(icon.name)}</span>
+ </button>`).join('');
  $('#content').innerHTML=`<div class="settings-layout settings-editor-layout">
-   <div class="panel settings-password-card">
-     <div class="panel-head"><h3>系统名称</h3></div>
-     <div class="form-hint">修改后，后台左侧顶部名称和玩家中心名称会立即使用新设置。仅超级管理员可以编辑。</div>
+   <div class="panel settings-password-card settings-branding-card">
+     <div class="panel-head"><h3>系统品牌</h3></div>
+     <div class="form-hint">后台名称、玩家中心名称和左侧顶部图标都可以在这里修改。图标已内置到源码，不依赖外部网站。仅超级管理员可以编辑。</div>
      <form id="systemBrandingForm" autocomplete="off">
        <div class="settings-password-fields settings-branding-fields">
-         <div><label>后台名称</label><input name="backend_name" maxlength="40" value="${esc(d.backend_name||'CPS')}" required placeholder="例如 CPS"></div>
+         <div><label>后台名称</label><input name="backend_name" maxlength="40" value="${esc(d.backend_name||'CPS')}" required placeholder="例如 天龙八部CPS后台"></div>
          <div><label>玩家中心名称</label><input name="player_center_name" maxlength="40" value="${esc(d.player_center_name||'玩家中心')}" required placeholder="例如 玩家中心"></div>
+       </div>
+       <div class="brand-icon-field">
+         <label>后台图标</label>
+         <input type="hidden" name="backend_logo" id="backendLogoInput" value="${esc(currentLogo)}">
+         <div class="brand-icon-picker">${iconCards||'<div class="empty">暂无可用图标</div>'}</div>
+         <div class="brand-icon-help">点击图标即可选择，保存后左侧顶部立即切换。</div>
        </div>
        <div class="settings-form-actions"><button class="btn primary" type="submit">保存系统设置</button></div>
      </form>
    </div>
  </div>`;
  const form=$('#systemBrandingForm');
+ document.querySelectorAll('.brand-icon-option').forEach(btn=>btn.onclick=()=>{
+   document.querySelectorAll('.brand-icon-option').forEach(x=>x.classList.remove('selected'));
+   btn.classList.add('selected');
+   $('#backendLogoInput').value=btn.dataset.logoId||'dragon-spiral';
+ });
  form.onsubmit=async e=>{
    e.preventDefault();
    const btn=e.submitter||form.querySelector('button[type="submit"]');
    const body=Object.fromEntries(new FormData(form).entries());
    body.backend_name=String(body.backend_name||'').trim();
    body.player_center_name=String(body.player_center_name||'').trim();
+   body.backend_logo=String(body.backend_logo||'dragon-spiral').trim();
    if(!body.backend_name)return showToast('后台名称不能为空','error',3200);
    if(!body.player_center_name)return showToast('玩家中心名称不能为空','error',3200);
    const oldText=btn.textContent;btn.disabled=true;btn.textContent='保存中…';
    try{
      const r=await api('/api/system/branding',{method:'PATCH',body:JSON.stringify(body)});
      applySystemBranding(r);
-     showToast(r.message||'系统名称保存成功','success',3000);
+     showToast(r.message||'系统品牌保存成功','success',3000);
    }catch(err){showToast(err.message,'error',4200)}finally{btn.disabled=false;btn.textContent=oldText}
  };
 }

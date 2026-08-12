@@ -1,0 +1,9 @@
+Brand icon assets in this folder are from Game-icons.net and are licensed under CC BY 3.0.
+https://game-icons.net/
+https://creativecommons.org/licenses/by/3.0/
+
+Authors / assets:
+- Lorc: dragon-head, dragon-spiral, double-dragon, hydra, sea-dragon, wyvern, fire-breath
+- Delapouite: dragon-shield, spiked-dragon-head, dragon-orb
+
+The CPS system displays these monochrome SVGs through CSS masks with local color styling.

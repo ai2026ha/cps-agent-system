@@ -2526,7 +2526,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v77-system-menu-fix' in index_html
+    assert '/static/app.js?v=v78-brand-logo-picker' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,12 +2833,60 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v77-system-menu-fix'
+        assert index.headers.get('x-cps-build') == 'v78-brand-logo-picker'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v77-system-menu-fix')
+        js = c.get('/static/app.js?v=v78-brand-logo-picker')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
+
+
+
+def test_v78_brand_logo_picker_is_bundled_selectable_and_persistent():
+    """V78：内置品牌图标可预览选择并持久化，非法图标不能写入。"""
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    icon_dir = static_dir / 'brand-icons'
+    expected = {
+        'dragon-spiral.svg','dragon-head.svg','spiked-dragon-head.svg','double-dragon.svg',
+        'dragon-shield.svg','sea-dragon.svg','wyvern.svg','hydra.svg','dragon-orb.svg','fire-breath.svg'
+    }
+    assert expected.issubset({p.name for p in icon_dir.glob('*.svg')})
+    assert (icon_dir / 'ATTRIBUTION.txt').exists()
+    assert 'id="sidebarBrandLogo"' in index_html
+    assert 'AGENT SYSTEM' not in index_html
+    assert 'brand-icon-picker' in app_js
+    assert 'backend_logo' in app_js
+    assert '.brand-icon-option' in css
+
+    with TestClient(app) as c:
+        token = login(c, 'admin', 'ChangeMe123!')
+        before = c.get('/api/system/branding', headers=auth(token))
+        assert before.status_code == 200, before.text
+        options = before.json()['available_icons']
+        assert len(options) >= 10
+        ids = {x['id'] for x in options}
+        assert 'dragon-spiral' in ids and 'dragon-shield' in ids
+
+        updated = c.patch('/api/system/branding', headers=auth(token), json={
+            'backend_name': '天龙八部CPS后台',
+            'player_center_name': '玩家中心',
+            'backend_logo': 'dragon-shield',
+        })
+        assert updated.status_code == 200, updated.text
+        assert updated.json()['backend_logo'] == 'dragon-shield'
+        public = c.get('/api/public/system-branding')
+        assert public.status_code == 200
+        assert public.json()['backend_logo'] == 'dragon-shield'
+
+        invalid = c.patch('/api/system/branding', headers=auth(token), json={
+            'backend_name': '天龙八部CPS后台',
+            'player_center_name': '玩家中心',
+            'backend_logo': '../bad.svg',
+        })
+        assert invalid.status_code == 400

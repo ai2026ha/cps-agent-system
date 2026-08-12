@@ -454,3 +454,34 @@ html{scrollbar-gutter:stable}
 @media(max-width:620px){.ip-add-form{grid-template-columns:1fr}.ip-add-actions{grid-column:auto;flex-wrap:wrap}.ip-add-actions .btn{flex:1}.ip-security-summary{grid-template-columns:1fr}}
 
 .build-marker{margin-top:16px;text-align:center;font-size:11px;letter-spacing:.08em;color:#a2abba;user-select:none}
+
+/* V78: 可切换后台品牌图标 + 精简顶部品牌区 */
+.sidebar .brand{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-height:62px;
+  margin:0 4px 18px;
+  padding:10px 12px 10px 16px;
+  overflow:hidden;
+  border:1px solid rgba(105,145,214,.20);
+  border-radius:13px;
+  background:linear-gradient(135deg,rgba(41,82,145,.18),rgba(12,26,51,.08));
+  box-shadow:inset 0 0 24px rgba(26,86,177,.06);
+}
+.sidebar .brand-edge{position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:4px;background:linear-gradient(180deg,#48d9ff,#3d67ff);box-shadow:0 0 12px rgba(59,147,255,.8)}
+.sidebar .brand-logo{--brand-logo-url:url('/static/brand-icons/dragon-spiral.svg');width:31px;height:31px;flex:0 0 31px;background:linear-gradient(145deg,#71dfff 8%,#4e8cff 58%,#6e73ff 100%);-webkit-mask-image:var(--brand-logo-url);mask-image:var(--brand-logo-url);-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;filter:drop-shadow(0 0 5px rgba(55,156,255,.35))}
+.sidebar .brand .brand-name{min-width:0;display:block;font-size:18px;font-weight:800;line-height:1.25;letter-spacing:.2px;color:#f7f9ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar .brand .brand-name::first-letter{color:#fff}
+
+.brand-icon-field{margin-top:18px}
+.brand-icon-field>label{display:block;margin-bottom:9px;font-size:12px;font-weight:700;color:#59657a}
+.brand-icon-picker{display:grid;grid-template-columns:repeat(5,minmax(92px,1fr));gap:10px}
+.brand-icon-option{appearance:none;border:1px solid #dce3ee;background:#f9fbfe;border-radius:12px;padding:11px 8px 9px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:7px;color:#4d5a71;font:inherit;font-size:12px;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease,background .16s ease}
+.brand-icon-option:hover{transform:translateY(-1px);border-color:#9fb5d7;background:#fff}
+.brand-icon-option.selected{border-color:#4f7ed9;background:#f1f6ff;box-shadow:0 0 0 3px rgba(72,118,211,.12);color:#203b71;font-weight:700}
+.brand-icon-option-art{--brand-logo-url:none;width:52px;height:52px;border-radius:13px;background:linear-gradient(145deg,#73ddff,#477ff0 68%,#625eea);-webkit-mask-image:var(--brand-logo-url);mask-image:var(--brand-logo-url);-webkit-mask-size:42px 42px;mask-size:42px 42px;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;filter:drop-shadow(0 3px 5px rgba(44,103,196,.18))}
+.brand-icon-help{margin-top:8px;color:#8994a7;font-size:12px}
+@media(max-width:1100px){.brand-icon-picker{grid-template-columns:repeat(4,minmax(88px,1fr))}}
+@media(max-width:720px){.brand-icon-picker{grid-template-columns:repeat(2,minmax(100px,1fr))}.sidebar .brand{margin-bottom:12px}}
