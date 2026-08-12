@@ -32,6 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
+BUILD_VERSION = "v93-deploy-check-gift-item"
+BUILD_LABEL = "V93 · DEPLOY CHECK"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -893,7 +895,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v92-gift-edit-item-library-fast",
+            "X-CPS-Build": BUILD_VERSION,
         },
     )
 
@@ -912,7 +914,7 @@ def player_center_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v92-gift-edit-item-library-fast",
+            "X-CPS-Build": BUILD_VERSION,
         },
     )
 
@@ -924,7 +926,7 @@ def player_center_login_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v92-gift-edit-item-library-fast",
+            "X-CPS-Build": BUILD_VERSION,
         },
     )
 
@@ -1057,6 +1059,21 @@ def system_branding_payload(db: Session) -> dict:
         "available_icons": BRAND_ICON_OPTIONS,
     }
 
+
+
+@app.get("/api/public/build-info")
+def public_build_info():
+    return {
+        "version": BUILD_VERSION,
+        "label": BUILD_LABEL,
+        "features": {
+            "gift_edit": True,
+            "gift_publish_toggle": True,
+            "game_item_search": True,
+            "game_item_pagination": True,
+            "game_item_picker_remote_search": True,
+        },
+    }
 
 @app.get("/api/public/system-branding")
 def public_system_branding(db: Session = Depends(get_db)):
