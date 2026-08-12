@@ -121,11 +121,29 @@ function resolveBrandIcon(data){
   const id=String(data?.backend_logo||'dragon-spiral');
   return brandIconOptions.find(x=>x.id===id)||brandIconOptions.find(x=>x.id==='dragon-spiral')||{id:'dragon-spiral',path:'/static/brand-icons/dragon-spiral.svg'};
 }
+function renderSidebarBrandName(brand,backendName){
+  if(!brand)return;
+  brand.replaceChildren();
+  const source=String(backendName||'CPS');
+  const regex=/CPS/ig;
+  let cursor=0;
+  let match;
+  while((match=regex.exec(source))!==null){
+    if(match.index>cursor)brand.append(document.createTextNode(source.slice(cursor,match.index)));
+    const accent=document.createElement('span');
+    accent.className='brand-cps-accent';
+    accent.textContent=match[0];
+    brand.append(accent);
+    cursor=match.index+match[0].length;
+  }
+  if(cursor<source.length)brand.append(document.createTextNode(source.slice(cursor)));
+  brand.title=source;
+}
 function applySystemBranding(data){
   if(!data)return;
   const backendName=String(data.backend_name||'CPS').trim()||'CPS';
   const brand=$('#sidebarBrandName');
-  if(brand){brand.textContent=backendName;brand.title=backendName}
+  renderSidebarBrandName(brand,backendName);
   const logo=$('#sidebarBrandLogo');
   if(logo){
     const icon=resolveBrandIcon(data);
