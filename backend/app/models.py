@@ -18,6 +18,34 @@ class AdminUser(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
+class AdminIPWhitelist(Base):
+    """允许访问管理后台的来源 IP。存在至少一条记录后白名单立即生效。"""
+    __tablename__ = "admin_ip_whitelist"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ip_address: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    note: Mapped[str] = mapped_column(String(120), default="")
+    created_by: Mapped[str] = mapped_column(String(64), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class AdminLoginIPState(Base):
+    """后台登录失败计数与自动拉黑状态。blocked_at 非空表示需超管手工解除。"""
+    __tablename__ = "admin_login_ip_states"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ip_address: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    window_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    block_reason: Mapped[str] = mapped_column(String(255), default="")
+
 class Agent(Base):
     __tablename__ = "agents"
     id: Mapped[int] = mapped_column(primary_key=True)

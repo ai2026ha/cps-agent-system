@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>CPS 智能代理系统</title>
-  <link rel="stylesheet" href="/static/styles.css?v=v73-behavior-search" />
+  <link rel="stylesheet" href="/static/styles.css?v=v77-system-menu-fix" />
 </head>
 <body>
 <!-- V8: self-contained line icons for the primary navigation. No external CDN required. -->
@@ -18,6 +18,7 @@
   <symbol id="icon-cdk" viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 0 1 1 1v4a2.5 2.5 0 0 0 0 5v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a2.5 2.5 0 0 0 0-5V6a1 1 0 0 1 1-1Z"/><path d="M12 7v2M12 12v1M12 16v1"/></symbol>
   <symbol id="icon-recharge" viewBox="0 0 24 24"><ellipse cx="8.5" cy="7" rx="4.5" ry="2.2"/><path d="M4 7v4c0 1.2 2 2.2 4.5 2.2S13 12.2 13 11V7M4 11v4c0 1.2 2 2.2 4.5 2.2 1 0 2-.2 2.7-.5"/><path d="M15 16h6M18 13v6"/></symbol>
   <symbol id="icon-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.5 7 7.5 6 7.5-6"/></symbol>
+  <symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.33.73.6 1 .3.28.7.43 1.1.4H21v4h-.09a1.7 1.7 0 0 0-1.51.6Z"/></symbol>
 </svg>
 <div id="login" class="login-page hidden">
   <div class="login-card">
@@ -29,12 +30,13 @@
       <label>登录密码</label><input id="loginPass" type="password" autocomplete="new-password" placeholder="请输入登录密码" />
       <button type="submit">登录系统</button>
       <div id="loginError" class="error"></div>
+      <div class="build-marker">V77 · SYSTEM SETTINGS</div>
     </form>
   </div>
 </div>
 <div id="app" class="app hidden">
   <aside class="sidebar">
-    <div class="brand"><span>CPS</span><small>AGENT SYSTEM</small></div>
+    <div class="brand"><span id="sidebarBrandName">CPS</span><small>AGENT SYSTEM</small></div>
     <nav id="nav" class="nav-tree">
       <button type="button" data-view="dashboard" class="nav-dashboard active" data-permission="dashboard.view">
         <svg class="nav-menu-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg><span>数据总览</span>
@@ -111,6 +113,18 @@
           <button type="button" class="nav-child" data-view="mailRecords" data-permission="mail.view">发送记录</button>
         </div>
       </section>
+
+      <section class="nav-section" data-section="system" data-permission="system.settings">
+        <button type="button" class="nav-parent" aria-expanded="false">
+          <span class="nav-parent-main"><svg class="nav-menu-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span>系统设置</span></span><span class="nav-chevron">›</span>
+        </button>
+        <div class="nav-children">
+          <button type="button" class="nav-child" data-view="profileSettings" data-permission="system.settings">个人信息</button>
+          <button type="button" class="nav-child" data-view="adminManagers" data-permission="system.admins.manage">管理员</button>
+          <button type="button" class="nav-child" data-view="systemEditor" data-permission="system.branding.manage">系统编辑</button>
+          <button type="button" class="nav-child" data-view="ipWhitelist" data-permission="system.ip_access.manage">白名单</button>
+        </div>
+      </section>
     </nav>
   </aside>
   <main>
@@ -119,6 +133,6 @@
   </main>
 </div>
 <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h3 id="modalTitle">新增</h3><button id="closeModal">×</button></div><form id="modalForm"></form></div></div>
-<script src="/static/app.js?v=v73-behavior-search"></script>
+<script src="/static/app.js?v=v77-system-menu-fix"></script>
 </body>
 </html>

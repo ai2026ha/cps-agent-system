@@ -1,25 +1,26 @@
 import os
 import secrets
 import shutil
+import ipaddress
 import time as time_module
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
-    AdminUser, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
+    AdminUser, SystemSetting, AdminIPWhitelist, AdminLoginIPState, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord,
     PrivilegeCardRule, PrivilegeCardPurchase, PrivilegeCardClaim, MailRecord,
 )
 from .schemas import (
-    LoginIn, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
+    LoginIn, AdminPasswordChange, AdminCreate, SystemBrandingUpdate, IPWhitelistCreate, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
     PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
@@ -29,8 +30,141 @@ from .security import hash_password, verify_password, create_token, current_admi
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """管理后台静态资源禁用浏览器/代理缓存，避免升级后仍显示旧菜单。"""
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
+app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 BUSINESS_TZ = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Shanghai"))
+LOGIN_FAILURE_LIMIT = max(int(os.getenv("ADMIN_LOGIN_FAILURE_LIMIT", "8")), 2)
+LOGIN_FAILURE_WINDOW_SECONDS = max(int(os.getenv("ADMIN_LOGIN_FAILURE_WINDOW_SECONDS", "600")), 60)
+
+
+def normalize_ip(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    # 常见代理头可能携带 IPv4:port；IPv6 仅接受标准地址本身。
+    if raw.count(":") == 1 and "." in raw:
+        host, port = raw.rsplit(":", 1)
+        if port.isdigit():
+            raw = host
+    try:
+        parsed = ipaddress.ip_address(raw)
+    except ValueError:
+        return raw[:64]
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+        return str(parsed.ipv4_mapped)
+    return str(parsed)
+
+
+def backend_client_ip(request: Request) -> str | None:
+    """读取后台真实来源 IP。Render/Cloudflare 等反代环境优先采用转发头。"""
+    candidates = [
+        request.headers.get("cf-connecting-ip"),
+        (request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip(),
+        request.headers.get("x-real-ip"),
+        request.client.host if request.client else None,
+    ]
+    for value in candidates:
+        normalized = normalize_ip(value)
+        if normalized:
+            return normalized
+    return None
+
+
+def is_admin_backend_path(path: str) -> bool:
+    """只限制管理后台；玩家中心、注册页、支付回调继续对外可用。"""
+    if path == "/" or path.startswith("/static/"):
+        return True
+    if path in {"/docs", "/redoc", "/openapi.json"} or path.startswith("/docs/") or path.startswith("/redoc/"):
+        return True
+    if not path.startswith("/api/"):
+        return False
+    if path.startswith("/api/public/") or path.startswith("/api/player/") or path.startswith("/api/payment/"):
+        return False
+    return True
+
+
+def blocked_ip_response(request: Request, client_ip: str | None, reason: str):
+    detail = f"当前IP {client_ip or '未知'} {reason}"
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=403, content={"detail": detail})
+    return HTMLResponse(
+        status_code=403,
+        content=f"""<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>后台访问受限</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f7fb;font-family:Arial,'Microsoft YaHei',sans-serif;color:#1d2940}}.c{{width:min(520px,calc(100% - 36px));background:#fff;border:1px solid #e0e6ef;border-radius:16px;padding:28px;box-shadow:0 16px 42px rgba(31,48,79,.1)}}h1{{font-size:22px;margin:0 0 12px}}p{{line-height:1.8;color:#68758b;margin:8px 0}}code{{display:inline-block;background:#f0f3f8;padding:3px 8px;border-radius:6px;color:#263755}}</style></head><body><div class='c'><h1>后台访问受限</h1><p>{reason}</p><p>当前访问 IP：<code>{client_ip or '未知'}</code></p><p>请联系超级管理员处理白名单或黑名单。</p></div></body></html>""",
+    )
+
+
+@app.middleware("http")
+async def admin_ip_access_guard(request: Request, call_next):
+    if not is_admin_backend_path(request.url.path):
+        return await call_next(request)
+    client_ip = backend_client_ip(request)
+    db = SessionLocal()
+    try:
+        blocked = None
+        if client_ip:
+            blocked = db.query(AdminLoginIPState).filter(
+                AdminLoginIPState.ip_address == client_ip,
+                AdminLoginIPState.blocked_at.is_not(None),
+            ).first()
+        if blocked:
+            return blocked_ip_response(request, client_ip, "已被后台登录安全策略拉黑。")
+
+        whitelist_count = db.query(func.count(AdminIPWhitelist.id)).scalar() or 0
+        if whitelist_count > 0:
+            allowed = bool(client_ip and db.query(AdminIPWhitelist.id).filter(AdminIPWhitelist.ip_address == client_ip).first())
+            if not allowed:
+                return blocked_ip_response(request, client_ip, "未加入后台访问白名单。")
+    finally:
+        db.close()
+    return await call_next(request)
+
+
+def record_backend_login_failure(db: Session, client_ip: str | None) -> bool:
+    """记录后台登录失败。窗口内达到阈值后永久拉黑，直到超管手工解除。"""
+    if not client_ip:
+        return False
+    now = utc_now_naive()
+    row = db.query(AdminLoginIPState).filter(AdminLoginIPState.ip_address == client_ip).first()
+    if not row:
+        row = AdminLoginIPState(ip_address=client_ip, failure_count=0, window_started_at=now)
+        db.add(row)
+        db.flush()
+    if row.blocked_at is not None:
+        return True
+    if not row.window_started_at or (now - row.window_started_at).total_seconds() > LOGIN_FAILURE_WINDOW_SECONDS:
+        row.window_started_at = now
+        row.failure_count = 1
+    else:
+        row.failure_count = int(row.failure_count or 0) + 1
+    row.last_failed_at = now
+    if row.failure_count >= LOGIN_FAILURE_LIMIT:
+        row.blocked_at = now
+        row.block_reason = f"{LOGIN_FAILURE_WINDOW_SECONDS // 60}分钟内连续登录失败达到{LOGIN_FAILURE_LIMIT}次"
+    db.commit()
+    return row.blocked_at is not None
+
+
+def clear_backend_login_failures(db: Session, client_ip: str | None):
+    if not client_ip:
+        return
+    row = db.query(AdminLoginIPState).filter(
+        AdminLoginIPState.ip_address == client_ip,
+        AdminLoginIPState.blocked_at.is_(None),
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
 
 
 def business_today() -> date:
@@ -326,26 +460,29 @@ PERMISSION_MATRIX = {
         "orders.view", "orders.manage", "shipments.view", "shipments.manage",
         "products.view", "products.manage", "cdk.view", "cdk.manage",
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
-        "mail.view", "mail.send", "system.rebuild", "system.metrics", "payment.test", "privilege.manage",
+        "mail.view", "mail.send", "system.rebuild", "system.metrics", "system.settings", "system.admins.manage",
+        "system.branding.manage", "system.ip_access.manage", "payment.test", "privilege.manage",
     },
     "agent_1": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
-        "players.view", "orders.view", "shipments.view",
+        "players.view", "orders.view", "shipments.view", "system.settings",
     },
     "agent_2": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
-        "players.view", "orders.view", "shipments.view",
+        "players.view", "orders.view", "shipments.view", "system.settings",
     },
     # 三级代理为末级：保留数据总览、玩家与订单查看权限，不能进入渠道管理，也不能新增代理。
     "agent_3": {
-        "dashboard.view", "players.view", "orders.view", "shipments.view",
+        "dashboard.view", "players.view", "orders.view", "shipments.view", "system.settings",
     },
 }
 
 
 def permission_key(principal, db: Session) -> str:
     if principal.actor_type == "admin":
-        return "superadmin" if principal.role == "superadmin" else "admin"
+        # 当前系统的 AdminUser 全部都是超级管理员。兼容旧数据库中 role 仍为 admin
+        # 的历史账号，避免升级后登录成功却看不到“系统设置”等超管菜单。
+        return "superadmin"
     agent = db.get(Agent, principal.agent_pk)
     level = int(agent.agent_level or 1) if agent else 1
     return f"agent_{min(max(level, 1), 3)}"
@@ -408,10 +545,12 @@ def seed_admin():
         username = os.getenv("ADMIN_USERNAME", "admin")
         password = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
         admin = db.query(AdminUser).filter(AdminUser.username == username).first()
+        created = False
         if not admin:
-            db.add(AdminUser(username=username, password_hash=hash_password(password), role="superadmin"))
-            db.commit()
-            return
+            admin = AdminUser(username=username, password_hash=hash_password(password), role="superadmin")
+            db.add(admin)
+            db.flush()
+            created = True
         changed = False
         if admin.role != "superadmin":
             admin.role = "superadmin"
@@ -419,7 +558,12 @@ def seed_admin():
         if not admin.enabled:
             admin.enabled = True
             changed = True
-        if changed:
+        # 系统没有“普通管理员”角色：AdminUser 均视为超级管理员。
+        # 对旧数据库做一次兼容升级，确保历史 admin 账号也能拿到完整超管权限。
+        upgraded = db.query(AdminUser).filter(AdminUser.role != "superadmin").update(
+            {AdminUser.role: "superadmin"}, synchronize_session=False
+        )
+        if created or changed or upgraded:
             db.commit()
     finally:
         db.close()
@@ -718,7 +862,15 @@ def healthz():
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-CPS-Build": "v77-system-menu-fix",
+        },
+    )
 
 
 @app.get("/register/{invite_code}")
@@ -736,9 +888,11 @@ def player_center_login_page():
     return FileResponse(STATIC_DIR / "player_center.html")
 
 @app.post("/api/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+    client_ip = backend_client_ip(request)
     admin = db.query(AdminUser).filter(AdminUser.username == body.username, AdminUser.enabled.is_(True)).first()
     if admin and verify_password(body.password, admin.password_hash):
+        clear_backend_login_failures(db, client_ip)
         from .security import Principal
         principal = Principal(username=admin.username, role=admin.role, actor_type="admin")
         return {
@@ -748,6 +902,7 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
     agent = db.query(Agent).filter(Agent.username == body.username, Agent.status == "active").first()
     if agent and verify_password(body.password, agent.password_hash):
+        clear_backend_login_failures(db, client_ip)
         # 最近登录时间统一记录为 UTC，API 输出时由 dt() 转为北京时间。
         agent.last_login_at = utc_now_naive()
         db.commit()
@@ -757,11 +912,291 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
             "access_token": create_token(agent.username, "agent", actor_type="agent", actor_id=agent.id),
             "token_type": "bearer", **identity_payload(principal, db),
         }
+    became_blocked = record_backend_login_failure(db, client_ip)
+    if became_blocked:
+        raise HTTPException(403, f"登录失败次数过多，当前IP {client_ip or '未知'} 已被拉黑，请联系超级管理员解除")
     raise HTTPException(401, "账号或密码错误")
 
 @app.get("/api/auth/me")
 def auth_me(principal=Depends(current_user), db: Session = Depends(get_db)):
     return identity_payload(principal, db)
+
+
+@app.get("/api/system/profile")
+def system_profile(
+    principal=Depends(require_permission("system.settings")),
+    db: Session = Depends(get_db),
+):
+    """当前后台账号个人信息。超管和普通代理都只能读取自己的资料。"""
+    if principal.actor_type == "admin":
+        row = db.query(AdminUser).filter(
+            AdminUser.username == principal.username,
+            AdminUser.enabled.is_(True),
+        ).first()
+        if not row:
+            raise HTTPException(401, "管理员不存在")
+        role_name = "超级管理员" if row.role == "superadmin" else "管理员"
+        enabled = bool(row.enabled)
+        role = row.role
+    else:
+        row = db.get(Agent, principal.agent_pk)
+        if not row or row.status != "active":
+            raise HTTPException(401, "代理账号不存在或已停用")
+        role_name = {1: "一级代理", 2: "二级代理", 3: "三级代理"}.get(int(row.agent_level or 1), "代理")
+        enabled = row.status == "active"
+        role = "agent"
+    return {
+        "id": row.id,
+        "username": row.username,
+        "role": role,
+        "role_name": role_name,
+        "enabled": enabled,
+        "created_at": dt(row.created_at),
+    }
+
+
+@app.patch("/api/system/profile/password")
+def change_profile_password(
+    body: AdminPasswordChange,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("system.settings")),
+):
+    """当前登录账号修改自己的后台登录密码；超管和代理共用该入口。"""
+    if principal.actor_type == "admin":
+        row = db.query(AdminUser).filter(
+            AdminUser.username == principal.username,
+            AdminUser.enabled.is_(True),
+        ).first()
+        if not row:
+            raise HTTPException(401, "管理员不存在")
+    else:
+        row = db.get(Agent, principal.agent_pk)
+        if not row or row.status != "active":
+            raise HTTPException(401, "代理账号不存在或已停用")
+    if not verify_password(body.current_password, row.password_hash):
+        raise HTTPException(400, "当前密码错误")
+    if body.new_password != body.confirm_password:
+        raise HTTPException(400, "两次输入的新密码不一致")
+    if verify_password(body.new_password, row.password_hash):
+        raise HTTPException(400, "新密码不能与当前密码相同")
+    row.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"message": "密码修改成功"}
+
+
+DEFAULT_BACKEND_NAME = "CPS"
+DEFAULT_PLAYER_CENTER_NAME = "玩家中心"
+
+
+def system_branding_payload(db: Session) -> dict:
+    rows = {x.key: x.value for x in db.query(SystemSetting).filter(
+        SystemSetting.key.in_(["backend_name", "player_center_name"])
+    ).all()}
+    return {
+        "backend_name": (rows.get("backend_name") or DEFAULT_BACKEND_NAME).strip() or DEFAULT_BACKEND_NAME,
+        "player_center_name": (rows.get("player_center_name") or DEFAULT_PLAYER_CENTER_NAME).strip() or DEFAULT_PLAYER_CENTER_NAME,
+    }
+
+
+@app.get("/api/public/system-branding")
+def public_system_branding(db: Session = Depends(get_db)):
+    """公开品牌名称，供后台壳层和玩家中心在未登录时读取。"""
+    return system_branding_payload(db)
+
+
+@app.get("/api/system/branding")
+def get_system_branding(
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("system.branding.manage")),
+):
+    return system_branding_payload(db)
+
+
+@app.patch("/api/system/branding")
+def update_system_branding(
+    body: SystemBrandingUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("system.branding.manage")),
+):
+    values = {
+        "backend_name": body.backend_name.strip(),
+        "player_center_name": body.player_center_name.strip(),
+    }
+    if not values["backend_name"]:
+        raise HTTPException(400, "后台名称不能为空")
+    if not values["player_center_name"]:
+        raise HTTPException(400, "玩家中心名称不能为空")
+    for key, value in values.items():
+        row = db.get(SystemSetting, key)
+        if row:
+            row.value = value
+            row.updated_at = utc_now_naive()
+        else:
+            db.add(SystemSetting(key=key, value=value, updated_at=utc_now_naive()))
+    db.commit()
+    return {**system_branding_payload(db), "message": "系统名称保存成功"}
+
+
+@app.get("/api/system/admins")
+def list_admin_users(
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("system.admins.manage")),
+):
+    rows = db.query(AdminUser).order_by(AdminUser.id.asc()).all()
+    return [{
+        "id": row.id,
+        "username": row.username,
+        "role": row.role,
+        "role_name": "超级管理员" if row.role == "superadmin" else "管理员",
+        "enabled": bool(row.enabled),
+        "created_at": dt(row.created_at),
+    } for row in rows]
+
+
+@app.post("/api/system/admins")
+def create_admin_user(
+    body: AdminCreate,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("system.admins.manage")),
+):
+    username = body.username.strip()
+    if len(username) < 4:
+        raise HTTPException(400, "管理员账号至少需要 4 位")
+    if db.query(AdminUser).filter(func.lower(AdminUser.username) == username.lower()).first():
+        raise HTTPException(409, "该管理员账号已存在")
+    # 后台登录入口同时支持代理账号；禁止重名，避免登录身份歧义。
+    if db.query(Agent).filter(func.lower(Agent.username) == username.lower()).first():
+        raise HTTPException(409, "该账号已被代理账号使用")
+    row = AdminUser(
+        username=username,
+        password_hash=hash_password(body.password),
+        role="superadmin",
+        enabled=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "username": row.username,
+        "role": row.role,
+        "role_name": "超级管理员",
+        "enabled": True,
+        "created_at": dt(row.created_at),
+        "message": "超级管理员添加成功",
+    }
+
+
+def validate_whitelist_ip(value: str) -> str:
+    raw = (value or "").strip()
+    try:
+        parsed = ipaddress.ip_address(raw)
+    except ValueError:
+        raise HTTPException(400, "请输入有效的 IPv4 或 IPv6 地址")
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+        return str(parsed.ipv4_mapped)
+    return str(parsed)
+
+
+def ip_access_payload(db: Session, current_ip: str | None) -> dict:
+    whitelist = db.query(AdminIPWhitelist).order_by(AdminIPWhitelist.id.asc()).all()
+    blacklist = db.query(AdminLoginIPState).filter(
+        AdminLoginIPState.blocked_at.is_not(None)
+    ).order_by(AdminLoginIPState.blocked_at.desc()).all()
+    return {
+        "current_ip": current_ip,
+        "whitelist_enabled": bool(whitelist),
+        "login_failure_limit": LOGIN_FAILURE_LIMIT,
+        "login_failure_window_minutes": max(LOGIN_FAILURE_WINDOW_SECONDS // 60, 1),
+        "whitelist": [{
+            "id": row.id,
+            "ip_address": row.ip_address,
+            "note": row.note or "",
+            "created_by": row.created_by or "",
+            "created_at": dt(row.created_at),
+            "is_current": bool(current_ip and row.ip_address == current_ip),
+        } for row in whitelist],
+        "blacklist": [{
+            "id": row.id,
+            "ip_address": row.ip_address,
+            "failure_count": int(row.failure_count or 0),
+            "reason": row.block_reason or "登录失败次数过多",
+            "last_failed_at": dt(row.last_failed_at),
+            "blocked_at": dt(row.blocked_at),
+            "is_current": bool(current_ip and row.ip_address == current_ip),
+        } for row in blacklist],
+    }
+
+
+@app.get("/api/system/ip-access")
+def get_ip_access_settings(
+    request: Request,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("system.ip_access.manage")),
+):
+    return ip_access_payload(db, backend_client_ip(request))
+
+
+@app.post("/api/system/ip-access/whitelist")
+def add_ip_whitelist(
+    body: IPWhitelistCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    principal=Depends(require_permission("system.ip_access.manage")),
+):
+    ip_value = validate_whitelist_ip(body.ip_address)
+    if db.query(AdminIPWhitelist).filter(AdminIPWhitelist.ip_address == ip_value).first():
+        raise HTTPException(409, "该IP已在白名单中")
+    row = AdminIPWhitelist(
+        ip_address=ip_value,
+        note=(body.note or "").strip(),
+        created_by=principal.username,
+        created_at=utc_now_naive(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    payload = ip_access_payload(db, backend_client_ip(request))
+    payload["message"] = "白名单添加成功，后台IP访问限制已生效"
+    return payload
+
+
+@app.delete("/api/system/ip-access/whitelist/{row_id}")
+def delete_ip_whitelist(
+    row_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("system.ip_access.manage")),
+):
+    row = db.get(AdminIPWhitelist, row_id)
+    if not row:
+        raise HTTPException(404, "白名单记录不存在")
+    count = db.query(func.count(AdminIPWhitelist.id)).scalar() or 0
+    if count <= 1:
+        raise HTTPException(400, "不能删除最后一个白名单IP，请先添加新的白名单IP")
+    db.delete(row)
+    db.commit()
+    payload = ip_access_payload(db, backend_client_ip(request))
+    payload["message"] = "白名单已删除"
+    return payload
+
+
+@app.delete("/api/system/ip-access/blacklist/{row_id}")
+def delete_ip_blacklist(
+    row_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("system.ip_access.manage")),
+):
+    row = db.get(AdminLoginIPState, row_id)
+    if not row or row.blocked_at is None:
+        raise HTTPException(404, "拉黑记录不存在")
+    db.delete(row)
+    db.commit()
+    payload = ip_access_payload(db, backend_client_ip(request))
+    payload["message"] = "该IP已解除拉黑"
+    return payload
+
 
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), principal=Depends(require_permission("dashboard.view"))):
@@ -1507,10 +1942,7 @@ def register_player(invite_code: str, body: PlayerRegister, db: Session = Depend
 
 
 def request_client_ip(request: Request) -> str | None:
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip()
-    if forwarded:
-        return forwarded[:64]
-    return request.client.host[:64] if request.client and request.client.host else None
+    return backend_client_ip(request)
 
 
 def mall_order_no() -> str:

@@ -6,6 +6,23 @@ class LoginIn(BaseModel):
     username: str
     password: str
 
+class AdminPasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+    confirm_password: str = Field(min_length=8, max_length=128)
+
+class AdminCreate(BaseModel):
+    username: str = Field(min_length=4, max_length=64)
+    password: str = Field(min_length=8, max_length=128)
+
+class SystemBrandingUpdate(BaseModel):
+    backend_name: str = Field(min_length=1, max_length=40)
+    player_center_name: str = Field(min_length=1, max_length=40)
+
+class IPWhitelistCreate(BaseModel):
+    ip_address: str = Field(min_length=2, max_length=64)
+    note: str = Field(default="", max_length=120)
+
 class AgentCreate(BaseModel):
     username: str
     password: str = Field(min_length=8)

@@ -21,7 +21,7 @@
 <div class="shell">
   <section id="loginView" class="login-wrap hidden">
     <main class="login-card">
-      <div class="brand"><div class="logo">CPS</div><div><strong>玩家中心</strong><small>玩家服务中心</small></div></div>
+      <div class="brand"><div class="logo">CPS</div><div><strong id="loginCenterName">玩家中心</strong><small>玩家服务中心</small></div></div>
       <div id="registeredNotice" class="notice hidden">注册成功，请使用刚刚创建的玩家账号登录。</div>
       <h1>玩家登录</h1><p class="sub">账号与注册时填写的玩家账号一致。</p>
       <form id="loginForm" autocomplete="off">
@@ -35,7 +35,7 @@
 
   <section id="centerView" class="center hidden">
     <header class="topbar">
-      <div class="topbar-brand"><div class="logo">CPS</div><div><h2>玩家中心</h2><p>平台币充值 · 购买礼包 · 领取累充 · 特权卡 · CDK兑换</p></div></div>
+      <div class="topbar-brand"><div class="logo">CPS</div><div><h2 id="topbarCenterName">玩家中心</h2><p>平台币充值 · 购买礼包 · 领取累充 · 特权卡 · CDK兑换</p></div></div>
       <div class="top-actions"><button id="refreshBtn" class="ghost">刷新</button><button id="logoutBtn" class="ghost">退出登录</button></div>
     </header>
     <div id="overview" class="overview"></div>
@@ -86,6 +86,8 @@ if(params.get('username')) $('#loginUser').value=params.get('username');
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function errorText(d){if(typeof d==='string')return d;if(Array.isArray(d))return d.map(x=>x.msg||'参数错误').join('；');return d?.message||d?.msg||'请求失败'}
 async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token)headers.Authorization=`Bearer ${token}`;const r=await fetch(path,{...options,headers});let d={};try{d=await r.json()}catch{}if(r.status===401&&path!='/api/player/auth/login'){logout(false);throw new Error('登录已失效，请重新登录')}if(!r.ok)throw new Error(errorText(d.detail));return d}
+function applyPlayerBranding(data){const name=String(data?.player_center_name||'玩家中心').trim()||'玩家中心';const loginName=$('#loginCenterName'),topbarName=$('#topbarCenterName'),loginBtn=$('#loginBtn');if(loginName)loginName.textContent=name;if(topbarName)topbarName.textContent=name;if(loginBtn)loginBtn.textContent=`登录${name}`;document.title=`${name} · CPS`}
+async function loadPlayerBranding(){try{const d=await api('/api/public/system-branding');applyPlayerBranding(d)}catch(_){}}
 function toast(text){const old=$('.toast');if(old)old.remove();const el=document.createElement('div');el.className='toast';el.textContent=text;document.body.appendChild(el);setTimeout(()=>el.remove(),2600)}
 function logout(reload=true){token='';me=null;localStorage.removeItem('cps_player_token');const msg=$('#loginMsg');if(msg){msg.textContent='';msg.classList.remove('success')}$('#centerView').classList.add('hidden');$('#loginView').classList.remove('hidden');if(reload)location.replace('/player')}
 function deliveryText(v){return ({waiting:'待发货',sent:'已发货',success:'成功',failed:'失败'})[v]||v||'-'}
@@ -141,7 +143,7 @@ $('#loginForm').onsubmit=async e=>{e.preventDefault();const btn=$('#loginBtn');c
 async function enterCenter(){try{await loadPlayerProfile();$('#loginView').classList.add('hidden');$('#centerView').classList.remove('hidden');history.replaceState({},'',location.pathname)}catch(e){logout(false);$('#loginMsg').textContent=e.message}}
 $$('.tab').forEach(btn=>btn.onclick=()=>{const tab=btn.dataset.tab;$$('.tab').forEach(x=>x.classList.toggle('active',x===btn));['recharge','mall','cumulative','privilege','cdk'].forEach(name=>$(`#${name}Panel`)?.classList.toggle('hidden',tab!==name));if(tab==='mall')loadProducts().catch(e=>toast(e.message));if(tab==='cumulative'){if(selectedCumulativeCharacterId)loadCumulative().catch(e=>toast(e.message));else renderCumulative()}if(tab==='privilege'){if(selectedPrivilegeCharacterId)loadPrivilege().catch(e=>toast(e.message));else renderPrivilege()}});
 $('#logoutBtn').onclick=()=>logout(true);$('#refreshBtn').onclick=()=>refreshAll().then(()=>toast('已刷新')).catch(e=>toast(e.message));
-if(token)enterCenter();else $('#loginView').classList.remove('hidden');
+loadPlayerBranding();if(token)enterCenter();else $('#loginView').classList.remove('hidden');
 </script>
 </body>
 </html>

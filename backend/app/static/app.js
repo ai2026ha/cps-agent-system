@@ -22,7 +22,8 @@ const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
  players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], playerBehaviorTest:['玩家行为测试','按真实角色模拟礼包购买、特权卡购买与累充领取'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','玩家中心使用平台币购买礼包后自动生成的订单记录'],
  shipments:['发货查询','商城订单发货状态'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], privilegeCards:['特权卡配置','周卡、月卡、年卡价格与每日奖励'], cdk:['兑换码列表','CDK 批次与兑换统计'],
- rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录']
+ rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录'],
+ profileSettings:['个人信息','查看当前后台账号并修改登录密码'], adminManagers:['管理员','新增和查看超级管理员账号'], systemEditor:['系统编辑','修改后台与玩家中心显示名称'], ipWhitelist:['白名单','限制后台访问IP并管理登录拉黑名单']
 };
 
 
@@ -93,7 +94,7 @@ function logout(){ stopSystemMetricsPolling();token='';actorType='admin';current
 $('#logoutBtn').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();const btn=$('#loginForm button[type="submit"]');const feedback=$('#loginError');feedback.textContent='';feedback.classList.remove('success');if(btn)btn.disabled=true;try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUser').value,password:$('#loginPass').value})});token=r.access_token;actorType=r.actor_type||'admin';currentUser=r;localStorage.setItem('cps_token',token);localStorage.setItem('cps_actor_type',actorType);currentView=firstAllowedView();feedback.textContent='登录成功';feedback.classList.add('success');await new Promise(resolve=>setTimeout(resolve,420));await showApp();}catch(err){feedback.classList.remove('success');feedback.textContent=err.message}finally{if(btn)btn.disabled=false}};
 function hasPermission(code){return Boolean(currentUser?.permissions?.includes(code));}
-const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',playerBehaviorTest:'payment.test',platformOrders:'orders.view',paymentTest:'payment.test',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',privilegeCards:'privilege.manage',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view'};
+const viewPermissions={dashboard:'dashboard.view',agents:'channels.view',settlements:'settlements.view',players:'players.view',playerBehaviorTest:'payment.test',platformOrders:'orders.view',paymentTest:'payment.test',mallOrders:'orders.view',shipments:'shipments.view',gifts:'products.view',products:'products.view',privilegeCards:'privilege.manage',cdk:'cdk.view',rechargeRules:'recharge.view',claims:'claims.view',sendMail:'mail.send',mailRecords:'mail.view',profileSettings:'system.settings',adminManagers:'system.admins.manage',systemEditor:'system.branding.manage',ipWhitelist:'system.ip_access.manage'};
 function canView(view){const code=viewPermissions[view];return !code||hasPermission(code);}
 function firstAllowedView(){return Object.keys(viewPermissions).find(canView)||'dashboard';}
 function applyRoleUI(){
@@ -114,8 +115,19 @@ function updateIdentityBadge(){
   if(!el||!currentUser)return;
   el.innerHTML=`<strong>${esc(currentUser.username||'-')}</strong><span>${esc(roleDisplayName(currentUser))}</span>`;
 }
+function applySystemBranding(data){
+  if(!data)return;
+  const backendName=String(data.backend_name||'CPS').trim()||'CPS';
+  const brand=$('#sidebarBrandName');
+  if(brand){brand.textContent=backendName;brand.title=backendName}
+  document.title=`${backendName} · 管理后台`;
+}
+async function loadSystemBranding(){
+  try{const data=await api('/api/public/system-branding');applySystemBranding(data);return data}catch(_){return null}
+}
 async function showApp(){
   if(!currentUser){ currentUser=await api('/api/auth/me'); actorType=currentUser.actor_type||'admin'; localStorage.setItem('cps_actor_type',actorType); }
+  await loadSystemBranding();
   applyRoleUI();updateIdentityBadge();if(!canView(currentView))currentView=firstAllowedView();$('#login').classList.add('hidden');$('#app').classList.remove('hidden');syncNavToView(currentView);loadView(currentView);
 }
 
@@ -185,6 +197,10 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='rechargeRules') return renderList('/api/recharge-rules',ruleCols,'累充列表',hasPermission('recharge.manage')?()=>openForm('新增累充规则',forms.rule):null);
  if(view==='claims') return renderList('/api/claims',claimCols,'领取记录',hasPermission('claims.manage')?()=>openForm('新增领取记录',forms.claim):null);
  if(view==='sendMail') return renderSendMail(); if(view==='mailRecords') return renderList('/api/mails',mailCols,'发送记录');
+ if(view==='profileSettings') return renderProfileSettings();
+ if(view==='adminManagers') return renderAdminManagers();
+ if(view==='systemEditor') return renderSystemEditor();
+ if(view==='ipWhitelist') return renderIPWhitelist();
  }catch(e){$('#content').innerHTML=`<div class="panel"><div class="empty error">${esc(e.message)}</div></div>`}}
 
 const dashboardIcons={
@@ -610,6 +626,150 @@ function bindPlayerBehaviorTest(){
 }
 async function renderPlayerBehaviorTest(load=true){if(load){const [gifts,cards]=await Promise.all([api('/api/products?category=gift'),api('/api/privilege-cards')]);playerBehaviorTestState.characters=[];playerBehaviorTestState.selectedCharacterId=0;playerBehaviorTestState.keyword='';playerBehaviorTestState.searchMessage='请先搜索玩家，再选择具体角色 / 区服';playerBehaviorTestState.cumulative={rules:[]};playerBehaviorTestState.gifts=gifts;playerBehaviorTestState.cards=cards}$('#content').innerHTML=panel('玩家行为测试',playerBehaviorTestPage());bindPlayerBehaviorTest()}
 
+async function renderProfileSettings(){
+ const d=await api('/api/system/profile');
+ $('#content').innerHTML=`<div class="settings-layout">
+   <div class="panel settings-profile-card">
+     <div class="panel-head"><h3>账号信息</h3></div>
+     <div class="profile-info-grid">
+       <div><span>登录账号</span><strong>${esc(d.username)}</strong></div>
+       <div><span>账号角色</span><strong>${esc(d.role_name)}</strong></div>
+       <div><span>账号状态</span><strong>${d.enabled?'正常':'停用'}</strong></div>
+       <div><span>创建时间</span><strong>${esc(d.created_at||'-')}</strong></div>
+     </div>
+   </div>
+   <div class="panel settings-password-card">
+     <div class="panel-head"><h3>修改登录密码</h3></div>
+     <div class="form-hint">修改的是当前登录后台账号的密码。新密码至少 8 位。</div>
+     <form id="profilePasswordForm" autocomplete="off">
+       <div class="settings-password-fields">
+         <div><label>当前密码</label><input name="current_password" type="password" autocomplete="current-password" required></div>
+         <div><label>新密码</label><input name="new_password" type="password" minlength="8" autocomplete="new-password" required></div>
+         <div><label>确认新密码</label><input name="confirm_password" type="password" minlength="8" autocomplete="new-password" required></div>
+       </div>
+       <div class="settings-form-actions"><button class="btn primary" type="submit">保存新密码</button></div>
+     </form>
+   </div>
+ </div>`;
+ const form=$('#profilePasswordForm');
+ form.onsubmit=async e=>{
+   e.preventDefault();
+   const btn=e.submitter||form.querySelector('button[type="submit"]');
+   const fd=new FormData(form);
+   const body=Object.fromEntries(fd.entries());
+   if(body.new_password!==body.confirm_password)return showToast('两次输入的新密码不一致','error',3600);
+   if(String(body.new_password||'').length<8)return showToast('新密码至少需要 8 位','error',3600);
+   const oldText=btn.textContent;btn.disabled=true;btn.textContent='保存中…';
+   try{
+     const r=await api('/api/system/profile/password',{method:'PATCH',body:JSON.stringify(body)});
+     form.reset();
+     showToast(r.message||'密码修改成功','success',3000);
+   }catch(err){showToast(err.message,'error',4200)}finally{btn.disabled=false;btn.textContent=oldText}
+ };
+}
+
+const adminManagerCols=[
+ ['ID','id'],
+ ['管理员账号','username'],
+ ['角色','role_name'],
+ ['状态','enabled',(v)=>badge(v?'active':'disabled')],
+ ['创建时间','created_at']
+];
+async function renderAdminManagers(){
+ const rows=await api('/api/system/admins');
+ $('#content').innerHTML=panel('管理员',`<div class="query-scope-note">这里创建的账号均为超级管理员，登录后拥有与当前超管相同的系统权限。</div><div class="table-scroll">${table(rows,adminManagerCols)}</div>`,'<button class="btn primary" id="addAdminBtn">＋ 新增超管</button>');
+ $('#addAdminBtn').onclick=()=>openForm('新增超级管理员',forms.admin);
+}
+
+async function renderSystemEditor(){
+ const d=await api('/api/system/branding');
+ $('#content').innerHTML=`<div class="settings-layout settings-editor-layout">
+   <div class="panel settings-password-card">
+     <div class="panel-head"><h3>系统名称</h3></div>
+     <div class="form-hint">修改后，后台左侧顶部名称和玩家中心名称会立即使用新设置。仅超级管理员可以编辑。</div>
+     <form id="systemBrandingForm" autocomplete="off">
+       <div class="settings-password-fields settings-branding-fields">
+         <div><label>后台名称</label><input name="backend_name" maxlength="40" value="${esc(d.backend_name||'CPS')}" required placeholder="例如 CPS"></div>
+         <div><label>玩家中心名称</label><input name="player_center_name" maxlength="40" value="${esc(d.player_center_name||'玩家中心')}" required placeholder="例如 玩家中心"></div>
+       </div>
+       <div class="settings-form-actions"><button class="btn primary" type="submit">保存系统设置</button></div>
+     </form>
+   </div>
+ </div>`;
+ const form=$('#systemBrandingForm');
+ form.onsubmit=async e=>{
+   e.preventDefault();
+   const btn=e.submitter||form.querySelector('button[type="submit"]');
+   const body=Object.fromEntries(new FormData(form).entries());
+   body.backend_name=String(body.backend_name||'').trim();
+   body.player_center_name=String(body.player_center_name||'').trim();
+   if(!body.backend_name)return showToast('后台名称不能为空','error',3200);
+   if(!body.player_center_name)return showToast('玩家中心名称不能为空','error',3200);
+   const oldText=btn.textContent;btn.disabled=true;btn.textContent='保存中…';
+   try{
+     const r=await api('/api/system/branding',{method:'PATCH',body:JSON.stringify(body)});
+     applySystemBranding(r);
+     showToast(r.message||'系统名称保存成功','success',3000);
+   }catch(err){showToast(err.message,'error',4200)}finally{btn.disabled=false;btn.textContent=oldText}
+ };
+}
+
+function ipWhitelistRows(rows=[]){
+ if(!rows.length)return '<div class="empty">尚未添加白名单IP。添加第一条后，后台IP访问限制立即启用。</div>';
+ return `<div class="table-scroll"><table><thead><tr><th>IP地址</th><th>备注</th><th>添加人</th><th>添加时间</th><th>操作</th></tr></thead><tbody>${rows.map(r=>`<tr><td><code class="ip-code">${esc(r.ip_address)}${r.is_current?' <span class="badge ok">当前IP</span>':''}</code></td><td>${esc(r.note||'-')}</td><td>${esc(r.created_by||'-')}</td><td>${esc(r.created_at||'-')}</td><td><button class="btn danger ghost ip-remove-btn" data-id="${r.id}" type="button">删除</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+function ipBlacklistRows(rows=[]){
+ if(!rows.length)return '<div class="empty">当前没有被拉黑的后台登录IP</div>';
+ return `<div class="table-scroll"><table><thead><tr><th>IP地址</th><th>失败次数</th><th>拉黑原因</th><th>最后失败</th><th>拉黑时间</th><th>操作</th></tr></thead><tbody>${rows.map(r=>`<tr><td><code class="ip-code">${esc(r.ip_address)}</code></td><td>${esc(r.failure_count)}</td><td>${esc(r.reason||'-')}</td><td>${esc(r.last_failed_at||'-')}</td><td>${esc(r.blocked_at||'-')}</td><td><button class="btn primary ip-unblock-btn" data-id="${r.id}" type="button">解除拉黑</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+async function renderIPWhitelist(){
+ const d=await api('/api/system/ip-access');
+ const status=d.whitelist_enabled
+   ? '<span class="badge ok">已启用</span> 仅白名单中的IP可以打开后台'
+   : '<span class="badge warn">待启用</span> 当前尚无白名单；添加第一条后立即启用IP限制';
+ $('#content').innerHTML=`<div class="settings-ip-layout">
+   <div class="panel">
+     <div class="panel-head"><h3>后台IP白名单</h3></div>
+     <div class="ip-security-summary">
+       <div><span>白名单状态</span><strong>${status}</strong></div>
+       <div><span>当前访问IP</span><strong><code class="ip-code">${esc(d.current_ip||'无法识别')}</code></strong></div>
+     </div>
+     <div class="form-hint ip-warning">安全提示：一旦添加第一条白名单，其他IP将无法打开后台。最后一条白名单不能直接删除，需要先添加替代IP。</div>
+     <form id="ipWhitelistForm" class="ip-add-form" autocomplete="off">
+       <div><label>IP地址</label><input id="whitelistIpInput" name="ip_address" maxlength="64" required placeholder="例如 203.0.113.10"></div>
+       <div><label>备注</label><input name="note" maxlength="120" placeholder="例如 公司办公室 / 家里"></div>
+       <div class="ip-add-actions"><button class="btn" id="useCurrentIpBtn" type="button">填入当前IP</button><button class="btn primary" type="submit">添加白名单</button></div>
+     </form>
+     <div id="ipWhitelistTable">${ipWhitelistRows(d.whitelist)}</div>
+   </div>
+   <div class="panel">
+     <div class="panel-head"><h3>登录拉黑名单</h3></div>
+     <div class="form-hint">同一IP在 ${esc(d.login_failure_window_minutes)} 分钟内连续登录失败达到 ${esc(d.login_failure_limit)} 次会自动拉黑。拉黑不会自动过期，需要超级管理员手动解除。</div>
+     <div id="ipBlacklistTable">${ipBlacklistRows(d.blacklist)}</div>
+   </div>
+ </div>`;
+ const currentIp=String(d.current_ip||'');
+ $('#useCurrentIpBtn').onclick=()=>{if(!currentIp)return showToast('当前IP无法识别','error',3200);$('#whitelistIpInput').value=currentIp};
+ const form=$('#ipWhitelistForm');
+ form.onsubmit=async e=>{
+   e.preventDefault();
+   const body=Object.fromEntries(new FormData(form).entries());
+   body.ip_address=String(body.ip_address||'').trim();body.note=String(body.note||'').trim();
+   if(!body.ip_address)return showToast('请输入IP地址','error',3200);
+   if(!d.whitelist_enabled && currentIp && body.ip_address!==currentIp && !confirm(`这是第一条白名单，但你填写的IP不是当前访问IP（当前：${currentIp}）。保存后当前IP可能立即无法继续访问后台。确认添加吗？`))return;
+   const btn=e.submitter||form.querySelector('button[type="submit"]'),old=btn.textContent;btn.disabled=true;btn.textContent='添加中…';
+   try{const r=await api('/api/system/ip-access/whitelist',{method:'POST',body:JSON.stringify(body)});showToast(r.message||'白名单添加成功','success',3200);await renderIPWhitelist()}catch(err){showToast(err.message,'error',4500)}finally{btn.disabled=false;btn.textContent=old}
+ };
+ document.querySelectorAll('.ip-remove-btn').forEach(btn=>btn.onclick=async()=>{
+   if(!confirm('确认删除这个白名单IP？删除后该IP将无法访问后台。'))return;
+   try{const r=await api(`/api/system/ip-access/whitelist/${btn.dataset.id}`,{method:'DELETE'});showToast(r.message||'白名单已删除','success',2800);await renderIPWhitelist()}catch(err){showToast(err.message,'error',4500)}
+ });
+ document.querySelectorAll('.ip-unblock-btn').forEach(btn=>btn.onclick=async()=>{
+   if(!confirm('确认解除这个IP的登录拉黑？解除后如果它同时在白名单中，将可以再次访问后台。'))return;
+   try{const r=await api(`/api/system/ip-access/blacklist/${btn.dataset.id}`,{method:'DELETE'});showToast(r.message||'已解除拉黑','success',2800);await renderIPWhitelist()}catch(err){showToast(err.message,'error',4500)}
+ });
+}
+
 async function renderList(path, cols, title, addFn){const rows=await api(path);$('#content').innerHTML=panel(title,table(rows,cols),addFn?'<button class="btn primary" id="addBtn">＋ 新增</button>':'');if(addFn)$('#addBtn').onclick=addFn}
 function agentLevelText(v){return ({1:'一级代理',2:'二级代理',3:'三级代理'})[Number(v)]||'-'}
 function agentSearchQuery(){
@@ -907,6 +1067,7 @@ function buildAgentForm(caps){
 }
 
 const forms={
+ admin:{path:'/api/system/admins',pendingText:'创建中…',note:'新建账号将直接获得超级管理员权限。账号至少 4 位，密码至少 8 位。',fields:[['username','管理员账号','text',true,{autocomplete:'off',placeholder:'请输入管理员账号',minLength:4}],['password','登录密码','password',true,{autocomplete:'new-password',placeholder:'至少 8 位',minLength:8}]]},
  mall:{path:'/api/orders/mall',fields:[['order_no','订单号'],['player_id','玩家PK','number'],['agent_id','代理PK','number',false],['product_id','商品PK','number'],['quantity','数量','number'],['amount','金额','number'],['pay_status','支付状态']]},
  shipment:{path:'/api/shipments',fields:[['mall_order_id','商城订单PK','number'],['provider','发货服务商'],['tracking_no','发货单号','text',false],['status','状态(sent/failed/success)'],['message','说明','textarea',false]]},
  product:{path:'/api/products',fields:[['sku','SKU'],['name','名称'],['category','分类(gift/product)'],['price','价格','number'],['stock','库存','number'],['description','说明','textarea',false]]},
@@ -923,6 +1084,7 @@ function inputAttrs(meta,type){
  if(type==='number') attrs.push(`step="${meta?.step??'any'}"`);
  if(meta?.min!==undefined)attrs.push(`min="${meta.min}"`);
  if(meta?.max!==undefined)attrs.push(`max="${meta.max}"`);
+ if(meta?.minLength!==undefined)attrs.push(`minlength="${meta.minLength}"`);
  if(meta?.placeholder)attrs.push(`placeholder="${esc(meta.placeholder)}"`);
  if(meta?.readonly)attrs.push('readonly');
  if(meta?.autocomplete)attrs.push(`autocomplete="${esc(meta.autocomplete)}"`);

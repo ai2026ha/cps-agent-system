@@ -14,7 +14,7 @@ os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 from fastapi.testclient import TestClient
 from app.main import app, business_today, sync_real_payment_aggregates
 from app.database import SessionLocal
-from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder, RedemptionCode, PrivilegeCardPurchase, PrivilegeCardClaim
+from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder, RedemptionCode, PrivilegeCardPurchase, PrivilegeCardClaim, AdminIPWhitelist, AdminLoginIPState
 
 
 def login(c, username, password):
@@ -2526,4 +2526,319 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v73-behavior-search' in index_html
+    assert '/static/app.js?v=v77-system-menu-fix' in index_html
+
+
+def test_v74_system_settings_profile_password_and_superadmin_management():
+    """V74：超管后台新增系统设置，可自助改密并新增超级管理员。"""
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    assert 'data-section="system"' in index_html
+    assert 'data-view="profileSettings"' in index_html
+    assert 'data-view="adminManagers"' in index_html
+    assert '/api/system/profile/password' in app_js
+    assert '/api/system/admins' in app_js
+
+    with TestClient(app) as c:
+        root_token = login(c, 'admin', 'ChangeMe123!')
+        me = c.get('/api/auth/me', headers=auth(root_token))
+        assert me.status_code == 200
+        assert 'system.settings' in me.json()['permissions']
+        assert 'system.admins.manage' in me.json()['permissions']
+
+        profile = c.get('/api/system/profile', headers=auth(root_token))
+        assert profile.status_code == 200, profile.text
+        assert profile.json()['username'] == 'admin'
+        assert profile.json()['role_name'] == '超级管理员'
+
+        created = c.post('/api/system/admins', headers=auth(root_token), json={
+            'username': 'v74_superadmin',
+            'password': 'SuperPass123!',
+        })
+        assert created.status_code == 200, created.text
+        assert created.json()['role'] == 'superadmin'
+        assert created.json()['enabled'] is True
+
+        duplicate = c.post('/api/system/admins', headers=auth(root_token), json={
+            'username': 'V74_SUPERADMIN',
+            'password': 'AnotherPass123!',
+        })
+        assert duplicate.status_code == 409
+
+        new_token = login(c, 'v74_superadmin', 'SuperPass123!')
+        new_me = c.get('/api/auth/me', headers=auth(new_token))
+        assert new_me.status_code == 200
+        assert new_me.json()['role'] == 'superadmin'
+        assert 'system.admins.manage' in new_me.json()['permissions']
+        admins = c.get('/api/system/admins', headers=auth(new_token))
+        assert admins.status_code == 200, admins.text
+        assert any(x['username'] == 'v74_superadmin' for x in admins.json())
+
+        wrong = c.patch('/api/system/profile/password', headers=auth(new_token), json={
+            'current_password': 'WrongPass123!',
+            'new_password': 'NewSuperPass456!',
+            'confirm_password': 'NewSuperPass456!',
+        })
+        assert wrong.status_code == 400
+
+        mismatch = c.patch('/api/system/profile/password', headers=auth(new_token), json={
+            'current_password': 'SuperPass123!',
+            'new_password': 'NewSuperPass456!',
+            'confirm_password': 'DifferentPass456!',
+        })
+        assert mismatch.status_code == 400
+
+        changed = c.patch('/api/system/profile/password', headers=auth(new_token), json={
+            'current_password': 'SuperPass123!',
+            'new_password': 'NewSuperPass456!',
+            'confirm_password': 'NewSuperPass456!',
+        })
+        assert changed.status_code == 200, changed.text
+        assert changed.json()['message'] == '密码修改成功'
+        assert c.post('/api/auth/login', json={'username':'v74_superadmin','password':'SuperPass123!'}).status_code == 401
+        assert c.post('/api/auth/login', json={'username':'v74_superadmin','password':'NewSuperPass456!'}).status_code == 200
+
+        agent = create_agent(c, root_token, 'v74_agent', 'V74普通代理', 1, 1, 0.1)
+        assert agent.status_code == 200, agent.text
+        agent_token = login(c, 'v74_agent', 'AgentPass123!')
+        forbidden = c.get('/api/system/admins', headers=auth(agent_token))
+        assert forbidden.status_code == 403
+
+
+def test_v75_agents_get_profile_only_and_superadmin_can_edit_system_names():
+    """V75：代理可使用个人信息改密；管理员/系统编辑仅超管可见和可调用。"""
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    player_html = (static_dir / 'player_center.html').read_text(encoding='utf-8')
+    assert 'data-view="systemEditor"' in index_html
+    assert 'data-permission="system.branding.manage"' in index_html
+    assert 'id="sidebarBrandName"' in index_html
+    assert '/api/system/branding' in app_js
+    assert '/api/public/system-branding' in app_js
+    assert 'id="loginCenterName"' in player_html
+    assert 'id="topbarCenterName"' in player_html
+    assert '/api/public/system-branding' in player_html
+
+    with TestClient(app) as c:
+        root_token = login(c, 'admin', 'ChangeMe123!')
+        root_me = c.get('/api/auth/me', headers=auth(root_token))
+        assert root_me.status_code == 200
+        assert 'system.settings' in root_me.json()['permissions']
+        assert 'system.admins.manage' in root_me.json()['permissions']
+        assert 'system.branding.manage' in root_me.json()['permissions']
+
+        defaults = c.get('/api/public/system-branding')
+        assert defaults.status_code == 200
+        assert defaults.json()['backend_name']
+        assert defaults.json()['player_center_name']
+
+        created = create_agent(c, root_token, 'v75_profile_agent', 'V75个人信息代理', 1, 1, 0.1)
+        assert created.status_code == 200, created.text
+        agent_token = login(c, 'v75_profile_agent', 'AgentPass123!')
+        agent_me = c.get('/api/auth/me', headers=auth(agent_token))
+        assert agent_me.status_code == 200
+        perms = agent_me.json()['permissions']
+        assert 'system.settings' in perms
+        assert 'system.admins.manage' not in perms
+        assert 'system.branding.manage' not in perms
+
+        profile = c.get('/api/system/profile', headers=auth(agent_token))
+        assert profile.status_code == 200, profile.text
+        assert profile.json()['username'] == 'v75_profile_agent'
+        assert profile.json()['role_name'] == '一级代理'
+
+        forbidden_admins = c.get('/api/system/admins', headers=auth(agent_token))
+        forbidden_branding = c.get('/api/system/branding', headers=auth(agent_token))
+        forbidden_update = c.patch('/api/system/branding', headers=auth(agent_token), json={
+            'backend_name': '不允许代理修改', 'player_center_name': '不允许代理修改'
+        })
+        assert forbidden_admins.status_code == 403
+        assert forbidden_branding.status_code == 403
+        assert forbidden_update.status_code == 403
+
+        changed_password = c.patch('/api/system/profile/password', headers=auth(agent_token), json={
+            'current_password': 'AgentPass123!',
+            'new_password': 'AgentPass456!',
+            'confirm_password': 'AgentPass456!',
+        })
+        assert changed_password.status_code == 200, changed_password.text
+        assert c.post('/api/auth/login', json={'username':'v75_profile_agent','password':'AgentPass123!'}).status_code == 401
+        assert c.post('/api/auth/login', json={'username':'v75_profile_agent','password':'AgentPass456!'}).status_code == 200
+
+        updated = c.patch('/api/system/branding', headers=auth(root_token), json={
+            'backend_name': '运营管理后台',
+            'player_center_name': '游戏会员中心',
+        })
+        assert updated.status_code == 200, updated.text
+        assert updated.json()['backend_name'] == '运营管理后台'
+        assert updated.json()['player_center_name'] == '游戏会员中心'
+        public = c.get('/api/public/system-branding')
+        assert public.status_code == 200
+        assert public.json()['backend_name'] == '运营管理后台'
+        assert public.json()['player_center_name'] == '游戏会员中心'
+
+
+
+def clear_ip_security_tables():
+    db = SessionLocal()
+    try:
+        db.query(AdminIPWhitelist).delete(synchronize_session=False)
+        db.query(AdminLoginIPState).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_v76_ip_whitelist_blocks_admin_backend_but_not_player_center():
+    clear_ip_security_tables()
+    try:
+        with TestClient(app) as c:
+            admin_ip = '203.0.113.10'
+            other_ip = '203.0.113.11'
+            token = login_with_ip = c.post(
+                '/api/auth/login',
+                headers={'X-Forwarded-For': admin_ip},
+                json={'username': 'admin', 'password': 'ChangeMe123!'},
+            )
+            assert login_with_ip.status_code == 200, login_with_ip.text
+            token = login_with_ip.json()['access_token']
+
+            before = c.get('/api/system/ip-access', headers={**auth(token), 'X-Forwarded-For': admin_ip})
+            assert before.status_code == 200, before.text
+            assert before.json()['whitelist_enabled'] is False
+            assert before.json()['current_ip'] == admin_ip
+
+            add = c.post('/api/system/ip-access/whitelist', headers={**auth(token), 'X-Forwarded-For': admin_ip}, json={
+                'ip_address': admin_ip,
+                'note': '测试当前IP',
+            })
+            assert add.status_code == 200, add.text
+            assert add.json()['whitelist_enabled'] is True
+            assert len(add.json()['whitelist']) == 1
+
+            same_ip_root = c.get('/', headers={'X-Forwarded-For': admin_ip})
+            assert same_ip_root.status_code == 200
+            denied_root = c.get('/', headers={'X-Forwarded-For': other_ip})
+            assert denied_root.status_code == 403
+            assert other_ip in denied_root.text
+
+            denied_api = c.get('/api/dashboard', headers={**auth(token), 'X-Forwarded-For': other_ip})
+            assert denied_api.status_code == 403
+            assert '未加入后台访问白名单' in denied_api.json()['detail']
+
+            # 玩家中心和公开接口不属于后台白名单限制范围。
+            player_page = c.get('/player', headers={'X-Forwarded-For': other_ip})
+            assert player_page.status_code == 200
+            branding = c.get('/api/public/system-branding', headers={'X-Forwarded-For': other_ip})
+            assert branding.status_code == 200
+
+            # 最后一条白名单不能直接删除，防止误操作后关闭IP访问保护。
+            row_id = add.json()['whitelist'][0]['id']
+            last_delete = c.delete(f'/api/system/ip-access/whitelist/{row_id}', headers={**auth(token), 'X-Forwarded-For': admin_ip})
+            assert last_delete.status_code == 400
+            assert '不能删除最后一个白名单IP' in last_delete.json()['detail']
+    finally:
+        clear_ip_security_tables()
+
+
+def test_v76_frequent_backend_login_failures_are_blacklisted_and_can_be_removed():
+    clear_ip_security_tables()
+    try:
+        with TestClient(app) as c:
+            attacker_ip = '198.51.100.55'
+            admin_ip = '198.51.100.10'
+            last = None
+            for _ in range(8):
+                last = c.post('/api/auth/login', headers={'X-Forwarded-For': attacker_ip}, json={
+                    'username': 'admin', 'password': 'WrongPassword123!'
+                })
+            assert last is not None
+            assert last.status_code == 403, last.text
+            assert '已被拉黑' in last.json()['detail']
+
+            blocked_correct = c.post('/api/auth/login', headers={'X-Forwarded-For': attacker_ip}, json={
+                'username': 'admin', 'password': 'ChangeMe123!'
+            })
+            assert blocked_correct.status_code == 403
+            assert '拉黑' in blocked_correct.json()['detail']
+
+            admin_login = c.post('/api/auth/login', headers={'X-Forwarded-For': admin_ip}, json={
+                'username': 'admin', 'password': 'ChangeMe123!'
+            })
+            assert admin_login.status_code == 200, admin_login.text
+            token = admin_login.json()['access_token']
+            settings = c.get('/api/system/ip-access', headers={**auth(token), 'X-Forwarded-For': admin_ip})
+            assert settings.status_code == 200
+            black = next(x for x in settings.json()['blacklist'] if x['ip_address'] == attacker_ip)
+            assert black['failure_count'] >= 8
+
+            unblocked = c.delete(f"/api/system/ip-access/blacklist/{black['id']}", headers={**auth(token), 'X-Forwarded-For': admin_ip})
+            assert unblocked.status_code == 200, unblocked.text
+            assert all(x['ip_address'] != attacker_ip for x in unblocked.json()['blacklist'])
+
+            login_again = c.post('/api/auth/login', headers={'X-Forwarded-For': attacker_ip}, json={
+                'username': 'admin', 'password': 'ChangeMe123!'
+            })
+            assert login_again.status_code == 200, login_again.text
+    finally:
+        clear_ip_security_tables()
+
+
+def test_v76_ip_access_management_is_superadmin_only():
+    clear_ip_security_tables()
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        created = create_agent(c, admin, 'v76_ip_agent', 'V76普通代理', 1, 1)
+        assert created.status_code == 200, created.text
+        agent_token = login(c, 'v76_ip_agent', 'AgentPass123!')
+        denied = c.get('/api/system/ip-access', headers=auth(agent_token))
+        assert denied.status_code == 403
+        me = c.get('/api/auth/me', headers=auth(agent_token))
+        assert me.status_code == 200
+        assert 'system.settings' in me.json()['permissions']
+        assert 'system.ip_access.manage' not in me.json()['permissions']
+
+
+def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
+    from app.models import AdminUser
+    from app.security import hash_password
+    db = SessionLocal()
+    try:
+        row = db.query(AdminUser).filter(AdminUser.username == 'legacy_admin_v77').first()
+        if not row:
+            row = AdminUser(username='legacy_admin_v77', password_hash=hash_password('LegacyPass123!'), role='admin', enabled=True)
+            db.add(row)
+        else:
+            row.role = 'admin'
+            row.password_hash = hash_password('LegacyPass123!')
+            row.enabled = True
+        db.commit()
+    finally:
+        db.close()
+
+    with TestClient(app) as c:
+        r = c.post('/api/auth/login', json={'username':'legacy_admin_v77','password':'LegacyPass123!'})
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert 'system.settings' in data['permissions']
+        assert 'system.admins.manage' in data['permissions']
+        assert 'system.branding.manage' in data['permissions']
+        assert 'system.ip_access.manage' in data['permissions']
+        token = data['access_token']
+        assert c.get('/api/system/profile', headers=auth(token)).status_code == 200
+        assert c.get('/api/system/ip-access', headers=auth(token)).status_code == 200
+
+        index = c.get('/')
+        assert index.status_code == 200
+        assert 'no-store' in index.headers.get('cache-control','')
+        assert index.headers.get('x-cps-build') == 'v77-system-menu-fix'
+        assert '系统设置' in index.text
+        assert '个人信息' in index.text
+        assert '管理员' in index.text
+        assert '系统编辑' in index.text
+        assert '白名单' in index.text
+        js = c.get('/static/app.js?v=v77-system-menu-fix')
+        assert js.status_code == 200
+        assert 'no-store' in js.headers.get('cache-control','')
