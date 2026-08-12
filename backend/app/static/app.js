@@ -129,14 +129,30 @@ function renderSidebarBrandName(brand,backendName){
   let cursor=0;
   let match;
   while((match=regex.exec(source))!==null){
-    if(match.index>cursor)brand.append(document.createTextNode(source.slice(cursor,match.index)));
+    if(match.index>cursor){
+      const part=document.createElement('span');
+      part.className='brand-name-segment';
+      part.textContent=source.slice(cursor,match.index);
+      brand.append(part);
+    }
     const accent=document.createElement('span');
-    accent.className='brand-cps-accent';
+    accent.className='brand-name-segment brand-cps-accent';
     accent.textContent=match[0];
     brand.append(accent);
     cursor=match.index+match[0].length;
   }
-  if(cursor<source.length)brand.append(document.createTextNode(source.slice(cursor)));
+  if(cursor<source.length){
+    const tail=document.createElement('span');
+    tail.className='brand-name-segment';
+    tail.textContent=source.slice(cursor);
+    brand.append(tail);
+  }
+  if(!brand.childNodes.length){
+    const fallback=document.createElement('span');
+    fallback.className='brand-name-segment';
+    fallback.textContent=source;
+    brand.append(fallback);
+  }
   brand.title=source;
 }
 function applySystemBranding(data){
