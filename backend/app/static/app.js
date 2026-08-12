@@ -381,13 +381,8 @@ async function renderDashboard(){
  }
 
  stopSystemMetricsPolling();
- const commission=dashboardGroup('分佣数据','按当前代理佣金比例计算',[
-   dashboardMetric('佣金比例',d.commission_rate,'percent','commission_rate','commission'),
-   dashboardMetric('昨日分佣',d.yesterday_commission,'money','commission_yesterday','commission'),
-   dashboardMetric('今日分佣',d.today_commission,'money','commission_today','commission'),
-   dashboardMetric('总计分佣',d.total_commission,'money','commission_total','commission')
- ],4);
- $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${commission}${dashboardRegistrationCard()}</div>`;
+ // V88: 普通代理数据总览只保留注册与流水数据，不展示佣金比例和分佣金额。
+ $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${dashboardRegistrationCard()}</div>`;
  bindDashboardRegistrationCopy();
 }
 
