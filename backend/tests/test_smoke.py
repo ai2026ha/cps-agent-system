@@ -1665,7 +1665,7 @@ def test_v52_player_center_mall_purchase_auto_creates_order_and_blocks_manual_or
         player_pk = reg.json()['id']
         page = c.get('/player')
         assert page.status_code == 200
-        assert '玩家登录' in page.text and '购买礼包' in page.text
+        assert '玩家登录' not in page.text and '账号与注册时填写的玩家账号一致。' not in page.text and '购买礼包' in page.text
 
         player_login = c.post('/api/player/auth/login', json={
             'username': 'v52_mall_player', 'password': 'PlayerPass123!'
