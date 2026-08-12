@@ -868,7 +868,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v84-player-brand-logo-sync",
+            "X-CPS-Build": "v87-player-no-logo",
         },
     )
 
@@ -887,7 +887,7 @@ def player_center_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v84-player-brand-logo-sync",
+            "X-CPS-Build": "v87-player-no-logo",
         },
     )
 
@@ -899,7 +899,7 @@ def player_center_login_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v84-player-brand-logo-sync",
+            "X-CPS-Build": "v87-player-no-logo",
         },
     )
 

@@ -2526,7 +2526,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v84-player-brand-logo-sync' in index_html
+    assert '/static/app.js?v=v87-player-no-logo' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,13 +2833,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v84-player-brand-logo-sync'
+        assert index.headers.get('x-cps-build') == 'v87-player-no-logo'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v84-player-brand-logo-sync')
+        js = c.get('/static/app.js?v=v87-player-no-logo')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2899,9 +2899,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V84 · PLAYER BRAND SYNC' in index_html
-    assert '/static/styles.css?v=v84-player-brand-logo-sync' in index_html
-    assert '/static/app.js?v=v84-player-brand-logo-sync' in index_html
+    assert 'V87 · PLAYER NO LOGO' in index_html
+    assert '/static/styles.css?v=v87-player-no-logo' in index_html
+    assert '/static/app.js?v=v87-player-no-logo' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2917,9 +2917,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V84 · PLAYER BRAND SYNC' in index_html
-    assert '/static/styles.css?v=v84-player-brand-logo-sync' in index_html
-    assert '/static/app.js?v=v84-player-brand-logo-sync' in index_html
+    assert 'V87 · PLAYER NO LOGO' in index_html
+    assert '/static/styles.css?v=v87-player-no-logo' in index_html
+    assert '/static/app.js?v=v87-player-no-logo' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2943,20 +2943,25 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V84 · PLAYER BRAND SYNC" in index_html
-    assert "/static/styles.css?v=v84-player-brand-logo-sync" in index_html
-    assert "/static/app.js?v=v84-player-brand-logo-sync" in index_html
+    assert "V87 · PLAYER NO LOGO" in index_html
+    assert "/static/styles.css?v=v87-player-no-logo" in index_html
+    assert "/static/app.js?v=v87-player-no-logo" in index_html
 
 
-def test_v84_player_center_brand_icon_syncs_with_system_editor():
-    """V84：玩家中心登录页与登录后顶部必须复用系统编辑选择的后台图标。"""
+def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
+    """V87：玩家中心不显示品牌图标，仅同步玩家中心名称；登录按钮恢复原深蓝色。"""
     static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
     player_html = (static_dir / 'player_center.html').read_text(encoding='utf-8')
-    assert 'id="playerLoginBrandLogo"' in player_html
-    assert 'id="playerTopbarBrandLogo"' in player_html
-    assert "data?.backend_logo||'dragon-spiral'" in player_html
-    assert "--player-brand-logo-url" in player_html
-    assert "icon.path" in player_html
+    assert 'id="playerLoginBrandLogo"' not in player_html
+    assert 'id="playerTopbarBrandLogo"' not in player_html
+    assert '--player-brand-logo-url' not in player_html
+    assert "data?.backend_logo||'dragon-spiral'" not in player_html
+    assert 'id="loginCenterName"' in player_html
+    assert 'id="topbarCenterName"' in player_html
+    assert '.brand strong{font-size:24px' in player_html
+    assert '.topbar h2{font-size:20px' in player_html
+    assert '.login-card .primary{width:100%;margin-top:22px;background:#1e3a70' in player_html
+    assert 'linear-gradient(135deg,#2f80ed' not in player_html
 
     with TestClient(app) as c:
         token = login(c, 'admin', 'ChangeMe123!')
@@ -2972,7 +2977,8 @@ def test_v84_player_center_brand_icon_syncs_with_system_editor():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v84-player-brand-logo-sync'
+        assert player.headers.get('x-cps-build') == 'v87-player-no-logo'
         assert 'no-store' in player.headers.get('cache-control','')
-        assert 'id="playerLoginBrandLogo"' in player.text
-        assert 'id="playerTopbarBrandLogo"' in player.text
+        assert 'id="playerLoginBrandLogo"' not in player.text
+        assert 'id="playerTopbarBrandLogo"' not in player.text
+        assert 'id="loginCenterName"' in player.text
