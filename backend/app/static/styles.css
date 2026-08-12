@@ -473,8 +473,10 @@ html{scrollbar-gutter:stable}
 .sidebar .brand-edge{position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:4px;background:linear-gradient(180deg,#48d9ff,#3d67ff);box-shadow:0 0 12px rgba(59,147,255,.8)}
 .sidebar .brand-logo{--brand-logo-url:url('/static/brand-icons/dragon-spiral.svg');width:31px;height:31px;flex:0 0 31px;background:linear-gradient(145deg,#71dfff 8%,#4e8cff 58%,#6e73ff 100%);-webkit-mask-image:var(--brand-logo-url);mask-image:var(--brand-logo-url);-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;filter:drop-shadow(0 0 5px rgba(55,156,255,.35))}
 .sidebar .brand .brand-name{min-width:0;display:flex;align-items:baseline;flex-wrap:nowrap;gap:0;font-size:18px;font-weight:800;line-height:1.2;letter-spacing:.2px;color:#f7f9ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sidebar .brand .brand-name .brand-name-segment{display:block;flex:0 0 auto;line-height:1.2}
-.sidebar .brand .brand-name .brand-cps-accent{display:block!important;flex:0 0 auto;align-self:baseline;margin:0 1px!important;font-size:1em!important;line-height:1.2!important;font-weight:850!important;letter-spacing:.18px!important;color:#39d7ff!important;background:none!important;-webkit-background-clip:border-box!important;background-clip:border-box!important;-webkit-text-fill-color:#39d7ff!important;text-shadow:0 0 8px rgba(57,215,255,.42),0 0 14px rgba(57,144,255,.14)!important;transform:translateY(1px)}
+.sidebar .brand .brand-name .brand-name-segment{display:block!important;flex:0 0 auto;font-size:inherit!important;line-height:inherit!important;font-weight:inherit!important;letter-spacing:inherit!important;color:inherit;overflow:visible!important;text-overflow:clip!important;white-space:pre!important}
+.sidebar .brand .brand-name.brand-name-long{font-size:16px;letter-spacing:0}
+.sidebar .brand .brand-name.brand-name-xlong{font-size:14px;letter-spacing:-.15px}
+.sidebar .brand .brand-name .brand-cps-accent{display:block!important;flex:0 0 auto;align-self:baseline;margin:0 1px!important;font-size:inherit!important;line-height:inherit!important;font-weight:900!important;letter-spacing:.18px!important;color:#39d7ff!important;background:none!important;-webkit-background-clip:border-box!important;background-clip:border-box!important;-webkit-text-fill-color:#39d7ff!important;text-shadow:0 0 8px rgba(57,215,255,.42),0 0 14px rgba(57,144,255,.14)!important;transform:none!important}
 
 .brand-icon-field{margin-top:18px}
 .brand-icon-field>label{display:block;margin-bottom:9px;font-size:12px;font-weight:700;color:#59657a}
@@ -486,3 +488,5 @@ html{scrollbar-gutter:stable}
 .brand-icon-help{margin-top:8px;color:#8994a7;font-size:12px}
 @media(max-width:1100px){.brand-icon-picker{grid-template-columns:repeat(4,minmax(88px,1fr))}}
 @media(max-width:720px){.brand-icon-picker{grid-template-columns:repeat(2,minmax(100px,1fr))}.sidebar .brand{margin-bottom:12px}}
+
+/* V82: 品牌标题子片段继承字号，长名称自动收缩，防止切换页面后被旧 .brand span 26px 规则放大。 */

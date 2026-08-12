@@ -153,6 +153,9 @@ function renderSidebarBrandName(brand,backendName){
     fallback.textContent=source;
     brand.append(fallback);
   }
+  const visualLength=[...source].length;
+  brand.classList.toggle('brand-name-long',visualLength>=9);
+  brand.classList.toggle('brand-name-xlong',visualLength>=12);
   brand.title=source;
 }
 function applySystemBranding(data){

@@ -2526,7 +2526,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v80-cps-accent-fix' in index_html
+    assert '/static/app.js?v=v82-brand-title-stable' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,13 +2833,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v80-cps-accent-fix'
+        assert index.headers.get('x-cps-build') == 'v82-brand-title-stable'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v80-cps-accent-fix')
+        js = c.get('/static/app.js?v=v82-brand-title-stable')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2899,12 +2899,31 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V80 · CPS COLOR FIX' in index_html
-    assert '/static/styles.css?v=v80-cps-accent-fix' in index_html
-    assert '/static/app.js?v=v80-cps-accent-fix' in index_html
-    assert "accent.className='brand-cps-accent'" in app_js
+    assert 'V82 · BRAND TITLE FIX' in index_html
+    assert '/static/styles.css?v=v82-brand-title-stable' in index_html
+    assert '/static/app.js?v=v82-brand-title-stable' in index_html
+    assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
     assert 'color:#39d7ff!important' in css
     assert '-webkit-text-fill-color:#39d7ff!important' in css
     assert 'font-size:inherit!important' in css
+
+
+def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
+    """V82：切换页面/重新渲染后，品牌分段不能再次命中旧 26px span 样式；长名称自动缩小。"""
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+
+    assert 'V82 · BRAND TITLE FIX' in index_html
+    assert '/static/styles.css?v=v82-brand-title-stable' in index_html
+    assert '/static/app.js?v=v82-brand-title-stable' in index_html
+    assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
+    assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
+    assert '.brand-name .brand-name-segment' in css
+    assert 'font-size:inherit!important' in css
+    assert '.brand-name.brand-name-long{font-size:16px' in css
+    assert '.brand-name.brand-name-xlong{font-size:14px' in css
+    assert 'transform:none!important' in css
