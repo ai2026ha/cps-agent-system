@@ -369,21 +369,22 @@ async function renderDashboard(){
    dashboardMetric('今日流水',d.today_turnover,'money','turnover_today','turnover')
  ],3);
 
- if(d.dashboard_type==='superadmin'){
-   const operations=dashboardGroup('运营数据','订单发货与兑换码状态',[
-     dashboardMetric('待发货/异常',d.pending_abnormal,'number','pending_abnormal','alert'),
-     dashboardMetric('已兑换CDK',d.redeemed_cdk,'number','redeemed_cdk','cdk')
-   ],2);
-   $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}${dashboardRegistrationCard()}${systemMonitorTemplate()}</div>`;
+ const isAgent=currentUser?.actor_type==='agent'||actorType==='agent';
+ if(isAgent){
+   // V89: 普通代理身份由登录态直接判定，强制只显示注册与流水；不依赖 dashboard_type。
+   stopSystemMetricsPolling();
+   $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${dashboardRegistrationCard()}</div>`;
    bindDashboardRegistrationCopy();
-   startSystemMetricsPolling();
    return;
  }
 
- stopSystemMetricsPolling();
- // V88: 普通代理数据总览只保留注册与流水数据，不展示佣金比例和分佣金额。
- $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${dashboardRegistrationCard()}</div>`;
+ const operations=dashboardGroup('运营数据','订单发货与兑换码状态',[
+   dashboardMetric('待发货/异常',d.pending_abnormal,'number','pending_abnormal','alert'),
+   dashboardMetric('已兑换CDK',d.redeemed_cdk,'number','redeemed_cdk','cdk')
+ ],2);
+ $('#content').innerHTML=`<div class="overview-groups">${registration}${turnover}${operations}${dashboardRegistrationCard()}${systemMonitorTemplate()}</div>`;
  bindDashboardRegistrationCopy();
+ startSystemMetricsPolling();
 }
 
 function registrationUrl(agentId){return `${window.location.origin}/register/${encodeURIComponent(agentId)}`}

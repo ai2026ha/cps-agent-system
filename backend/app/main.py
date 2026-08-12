@@ -868,7 +868,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v88-agent-dashboard-no-commission",
+            "X-CPS-Build": "v89-agent-dashboard-hard-hide",
         },
     )
 
@@ -887,7 +887,7 @@ def player_center_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v88-agent-dashboard-no-commission",
+            "X-CPS-Build": "v89-agent-dashboard-hard-hide",
         },
     )
 
@@ -899,7 +899,7 @@ def player_center_login_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v88-agent-dashboard-no-commission",
+            "X-CPS-Build": "v89-agent-dashboard-hard-hide",
         },
     )
 
@@ -1292,18 +1292,14 @@ def dashboard(db: Session = Depends(get_db), principal=Depends(require_permissio
             "redeemed_cdk": db.query(RedemptionCode).filter(RedemptionCode.status == "redeemed").count(),
         }
 
-    # 一级/二级/三级代理展示自己权限树范围内的注册、流水与分佣。
+    # V89: 一级/二级/三级普通代理的数据总览只返回注册与流水。
+    # 分佣比例与分佣金额不再下发到数据总览接口，避免任何前端分支误显示。
     current_agent = db.get(Agent, principal.agent_pk)
     if not current_agent:
         raise HTTPException(401, "代理账号不存在")
-    rate = Decimal(current_agent.commission_rate or 0)
     return {
         "dashboard_type": "agent",
         **common,
-        "commission_rate": float(rate),
-        "yesterday_commission": money(yesterday_turnover * rate),
-        "today_commission": money(today_turnover * rate),
-        "total_commission": money(total_turnover * rate),
     }
 
 
