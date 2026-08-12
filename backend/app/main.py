@@ -3,11 +3,14 @@ import secrets
 import shutil
 import ipaddress
 import time as time_module
+import csv
+import io
+import json
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, text
@@ -696,6 +699,27 @@ def ensure_player_character_data():
         db.close()
 
 
+def ensure_product_purchase_limit_columns():
+    """V91：兼容历史 products 表，补充礼包四类限购字段；0 表示不限购。"""
+    inspector = inspect(engine)
+    if "products" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("products")}
+    with engine.begin() as conn:
+        if "daily_limit" not in columns:
+            conn.execute(text("ALTER TABLE products ADD COLUMN daily_limit INTEGER DEFAULT 0"))
+        if "weekly_limit" not in columns:
+            conn.execute(text("ALTER TABLE products ADD COLUMN weekly_limit INTEGER DEFAULT 0"))
+        if "monthly_limit" not in columns:
+            conn.execute(text("ALTER TABLE products ADD COLUMN monthly_limit INTEGER DEFAULT 0"))
+        if "lifetime_limit" not in columns:
+            conn.execute(text("ALTER TABLE products ADD COLUMN lifetime_limit INTEGER DEFAULT 0"))
+        conn.execute(text("UPDATE products SET daily_limit = 0 WHERE daily_limit IS NULL"))
+        conn.execute(text("UPDATE products SET weekly_limit = 0 WHERE weekly_limit IS NULL"))
+        conn.execute(text("UPDATE products SET monthly_limit = 0 WHERE monthly_limit IS NULL"))
+        conn.execute(text("UPDATE products SET lifetime_limit = 0 WHERE lifetime_limit IS NULL"))
+
+
 def ensure_mall_order_character_columns():
     """V57：给已上线商城订单补充“购买角色”快照字段。
 
@@ -850,6 +874,7 @@ def startup():
     ensure_platform_order_columns()
     ensure_player_admin_columns()
     ensure_player_character_data()
+    ensure_product_purchase_limit_columns()
     ensure_mall_order_character_columns()
     ensure_redemption_code_character_columns()
     ensure_agent_public_identity_format()
@@ -868,7 +893,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v90-game-item-library",
+            "X-CPS-Build": "v91-item-import-gift-limits",
         },
     )
 
@@ -887,7 +912,7 @@ def player_center_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v90-game-item-library",
+            "X-CPS-Build": "v91-item-import-gift-limits",
         },
     )
 
@@ -899,7 +924,7 @@ def player_center_login_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v90-game-item-library",
+            "X-CPS-Build": "v91-item-import-gift-limits",
         },
     )
 
@@ -1994,6 +2019,79 @@ def product_platform_coin_price(product: Product) -> int:
     return int(value)
 
 
+GIFT_LIMIT_FIELDS = (
+    ("daily", "每日", "daily_limit"),
+    ("weekly", "每周", "weekly_limit"),
+    ("monthly", "每月", "monthly_limit"),
+    ("lifetime", "永久", "lifetime_limit"),
+)
+
+def gift_limit_config(product: Product) -> dict[str, int]:
+    return {key: max(int(getattr(product, field, 0) or 0), 0) for key, _label, field in GIFT_LIMIT_FIELDS}
+
+def gift_limit_text(product: Product) -> str:
+    cfg = gift_limit_config(product)
+    parts = [f"{label}限购 {cfg[key]} 次" for key, label, _field in GIFT_LIMIT_FIELDS if cfg[key] > 0]
+    return "；".join(parts) if parts else "不限购"
+
+def gift_limit_period_bounds(kind: str, today: date | None = None):
+    today = today or business_today()
+    if kind == "daily":
+        start_day = end_day = today
+    elif kind == "weekly":
+        start_day = today - timedelta(days=today.weekday())
+        end_day = start_day + timedelta(days=6)
+    elif kind == "monthly":
+        start_day = today.replace(day=1)
+        if today.month == 12:
+            next_month = date(today.year + 1, 1, 1)
+        else:
+            next_month = date(today.year, today.month + 1, 1)
+        end_day = next_month - timedelta(days=1)
+    elif kind == "lifetime":
+        return None, None
+    else:
+        raise ValueError(f"unknown gift limit kind: {kind}")
+    return business_date_bounds(start_day, end_day)
+
+def gift_purchase_used_count(db: Session, player_id: int, product_id: int, kind: str) -> int:
+    q = db.query(func.coalesce(func.sum(MallOrder.quantity), 0)).filter(
+        MallOrder.player_id == player_id,
+        MallOrder.product_id == product_id,
+        MallOrder.pay_status == "paid",
+    )
+    start_dt, end_dt = gift_limit_period_bounds(kind)
+    if start_dt is not None:
+        q = q.filter(MallOrder.created_at >= start_dt)
+    if end_dt is not None:
+        q = q.filter(MallOrder.created_at < end_dt)
+    return int(q.scalar() or 0)
+
+def gift_purchase_limit_status(db: Session, player_id: int, product: Product) -> dict:
+    cfg = gift_limit_config(product)
+    status = {}
+    blocked_reason = ""
+    for key, label, _field in GIFT_LIMIT_FIELDS:
+        limit = cfg[key]
+        used = gift_purchase_used_count(db, player_id, product.id, key) if limit > 0 else 0
+        remaining = max(limit - used, 0) if limit > 0 else None
+        reached = bool(limit > 0 and used >= limit)
+        status[key] = {"label": label, "limit": limit, "used": used, "remaining": remaining, "reached": reached}
+        if reached and not blocked_reason:
+            blocked_reason = f"{label}限购已达上限（{used}/{limit}）"
+    return {"limits": cfg, "periods": status, "blocked": bool(blocked_reason), "blocked_reason": blocked_reason, "text": gift_limit_text(product)}
+
+def enforce_gift_purchase_limits(db: Session, player_id: int, product: Product, quantity: int = 1):
+    cfg = gift_limit_config(product)
+    for key, label, _field in GIFT_LIMIT_FIELDS:
+        limit = cfg[key]
+        if limit <= 0:
+            continue
+        used = gift_purchase_used_count(db, player_id, product.id, key)
+        if used + quantity > limit:
+            raise HTTPException(400, f"{label}限购 {limit} 次，当前已购买 {used} 次，无法继续购买")
+
+
 PRIVILEGE_CARD_DAYS = {"week": 7, "month": 30, "year": 365}
 PRIVILEGE_CARD_NAMES = {"week": "周卡", "month": "月卡", "year": "年卡"}
 
@@ -2167,6 +2265,8 @@ def player_mall_products(player: Player = Depends(current_player), db: Session =
             coin_price = product_platform_coin_price(row)
         except HTTPException:
             continue
+        limit_status = gift_purchase_limit_status(db, player.id, row)
+        stock_ok = int(row.stock or 0) > 0
         result.append({
             "id": row.id,
             "sku": row.sku,
@@ -2174,7 +2274,10 @@ def player_mall_products(player: Player = Depends(current_player), db: Session =
             "coin_price": coin_price,
             "stock": int(row.stock or 0),
             "description": (reward_payload_text(product_reward_payload(db, row.id)) or row.description or ""),
-            "available": int(row.stock or 0) > 0,
+            "purchase_limit_text": limit_status["text"],
+            "purchase_limit_status": limit_status,
+            "available": bool(stock_ok and not limit_status["blocked"]),
+            "unavailable_reason": "礼包已售罄" if not stock_ok else limit_status["blocked_reason"],
         })
     return result
 
@@ -2243,6 +2346,8 @@ def player_mall_purchase(
         raise HTTPException(400, "每次只能购买 1 个礼包")
     if int(product.stock or 0) < 1:
         raise HTTPException(400, "礼包库存不足")
+    # V91：玩家账号维度执行日/周/月/永久四类礼包限购；玩家行锁可串行化同账号并发购买。
+    enforce_gift_purchase_limits(db, locked_player.id, product, quantity)
     unit_price = product_platform_coin_price(product)
     total_coins = unit_price
     balance = int(locked_player.platform_coin_balance or 0)
@@ -3481,6 +3586,186 @@ def game_items(
     } for x in rows]
 
 
+GAME_ITEM_IMPORT_ALIASES = {
+    "item_code": {"道具id", "道具代码", "道具编号", "物品id", "物品代码", "物品编号", "itemid", "item_id", "itemcode", "item_code", "code", "id"},
+    "name": {"道具名称", "物品名称", "名称", "name", "itemname", "item_name"},
+    "category": {"道具分类", "物品分类", "分类", "category", "type", "itemtype", "item_type"},
+    "enabled": {"状态", "启用", "是否启用", "enabled", "status", "active"},
+}
+
+def _game_item_header_key(value) -> str:
+    raw = str(value if value is not None else "").strip().lower()
+    return "".join(ch for ch in raw if ch not in " \t\r\n-./\\（）()[]{}：:")
+
+def _game_item_header_map(values) -> dict[int, str]:
+    mapping = {}
+    for idx, value in enumerate(values or []):
+        key = _game_item_header_key(value)
+        for target, aliases in GAME_ITEM_IMPORT_ALIASES.items():
+            normalized_aliases = {_game_item_header_key(x) for x in aliases}
+            if key in normalized_aliases:
+                mapping[idx] = target
+                break
+    return mapping
+
+def _game_item_enabled(value) -> bool:
+    if value is None or str(value).strip() == "":
+        return True
+    raw = str(value).strip().lower()
+    if raw in {"0", "false", "no", "n", "否", "停用", "禁用", "disabled", "inactive"}:
+        return False
+    if raw in {"1", "true", "yes", "y", "是", "启用", "正常", "enabled", "active"}:
+        return True
+    return True
+
+def _game_item_rows_from_table(rows) -> list[dict]:
+    rows = [list(r) for r in rows if r is not None and any(str(v if v is not None else "").strip() for v in r)]
+    if not rows:
+        return []
+    header_map = _game_item_header_map(rows[0])
+    has_header = "item_code" in header_map.values() and "name" in header_map.values()
+    data_rows = rows[1:] if has_header else rows
+    if not has_header:
+        header_map = {0: "item_code", 1: "name", 2: "category", 3: "enabled"}
+    result = []
+    for row_no, row in enumerate(data_rows, start=2 if has_header else 1):
+        obj = {field: (row[idx] if idx < len(row) else None) for idx, field in header_map.items()}
+        obj["_row"] = row_no
+        result.append(obj)
+    return result
+
+def _decode_game_item_text(raw: bytes) -> str:
+    for encoding in ("utf-8-sig", "gb18030", "gbk"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise HTTPException(400, "文本文件编码无法识别，请使用 UTF-8 或 GBK 编码")
+
+def parse_game_item_import_file(filename: str, raw: bytes) -> list[dict]:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix == ".json":
+        try:
+            data = json.loads(_decode_game_item_text(raw))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(400, f"JSON 文件格式错误：{exc}")
+        if isinstance(data, dict):
+            data = data.get("items", data.get("data", []))
+        if not isinstance(data, list):
+            raise HTTPException(400, "JSON 顶层必须是数组，或包含 items/data 数组")
+        result = []
+        for idx, obj in enumerate(data, start=1):
+            if not isinstance(obj, dict):
+                result.append({"_row": idx})
+                continue
+            normalized = {}
+            for key, value in obj.items():
+                mapped = _game_item_header_map([key]).get(0)
+                if mapped:
+                    normalized[mapped] = value
+            normalized["_row"] = idx
+            result.append(normalized)
+        return result
+    if suffix in {".csv", ".txt"}:
+        text_data = _decode_game_item_text(raw)
+        sample = text_data[:4096]
+        delimiter = ","
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|，")
+            delimiter = dialect.delimiter
+        except csv.Error:
+            if "\t" in sample:
+                delimiter = "\t"
+            elif "|" in sample:
+                delimiter = "|"
+            elif "，" in sample:
+                delimiter = "，"
+        return _game_item_rows_from_table(csv.reader(io.StringIO(text_data), delimiter=delimiter))
+    if suffix == ".xlsx":
+        try:
+            from openpyxl import load_workbook
+            workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            sheet = workbook.active
+            rows = list(sheet.iter_rows(values_only=True))
+            workbook.close()
+        except Exception as exc:
+            raise HTTPException(400, f"Excel XLSX 文件读取失败：{exc}")
+        return _game_item_rows_from_table(rows)
+    if suffix == ".xls":
+        try:
+            import xlrd
+            book = xlrd.open_workbook(file_contents=raw)
+            sheet = book.sheet_by_index(0)
+            rows = [sheet.row_values(i) for i in range(sheet.nrows)]
+        except Exception as exc:
+            raise HTTPException(400, f"Excel XLS 文件读取失败：{exc}")
+        return _game_item_rows_from_table(rows)
+    raise HTTPException(400, "仅支持 .xlsx / .xls / .csv / .json / .txt 文件")
+
+
+@app.post("/api/game-items/import")
+async def import_game_items(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("products.manage")),
+):
+    filename = (file.filename or "").strip()
+    raw = await file.read(10 * 1024 * 1024 + 1)
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(413, "道具文件不能超过 10MB")
+    if not raw:
+        raise HTTPException(400, "上传文件为空")
+    rows = parse_game_item_import_file(filename, raw)
+    if not rows:
+        raise HTTPException(400, "文件中没有可导入的道具数据")
+    if len(rows) > 50000:
+        raise HTTPException(400, "单次最多导入 50000 条道具")
+
+    created = updated = skipped = 0
+    errors = []
+    existing = {x.item_code: x for x in db.query(GameItem).all()}
+    seen_codes = set()
+    for obj in rows:
+        row_no = int(obj.get("_row") or 0)
+        code = str(obj.get("item_code") if obj.get("item_code") is not None else "").strip()
+        name = str(obj.get("name") if obj.get("name") is not None else "").strip()
+        category = str(obj.get("category") if obj.get("category") is not None else "普通道具").strip() or "普通道具"
+        if not code or not name:
+            skipped += 1
+            if len(errors) < 30:
+                errors.append(f"第 {row_no} 行：缺少道具ID/代码或道具名称")
+            continue
+        if len(code) > 64 or len(name) > 120 or len(category) > 64:
+            skipped += 1
+            if len(errors) < 30:
+                errors.append(f"第 {row_no} 行：字段长度超过限制")
+            continue
+        enabled = _game_item_enabled(obj.get("enabled"))
+        row = existing.get(code)
+        if row:
+            row.name = name
+            row.category = category
+            row.enabled = enabled
+            updated += 1
+        else:
+            row = GameItem(item_code=code, name=name, category=category, enabled=enabled)
+            db.add(row)
+            existing[code] = row
+            created += 1
+        seen_codes.add(code)
+    if created or updated:
+        db.commit()
+    return {
+        "message": f"导入完成：新增 {created} 条，更新 {updated} 条，跳过 {skipped} 条",
+        "filename": filename,
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "supported_formats": ["xlsx", "xls", "csv", "json", "txt"],
+    }
+
+
 @app.post("/api/game-items")
 def create_game_item(body: GameItemCreate, db: Session = Depends(get_db), _=Depends(require_permission("products.manage"))):
     code = body.item_code.strip()
@@ -3539,7 +3824,11 @@ def products(category: str = "", db: Session = Depends(get_db), _=Depends(requir
         items = product_reward_payload(db, x.id)
         item_summary = reward_payload_text(items) if items else (x.description or "")
         result.append({"id": x.id, "sku": x.sku, "name": x.name, "category": x.category, "price": money(x.price), "stock": x.stock,
-             "description": item_summary, "item_summary": item_summary, "items": items, "enabled": x.enabled, "created_at": dt(x.created_at)})
+             "description": item_summary, "item_summary": item_summary, "items": items,
+             "daily_limit": int(x.daily_limit or 0), "weekly_limit": int(x.weekly_limit or 0),
+             "monthly_limit": int(x.monthly_limit or 0), "lifetime_limit": int(x.lifetime_limit or 0),
+             "purchase_limit_text": gift_limit_text(x) if x.category == "gift" else "-",
+             "enabled": x.enabled, "created_at": dt(x.created_at)})
     return result
 
 @app.post("/api/products")
@@ -3556,6 +3845,8 @@ def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends
         raise HTTPException(409, "SKU 已存在")
     reward_items = normalize_reward_items(db, body.items)
     payload = body.model_dump(exclude={"items"})
+    if body.category != "gift":
+        payload.update(daily_limit=0, weekly_limit=0, monthly_limit=0, lifetime_limit=0)
     if reward_items:
         payload["description"] = reward_items_text(reward_items)
     row = Product(**payload); db.add(row); db.flush()

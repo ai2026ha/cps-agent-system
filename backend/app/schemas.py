@@ -80,6 +80,11 @@ class ProductCreate(BaseModel):
     stock: int = 0
     description: str = ""
     items: list[RewardItemInput] = Field(default_factory=list)
+    # V91: 四类限购可同时生效；0 表示不限购。普通商品会被后端归零。
+    daily_limit: int = Field(default=0, ge=0, le=2_000_000_000)
+    weekly_limit: int = Field(default=0, ge=0, le=2_000_000_000)
+    monthly_limit: int = Field(default=0, ge=0, le=2_000_000_000)
+    lifetime_limit: int = Field(default=0, ge=0, le=2_000_000_000)
 
 class PlatformRechargeOrderCreate(BaseModel):
     """由玩家充值/支付系统创建的待支付平台币订单，后台管理端不能手工创建。"""

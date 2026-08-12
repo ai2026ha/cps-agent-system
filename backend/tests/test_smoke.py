@@ -2526,7 +2526,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v90-game-item-library' in index_html
+    assert '/static/app.js?v=v91-item-import-gift-limits' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,13 +2833,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v90-game-item-library'
+        assert index.headers.get('x-cps-build') == 'v91-item-import-gift-limits'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v90-game-item-library')
+        js = c.get('/static/app.js?v=v91-item-import-gift-limits')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2899,9 +2899,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V90 · GAME ITEM LIBRARY' in index_html
-    assert '/static/styles.css?v=v90-game-item-library' in index_html
-    assert '/static/app.js?v=v90-game-item-library' in index_html
+    assert 'V91 · ITEM IMPORT + GIFT LIMITS' in index_html
+    assert '/static/styles.css?v=v91-item-import-gift-limits' in index_html
+    assert '/static/app.js?v=v91-item-import-gift-limits' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2917,9 +2917,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V90 · GAME ITEM LIBRARY' in index_html
-    assert '/static/styles.css?v=v90-game-item-library' in index_html
-    assert '/static/app.js?v=v90-game-item-library' in index_html
+    assert 'V91 · ITEM IMPORT + GIFT LIMITS' in index_html
+    assert '/static/styles.css?v=v91-item-import-gift-limits' in index_html
+    assert '/static/app.js?v=v91-item-import-gift-limits' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2943,9 +2943,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V90 · GAME ITEM LIBRARY" in index_html
-    assert "/static/styles.css?v=v90-game-item-library" in index_html
-    assert "/static/app.js?v=v90-game-item-library" in index_html
+    assert "V91 · ITEM IMPORT + GIFT LIMITS" in index_html
+    assert "/static/styles.css?v=v91-item-import-gift-limits" in index_html
+    assert "/static/app.js?v=v91-item-import-gift-limits" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2977,7 +2977,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v90-game-item-library'
+        assert player.headers.get('x-cps-build') == 'v91-item-import-gift-limits'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3055,8 +3055,106 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V90 · GAME ITEM LIBRARY' in index_html
+    assert 'V91 · ITEM IMPORT + GIFT LIMITS' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
     assert '.item-builder-picker' in css
+
+
+def test_v91_game_item_library_imports_csv_json_and_xlsx():
+    """V91：道具库可从多种文件格式批量导入，并按道具代码更新重复项。"""
+    import io
+    import json
+    from openpyxl import Workbook
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        h = auth(admin)
+
+        csv_body = '道具ID,道具名称,分类,状态\nV91-CSV-1,CSV强化石,强化材料,启用\nV91-CSV-2,CSV宝石,宝石,1\n'.encode('utf-8')
+        r = c.post('/api/game-items/import', headers=h, files={'file': ('items.csv', csv_body, 'text/csv')})
+        assert r.status_code == 200, r.text
+        assert r.json()['created'] == 2
+        assert r.json()['skipped'] == 0
+
+        json_body = json.dumps([
+            {'item_code': 'V91-CSV-1', 'name': 'CSV强化石-更新', 'category': '高级材料', 'enabled': True},
+            {'道具代码': 'V91-JSON-1', '道具名称': 'JSON宝箱', '分类': '宝箱', '状态': '启用'},
+        ], ensure_ascii=False).encode('utf-8')
+        r = c.post('/api/game-items/import', headers=h, files={'file': ('items.json', json_body, 'application/json')})
+        assert r.status_code == 200, r.text
+        assert r.json()['created'] == 1
+        assert r.json()['updated'] == 1
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append(['item_code', 'name', 'category', 'enabled'])
+        ws.append(['V91-XLSX-1', 'Excel神石', '神石', 1])
+        buf = io.BytesIO(); wb.save(buf); wb.close()
+        r = c.post('/api/game-items/import', headers=h, files={'file': ('items.xlsx', buf.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')})
+        assert r.status_code == 200, r.text
+        assert r.json()['created'] == 1
+
+        rows = c.get('/api/game-items', headers=h).json()
+        by_code = {x['item_code']: x for x in rows}
+        assert by_code['V91-CSV-1']['name'] == 'CSV强化石-更新'
+        assert by_code['V91-CSV-1']['category'] == '高级材料'
+        assert by_code['V91-JSON-1']['name'] == 'JSON宝箱'
+        assert by_code['V91-XLSX-1']['name'] == 'Excel神石'
+
+
+def test_v91_gift_daily_weekly_monthly_and_lifetime_purchase_limits_are_enforced():
+    """V91：礼包日/周/月/永久限购均由后端按玩家账号真实拦截。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent_resp = create_agent(c, admin, 'v91_limit_agent', 'V91限购代理', 1, 2)
+        assert agent_resp.status_code == 200, agent_resp.text
+        agent_id = agent_resp.json()['agent_id']
+        reg = c.post(f'/api/public/registration/{agent_id}', json={
+            'username': 'v91_limit_player', 'password': 'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_pk = reg.json()['id']
+        issue = c.patch(f'/api/players/{player_pk}', headers=auth(admin), json={'coin_action':'issue','coin_amount':1000})
+        assert issue.status_code == 200, issue.text
+        player_token = c.post('/api/player/auth/login', json={'username':'v91_limit_player','password':'PlayerPass123!'}).json()['access_token']
+        ph = auth(player_token)
+
+        limit_cases = [
+            ('DAILY', 'daily_limit', '每日'),
+            ('WEEKLY', 'weekly_limit', '每周'),
+            ('MONTHLY', 'monthly_limit', '每月'),
+            ('LIFETIME', 'lifetime_limit', '永久'),
+        ]
+        gift_ids = []
+        for suffix, field, label in limit_cases:
+            payload = {
+                'sku': f'V91-{suffix}', 'name': f'V91{label}限购礼包', 'category':'gift',
+                'price': 10, 'stock': 5, 'description':'', field: 1,
+            }
+            created = c.post('/api/products', headers=auth(admin), json=payload)
+            assert created.status_code == 200, created.text
+            gift_ids.append((created.json()['id'], field, label))
+
+        admin_rows = c.get('/api/products?category=gift', headers=auth(admin)).json()
+        for gift_id, field, label in gift_ids:
+            row = next(x for x in admin_rows if x['id'] == gift_id)
+            assert row[field] == 1
+            assert f'{label}限购 1 次' in row['purchase_limit_text']
+
+            before = next(x for x in c.get('/api/player/mall/products', headers=ph).json() if x['id'] == gift_id)
+            assert before['available'] is True
+            period_key = {'daily_limit':'daily','weekly_limit':'weekly','monthly_limit':'monthly','lifetime_limit':'lifetime'}[field]
+            assert before['purchase_limit_status']['periods'][period_key]['remaining'] == 1
+
+            first = c.post(f'/api/player/mall/purchase/{gift_id}', headers=ph, json={'quantity':1})
+            assert first.status_code == 200, first.text
+            second = c.post(f'/api/player/mall/purchase/{gift_id}', headers=ph, json={'quantity':1})
+            assert second.status_code == 400, second.text
+            assert label in second.json()['detail'] and '限购' in second.json()['detail']
+
+            after = next(x for x in c.get('/api/player/mall/products', headers=ph).json() if x['id'] == gift_id)
+            assert after['available'] is False
+            assert label in after['unavailable_reason']
+            assert after['purchase_limit_status']['periods'][period_key]['remaining'] == 0

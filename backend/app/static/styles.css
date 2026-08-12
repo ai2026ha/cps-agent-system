@@ -517,3 +517,6 @@ html{scrollbar-gutter:stable}
 .item-builder-help{font-size:11.5px;line-height:1.5;color:#8792a5}
 @media(max-width:800px){.item-builder-picker{grid-template-columns:1fr 1fr}.item-library-search{grid-column:1/-1}.item-builder-row{grid-template-columns:minmax(0,1fr) 90px auto}}
 @media(max-width:560px){.item-builder-picker{grid-template-columns:1fr}.item-library-search{grid-column:auto}.item-builder-row{grid-template-columns:minmax(0,1fr) 82px}.item-builder-row .danger{grid-column:1/-1}}
+
+/* V91: 道具库文件批量导入 */
+.game-item-import-box{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 12px;padding:11px 13px;border:1px solid #dce6f3;border-radius:11px;background:#f7faff}.game-item-import-box>div{display:flex;flex-direction:column;gap:4px}.game-item-import-box strong{font-size:13px;color:#25344f}.game-item-import-box span{font-size:11.5px;line-height:1.55;color:#7b879b}@media(max-width:720px){.game-item-import-box{align-items:flex-start;flex-direction:column}}

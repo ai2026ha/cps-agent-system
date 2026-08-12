@@ -86,6 +86,15 @@ async function api(path, options={}){
   if(!r.ok) throw new Error(formatApiError(data.detail));
   return data;
 }
+async function apiUpload(path,formData){
+  const headers={};
+  if(token)headers.Authorization=`Bearer ${token}`;
+  const r=await fetch(path,{method:'POST',headers,body:formData});
+  if(r.status===401){logout();throw new Error('登录已失效')}
+  let data;try{data=await r.json()}catch{data={detail:'上传失败'}}
+  if(!r.ok)throw new Error(formatApiError(data.detail));
+  return data;
+}
 function showLogin(){
   $('#app').classList.add('hidden');
   $('#login').classList.remove('hidden');
@@ -1055,14 +1064,32 @@ async function openProductCreateForm(cat){
  openForm(isGift?'新增礼包':'新增商品',{
    path:'/api/products',
    note:'道具内容必须从统一道具库选择。若没有需要的道具，请先进入“商品管理 → 道具库”新增。',
-   defaults:{price:isGift?1:0,stock:0,items:[]},
-   fields:[['sku','SKU'],['name',isGift?'礼包名称':'商品名称'],['price',isGift?'平台币售价':'价格','number',true,{min:isGift?1:0,step:isGift?1:0.01}],['stock','库存','number',true,{min:0,step:1}],['items',isGift?'礼包道具':'商品道具','item-builder',true,{options:itemPickerOptions(items)}]],
-   transform:o=>({sku:String(o.sku||'').trim(),name:String(o.name||'').trim(),category:cat,price:Number(o.price||0),stock:Number(o.stock||0),items:parseItemBuilderValue(o.items),description:''})
+   defaults:{price:isGift?1:0,stock:0,items:[],daily_limit:0,weekly_limit:0,monthly_limit:0,lifetime_limit:0},
+   fields:[
+     ['sku','SKU'],['name',isGift?'礼包名称':'商品名称'],
+     ['price',isGift?'平台币售价':'价格','number',true,{min:isGift?1:0,step:isGift?1:0.01}],
+     ['stock','库存','number',true,{min:0,step:1}],
+     ...(isGift?[
+       ['daily_limit','每日限购次数','number',false,{min:0,step:1,placeholder:'0 = 不限购'}],
+       ['weekly_limit','每周限购次数','number',false,{min:0,step:1,placeholder:'0 = 不限购'}],
+       ['monthly_limit','每月限购次数','number',false,{min:0,step:1,placeholder:'0 = 不限购'}],
+       ['lifetime_limit','永久限购次数','number',false,{min:0,step:1,placeholder:'0 = 不限购'}]
+     ]:[]),
+     ['items',isGift?'礼包道具':'商品道具','item-builder',true,{options:itemPickerOptions(items)}]
+   ],
+   transform:o=>({
+     sku:String(o.sku||'').trim(),name:String(o.name||'').trim(),category:cat,price:Number(o.price||0),stock:Number(o.stock||0),
+     daily_limit:isGift?Math.max(0,Number(o.daily_limit||0)):0,weekly_limit:isGift?Math.max(0,Number(o.weekly_limit||0)):0,
+     monthly_limit:isGift?Math.max(0,Number(o.monthly_limit||0)):0,lifetime_limit:isGift?Math.max(0,Number(o.lifetime_limit||0)):0,
+     items:parseItemBuilderValue(o.items),description:''
+   })
  });
 }
 async function renderProducts(cat){
  const rows=await api('/api/products?category='+cat),manage=hasPermission('products.manage');
- const cols=[['SKU','sku'],['名称','name'],[cat==='gift'?'平台币售价':'价格','price'],['库存','stock'],['道具内容','item_summary'],['状态','enabled',v=>badge(v?'active':'disabled')]];
+ const cols=[['SKU','sku'],['名称','name'],[cat==='gift'?'平台币售价':'价格','price'],['库存','stock'],['道具内容','item_summary']];
+ if(cat==='gift')cols.push(['限购规则','purchase_limit_text']);
+ cols.push(['状态','enabled',v=>badge(v?'active':'disabled')]);
  $('#content').innerHTML=panel(cat==='gift'?'礼包列表':'商品列表',table(rows,cols),manage?`<button class="btn primary" id="addBtn">＋ ${cat==='gift'?'新增礼包':'新增商品'}</button>`:'');
  if(manage)$('#addBtn').onclick=()=>openProductCreateForm(cat).catch(e=>showToast(e.message,'error',4200));
 }
@@ -1076,8 +1103,14 @@ async function renderGameItems(){
  const rows=await api('/api/game-items');window.__gameItemRows=rows;const manage=hasPermission('products.manage');
  const cols=[['道具ID / 代码','item_code'],['道具名称','name'],['分类','category'],['状态','enabled',v=>badge(v?'active':'disabled')],['创建时间','created_at']];
  if(manage)cols.push(['操作','id',v=>`<div class="table-action-buttons"><button class="btn small" onclick="editGameItem(${Number(v)})">编辑</button><button class="btn small danger" onclick="deleteGameItem(${Number(v)})">删除</button></div>`]);
- $('#content').innerHTML=panel('道具库',`<div class="query-scope-note">统一维护游戏服道具ID/代码。礼包、商品和特权卡只能从这里选择道具，避免手工文本写错。</div>${table(rows,cols)}`,manage?'<button class="btn primary" id="addGameItemBtn">＋ 新增道具</button>':'');
- if(manage)$('#addGameItemBtn').onclick=()=>openGameItemForm();
+ const importBox=manage?`<div class="game-item-import-box"><div><strong>批量导入道具库</strong><span>支持 Excel .xlsx / .xls、CSV、JSON、TXT。至少需要“道具ID/代码 + 道具名称”两列；同ID再次导入会更新名称、分类和状态。</span></div><input id="gameItemImportFile" type="file" accept=".xlsx,.xls,.csv,.json,.txt" hidden></div>`:'';
+ $('#content').innerHTML=panel('道具库',`${importBox}<div class="query-scope-note">统一维护游戏服道具ID/代码。礼包、商品和特权卡只能从这里选择道具，避免手工文本写错。</div>${table(rows,cols)}`,manage?'<button class="btn" id="importGameItemsBtn">⇧ 导入文件</button> <button class="btn primary" id="addGameItemBtn">＋ 新增道具</button>':'');
+ if(manage){
+   $('#addGameItemBtn').onclick=()=>openGameItemForm();
+   const fileInput=$('#gameItemImportFile');
+   $('#importGameItemsBtn').onclick=()=>fileInput.click();
+   fileInput.onchange=async()=>{const file=fileInput.files?.[0];if(!file)return;const fd=new FormData();fd.append('file',file);const btn=$('#importGameItemsBtn');const old=btn.textContent;btn.disabled=true;btn.textContent='导入中…';try{const r=await apiUpload('/api/game-items/import',fd);showToast(r.message||'道具导入完成','success',3600);if(Array.isArray(r.errors)&&r.errors.length)showToast(`部分数据已跳过：\n${r.errors.slice(0,5).join('\n')}`,'error',5200);await renderGameItems()}catch(e){showToast(e.message,'error',4800)}finally{if(document.body.contains(btn)){btn.disabled=false;btn.textContent=old}}};
+ }
 }
 async function renderCDK(){const rows=await api('/api/redemption-batches');const manage=hasPermission('cdk.manage');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>':'');if(manage){$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}

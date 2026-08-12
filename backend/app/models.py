@@ -116,6 +116,11 @@ class Product(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     stock: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
+    # V91: 礼包可同时配置日/周/月/永久四种限购；0 表示该周期不限购。
+    daily_limit: Mapped[int] = mapped_column(Integer, default=0)
+    weekly_limit: Mapped[int] = mapped_column(Integer, default=0)
+    monthly_limit: Mapped[int] = mapped_column(Integer, default=0)
+    lifetime_limit: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
