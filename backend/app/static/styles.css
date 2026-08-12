@@ -455,7 +455,7 @@ html{scrollbar-gutter:stable}
 
 .build-marker{margin-top:16px;text-align:center;font-size:11px;letter-spacing:.08em;color:#a2abba;user-select:none}
 
-/* V79: 可切换后台品牌图标 + CPS 品牌字样高亮 */
+/* V80: 可切换后台品牌图标 + CPS 强制青蓝高亮 */
 .sidebar .brand{
   position:relative;
   display:flex;
@@ -473,8 +473,7 @@ html{scrollbar-gutter:stable}
 .sidebar .brand-edge{position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:4px;background:linear-gradient(180deg,#48d9ff,#3d67ff);box-shadow:0 0 12px rgba(59,147,255,.8)}
 .sidebar .brand-logo{--brand-logo-url:url('/static/brand-icons/dragon-spiral.svg');width:31px;height:31px;flex:0 0 31px;background:linear-gradient(145deg,#71dfff 8%,#4e8cff 58%,#6e73ff 100%);-webkit-mask-image:var(--brand-logo-url);mask-image:var(--brand-logo-url);-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;filter:drop-shadow(0 0 5px rgba(55,156,255,.35))}
 .sidebar .brand .brand-name{min-width:0;display:block;font-size:18px;font-weight:800;line-height:1.25;letter-spacing:.2px;color:#f7f9ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sidebar .brand .brand-cps-accent{display:inline-block;margin:0 1px;color:#49d9ff;background:linear-gradient(180deg,#72e7ff 0%,#36c7ff 48%,#4b8dff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 0 12px rgba(58,192,255,.30);font-weight:900;letter-spacing:.5px}
-@supports not (-webkit-background-clip:text){.sidebar .brand .brand-cps-accent{color:#49d9ff;background:none}}
+.sidebar .brand .brand-name .brand-cps-accent{display:inline!important;margin:0 1px!important;font-size:inherit!important;line-height:inherit!important;font-weight:900!important;letter-spacing:.5px!important;color:#39d7ff!important;background:none!important;-webkit-background-clip:border-box!important;background-clip:border-box!important;-webkit-text-fill-color:#39d7ff!important;text-shadow:0 0 8px rgba(57,215,255,.46),0 0 16px rgba(57,144,255,.18)!important}
 
 .brand-icon-field{margin-top:18px}
 .brand-icon-field>label{display:block;margin-bottom:9px;font-size:12px;font-weight:700;color:#59657a}

@@ -868,7 +868,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v78-brand-logo-picker",
+            "X-CPS-Build": "v80-cps-accent-fix",
         },
     )
 
