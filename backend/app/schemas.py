@@ -73,18 +73,33 @@ class GameItemUpdate(BaseModel):
 
 
 class ProductCreate(BaseModel):
-    sku: str
-    name: str
+    sku: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=120)
     category: str = "product"
     price: Decimal
-    stock: int = 0
+    stock: int = Field(default=0, ge=0)
     description: str = ""
     items: list[RewardItemInput] = Field(default_factory=list)
-    # V91: 四类限购可同时生效；0 表示不限购。普通商品会被后端归零。
+    # 礼包四类限购可同时生效；0 表示不限购。普通商品会被后端归零。
     daily_limit: int = Field(default=0, ge=0, le=2_000_000_000)
     weekly_limit: int = Field(default=0, ge=0, le=2_000_000_000)
     monthly_limit: int = Field(default=0, ge=0, le=2_000_000_000)
     lifetime_limit: int = Field(default=0, ge=0, le=2_000_000_000)
+    enabled: bool = True
+
+
+class ProductUpdate(BaseModel):
+    sku: str | None = Field(default=None, min_length=1, max_length=64)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    price: Decimal | None = None
+    stock: int | None = Field(default=None, ge=0)
+    description: str | None = None
+    items: list[RewardItemInput] | None = None
+    daily_limit: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    weekly_limit: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    monthly_limit: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    lifetime_limit: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    enabled: bool | None = None
 
 class PlatformRechargeOrderCreate(BaseModel):
     """由玩家充值/支付系统创建的待支付平台币订单，后台管理端不能手工创建。"""

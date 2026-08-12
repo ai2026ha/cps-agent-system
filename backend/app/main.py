@@ -23,7 +23,7 @@ from .models import (
     PrivilegeCardRule, PrivilegeCardGameItem, PrivilegeCardPurchase, PrivilegeCardClaim, MailRecord,
 )
 from .schemas import (
-    LoginIn, AdminPasswordChange, AdminCreate, SystemBrandingUpdate, IPWhitelistCreate, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, GameItemCreate, GameItemUpdate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
+    LoginIn, AdminPasswordChange, AdminCreate, SystemBrandingUpdate, IPWhitelistCreate, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, ProductUpdate, GameItemCreate, GameItemUpdate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
     PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
@@ -893,7 +893,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v91-item-import-gift-limits",
+            "X-CPS-Build": "v92-gift-edit-item-library-fast",
         },
     )
 
@@ -912,7 +912,7 @@ def player_center_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v91-item-import-gift-limits",
+            "X-CPS-Build": "v92-gift-edit-item-library-fast",
         },
     )
 
@@ -924,7 +924,7 @@ def player_center_login_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v91-item-import-gift-limits",
+            "X-CPS-Build": "v92-gift-edit-item-library-fast",
         },
     )
 
@@ -3570,20 +3570,62 @@ def privilege_card_claim_records(
 # ---------- 游戏道具库 ----------
 @app.get("/api/game-items")
 def game_items(
-    q: str = "", enabled_only: bool = False, db: Session = Depends(get_db),
-    _=Depends(require_permission("products.view")),
+    q: str = "", enabled_only: bool = False, enabled: str = "",
+    page: int = Query(default=0, ge=0), page_size: int = Query(default=0, ge=0, le=200),
+    db: Session = Depends(get_db), _=Depends(require_permission("products.view")),
 ):
+    """道具库查询。兼容旧调用：不传 page_size 时仍返回数组；分页模式返回 items/total。"""
     query = db.query(GameItem)
     if enabled_only:
         query = query.filter(GameItem.enabled.is_(True))
+    elif enabled.strip().lower() in {"true", "1", "enabled", "active"}:
+        query = query.filter(GameItem.enabled.is_(True))
+    elif enabled.strip().lower() in {"false", "0", "disabled", "inactive"}:
+        query = query.filter(GameItem.enabled.is_(False))
     keyword = q.strip()
     if keyword:
-        query = query.filter((GameItem.name.ilike(f"%{keyword}%")) | (GameItem.item_code.ilike(f"%{keyword}%")) | (GameItem.category.ilike(f"%{keyword}%")))
-    rows = query.order_by(GameItem.enabled.desc(), GameItem.category.asc(), GameItem.id.desc()).all()
-    return [{
+        like = f"%{keyword}%"
+        query = query.filter((GameItem.name.ilike(like)) | (GameItem.item_code.ilike(like)) | (GameItem.category.ilike(like)))
+    ordered = query.order_by(GameItem.enabled.desc(), GameItem.category.asc(), GameItem.id.desc())
+    total = query.count() if page_size else None
+    if page_size:
+        current_page = max(page, 1)
+        rows = ordered.offset((current_page - 1) * page_size).limit(page_size).all()
+    else:
+        current_page = 0
+        rows = ordered.all()
+    payload = [{
         "id": x.id, "item_code": x.item_code, "name": x.name, "category": x.category or "普通道具",
         "enabled": bool(x.enabled), "created_at": dt(x.created_at),
     } for x in rows]
+    if page_size:
+        pages = max((int(total or 0) + page_size - 1) // page_size, 1)
+        return {"items": payload, "total": int(total or 0), "page": current_page, "page_size": page_size, "pages": pages}
+    return payload
+
+
+@app.get("/api/game-items/picker")
+def game_item_picker(
+    q: str = "", limit: int = Query(default=50, ge=1, le=100), ids: str = "",
+    db: Session = Depends(get_db), _=Depends(require_permission("products.view")),
+):
+    """新增/编辑礼包、商品、特权卡使用的轻量道具搜索，避免把整个道具库塞进页面。"""
+    id_values = []
+    for raw in ids.split(","):
+        raw = raw.strip()
+        if raw.isdigit():
+            id_values.append(int(raw))
+    query = db.query(GameItem).filter(GameItem.enabled.is_(True))
+    keyword = q.strip()
+    if keyword:
+        like = f"%{keyword}%"
+        query = query.filter((GameItem.name.ilike(like)) | (GameItem.item_code.ilike(like)) | (GameItem.category.ilike(like)))
+    rows = query.order_by(GameItem.category.asc(), GameItem.id.desc()).limit(limit).all()
+    if id_values:
+        existing_ids = {x.id for x in rows}
+        extra = db.query(GameItem).filter(GameItem.id.in_(id_values)).all()
+        rows.extend(x for x in extra if x.id not in existing_ids)
+    return [{"id": x.id, "item_code": x.item_code, "name": x.name, "category": x.category or "普通道具", "enabled": bool(x.enabled)} for x in rows]
 
 
 GAME_ITEM_IMPORT_ALIASES = {
@@ -3854,6 +3896,51 @@ def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends
         db.add(ProductGameItem(product_id=row.id, game_item_id=item.id, quantity=qty))
     db.commit(); db.refresh(row)
     return {"id": row.id, "message": "礼包创建成功" if body.category == "gift" else "商品创建成功"}
+
+
+@app.put("/api/products/{product_id}")
+def update_product(product_id: int, body: ProductUpdate, db: Session = Depends(get_db), _=Depends(require_permission("products.manage"))):
+    row = db.get(Product, product_id)
+    if not row:
+        raise HTTPException(404, "商品不存在")
+    data = body.model_dump(exclude_unset=True)
+    if "sku" in data:
+        sku = str(data["sku"]).strip()
+        duplicate = db.query(Product.id).filter(Product.sku == sku, Product.id != row.id).first()
+        if duplicate:
+            raise HTTPException(409, "SKU 已存在")
+        row.sku = sku
+    if "name" in data:
+        row.name = str(data["name"]).strip()
+    if "price" in data:
+        price = Decimal(data["price"])
+        if row.category == "gift" and (price <= 0 or price != price.to_integral_value()):
+            raise HTTPException(400, "网页商城礼包的平台币售价必须是大于 0 的整数")
+        if row.category != "gift" and price < 0:
+            raise HTTPException(400, "价格不能小于 0")
+        row.price = price
+    if "stock" in data:
+        row.stock = int(data["stock"])
+    if "enabled" in data:
+        row.enabled = bool(data["enabled"])
+    if row.category == "gift":
+        for field in ("daily_limit", "weekly_limit", "monthly_limit", "lifetime_limit"):
+            if field in data:
+                setattr(row, field, int(data[field] or 0))
+    else:
+        row.daily_limit = row.weekly_limit = row.monthly_limit = row.lifetime_limit = 0
+    if "items" in data:
+        reward_items = normalize_reward_items(db, body.items or [])
+        if not reward_items:
+            raise HTTPException(400, "请至少添加一个游戏道具")
+        db.query(ProductGameItem).filter(ProductGameItem.product_id == row.id).delete(synchronize_session=False)
+        for item, qty in reward_items:
+            db.add(ProductGameItem(product_id=row.id, game_item_id=item.id, quantity=qty))
+        row.description = reward_items_text(reward_items)
+    elif "description" in data:
+        row.description = str(data["description"] or "")
+    db.commit(); db.refresh(row)
+    return {"message": "礼包已更新" if row.category == "gift" else "商品已更新"}
 
 # ---------- 兑换码管理 ----------
 @app.get("/api/redemption-batches")

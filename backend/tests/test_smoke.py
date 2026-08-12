@@ -2526,7 +2526,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v91-item-import-gift-limits' in index_html
+    assert '/static/app.js?v=v92-gift-edit-item-library-fast' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,13 +2833,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v91-item-import-gift-limits'
+        assert index.headers.get('x-cps-build') == 'v92-gift-edit-item-library-fast'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v91-item-import-gift-limits')
+        js = c.get('/static/app.js?v=v92-gift-edit-item-library-fast')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2899,9 +2899,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V91 · ITEM IMPORT + GIFT LIMITS' in index_html
-    assert '/static/styles.css?v=v91-item-import-gift-limits' in index_html
-    assert '/static/app.js?v=v91-item-import-gift-limits' in index_html
+    assert 'V92 · GIFT EDIT + ITEM LIBRARY FAST' in index_html
+    assert '/static/styles.css?v=v92-gift-edit-item-library-fast' in index_html
+    assert '/static/app.js?v=v92-gift-edit-item-library-fast' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2917,9 +2917,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V91 · ITEM IMPORT + GIFT LIMITS' in index_html
-    assert '/static/styles.css?v=v91-item-import-gift-limits' in index_html
-    assert '/static/app.js?v=v91-item-import-gift-limits' in index_html
+    assert 'V92 · GIFT EDIT + ITEM LIBRARY FAST' in index_html
+    assert '/static/styles.css?v=v92-gift-edit-item-library-fast' in index_html
+    assert '/static/app.js?v=v92-gift-edit-item-library-fast' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2943,9 +2943,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V91 · ITEM IMPORT + GIFT LIMITS" in index_html
-    assert "/static/styles.css?v=v91-item-import-gift-limits" in index_html
-    assert "/static/app.js?v=v91-item-import-gift-limits" in index_html
+    assert "V92 · GIFT EDIT + ITEM LIBRARY FAST" in index_html
+    assert "/static/styles.css?v=v92-gift-edit-item-library-fast" in index_html
+    assert "/static/app.js?v=v92-gift-edit-item-library-fast" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2977,7 +2977,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v91-item-import-gift-limits'
+        assert player.headers.get('x-cps-build') == 'v92-gift-edit-item-library-fast'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3055,7 +3055,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V91 · ITEM IMPORT + GIFT LIMITS' in index_html
+    assert 'V92 · GIFT EDIT + ITEM LIBRARY FAST' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3158,3 +3158,89 @@ def test_v91_gift_daily_weekly_monthly_and_lifetime_purchase_limits_are_enforced
             assert after['available'] is False
             assert label in after['unavailable_reason']
             assert after['purchase_limit_status']['periods'][period_key]['remaining'] == 0
+
+
+
+def test_v92_game_item_library_query_is_paginated_and_picker_is_lightweight():
+    """V92：道具库管理页使用服务端分页查询，选择器使用轻量搜索接口。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        h = auth(admin)
+        for i in range(7):
+            r = c.post('/api/game-items', headers=h, json={
+                'item_code': f'V92-QUERY-{i:02d}', 'name': f'V92查询道具{i}', 'category': 'V92查询分类', 'enabled': i != 6,
+            })
+            assert r.status_code == 200, r.text
+
+        page1 = c.get('/api/game-items?q=V92-QUERY&page=1&page_size=3', headers=h)
+        assert page1.status_code == 200, page1.text
+        data1 = page1.json()
+        assert data1['total'] == 7
+        assert data1['page'] == 1 and data1['page_size'] == 3 and data1['pages'] == 3
+        assert len(data1['items']) == 3
+
+        page2 = c.get('/api/game-items?q=V92-QUERY&page=2&page_size=3', headers=h)
+        assert page2.status_code == 200, page2.text
+        assert len(page2.json()['items']) == 3
+        assert {x['id'] for x in data1['items']}.isdisjoint({x['id'] for x in page2.json()['items']})
+
+        disabled = c.get('/api/game-items?q=V92-QUERY&enabled=false&page=1&page_size=50', headers=h)
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()['total'] == 1
+        assert disabled.json()['items'][0]['item_code'] == 'V92-QUERY-06'
+
+        picker = c.get('/api/game-items/picker?q=V92查询&limit=2', headers=h)
+        assert picker.status_code == 200, picker.text
+        assert len(picker.json()) == 2
+        assert all(x['enabled'] for x in picker.json())
+
+
+def test_v92_gift_can_be_edited_and_switched_on_off():
+    """V92：礼包支持编辑道具、价格、库存、限购，并可上下架。"""
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        h = auth(admin)
+        item = c.post('/api/game-items', headers=h, json={
+            'item_code': 'V92-GIFT-ITEM', 'name': 'V92礼包道具', 'category': '礼包', 'enabled': True,
+        })
+        assert item.status_code == 200, item.text
+        item_id = item.json()['id']
+        created = c.post('/api/products', headers=h, json={
+            'sku': 'V92-GIFT-EDIT', 'name': 'V92原礼包', 'category': 'gift', 'price': 20, 'stock': 10,
+            'items': [{'item_id': item_id, 'quantity': 1}], 'daily_limit': 1, 'enabled': True,
+        })
+        assert created.status_code == 200, created.text
+        gift_id = created.json()['id']
+
+        updated = c.put(f'/api/products/{gift_id}', headers=h, json={
+            'name': 'V92编辑后礼包', 'price': 30, 'stock': 25,
+            'items': [{'item_id': item_id, 'quantity': 8}],
+            'daily_limit': 2, 'weekly_limit': 5, 'monthly_limit': 9, 'lifetime_limit': 20,
+            'enabled': False,
+        })
+        assert updated.status_code == 200, updated.text
+        row = next(x for x in c.get('/api/products?category=gift', headers=h).json() if x['id'] == gift_id)
+        assert row['name'] == 'V92编辑后礼包'
+        assert row['price'] == 30
+        assert row['stock'] == 25
+        assert row['items'][0]['quantity'] == 8
+        assert row['daily_limit'] == 2 and row['weekly_limit'] == 5
+        assert row['monthly_limit'] == 9 and row['lifetime_limit'] == 20
+        assert row['enabled'] is False
+
+        switched = c.put(f'/api/products/{gift_id}', headers=h, json={'enabled': True})
+        assert switched.status_code == 200, switched.text
+        row2 = next(x for x in c.get('/api/products?category=gift', headers=h).json() if x['id'] == gift_id)
+        assert row2['enabled'] is True
+
+
+def test_v92_frontend_has_gift_edit_toggle_and_server_side_item_search():
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    assert 'window.editProduct=' in app_js
+    assert 'window.toggleProductEnabled=' in app_js
+    assert "remoteApi:'/api/game-items/picker'" in app_js
+    assert "page_size:String(gameItemSearch.page_size)" in app_js
+    assert 'id="gameItemSearchBtn"' in app_js
+    assert '.game-item-pager' in css

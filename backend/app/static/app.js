@@ -13,6 +13,7 @@ let playerSearch = {account:'', role:'', parent:''};
 let platformOrderSearch = {order_no:'', account:'', payment_method:'', status:'', start_date:'', end_date:''};
 let mallOrderSearch = {account:'', product:''};
 let settlementSearch = {account:'', public_agent_id:'', agent_level:'', start_date:'', end_date:''};
+let gameItemSearch = {q:'', enabled:'', page:1, page_size:50};
 let systemMetricsTimer = null;
 let systemMetricsLoading = false;
 let paymentTestState = {players:[], selectedAccount:'', order:null};
@@ -630,8 +631,7 @@ async function renderPaymentTest(loadPlayers=true){
 
 function privilegeCardTypeText(v){return ({week:'周卡',month:'月卡',year:'年卡'})[v]||v||'-'}
 async function openPrivilegeCardForm(row=null){
- const library=await api('/api/game-items?enabled_only=true');
- const cfg={path:row?`/api/privilege-cards/${Number(row.id)}`:'/api/privilege-cards',method:row?'PUT':'POST',note:'每日奖励从统一道具库选择，可添加多个道具并分别填写数量。',defaults:row?{name:row.name,card_type:row.card_type,price_coins:row.price_coins,items:row.items||[],enabled:String(Boolean(row.enabled))}:{name:'',card_type:'week',price_coins:50,items:[],enabled:'true'},fields:[['name','特权卡名称'],['card_type','类型','select',true,{options:[{value:'week',label:'周卡（7天）'},{value:'month',label:'月卡（30天）'},{value:'year',label:'年卡（365天）'}]}],['price_coins','平台币售价','number',true,{min:1,step:1}],['items','每日奖励道具','item-builder',true,{options:itemPickerOptions(library)}],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,price_coins:Number(o.price_coins),items:parseItemBuilderValue(o.items),enabled:String(o.enabled)!=='false'})};
+ const cfg={path:row?`/api/privilege-cards/${Number(row.id)}`:'/api/privilege-cards',method:row?'PUT':'POST',note:'每日奖励从统一道具库搜索选择，可添加多个道具并分别填写数量。',defaults:row?{name:row.name,card_type:row.card_type,price_coins:row.price_coins,items:row.items||[],enabled:String(Boolean(row.enabled))}:{name:'',card_type:'week',price_coins:50,items:[],enabled:'true'},fields:[['name','特权卡名称'],['card_type','类型','select',true,{options:[{value:'week',label:'周卡（7天）'},{value:'month',label:'月卡（30天）'},{value:'year',label:'年卡（365天）'}]}],['price_coins','平台币售价','number',true,{min:1,step:1}],['items','每日奖励道具','item-builder',true,{options:itemPickerOptions(row?.items||[]),remoteApi:'/api/game-items/picker'}],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,price_coins:Number(o.price_coins),items:parseItemBuilderValue(o.items),enabled:String(o.enabled)!=='false'})};
  openForm(row?'编辑特权卡':'新增特权卡',cfg);
 }
 window.editPrivilegeCard=(id)=>{const row=(window.__privilegeRows||[]).find(x=>Number(x.id)===Number(id));if(row)openPrivilegeCardForm(row).catch(e=>showToast(e.message,'error',4200))};
@@ -1057,14 +1057,13 @@ window.openPlayerEdit=async(playerPk)=>{
  }catch(e){showToast(e.message,'error',4200)}
 };
 
-function itemPickerOptions(rows){return (rows||[]).map(x=>({value:Number(x.id),code:x.item_code,name:x.name,category:x.category,label:`${x.name} · ${x.item_code}${x.category?` · ${x.category}`:''}`}))}
-async function openProductCreateForm(cat){
- const items=await api('/api/game-items?enabled_only=true');
+function itemPickerOptions(rows){return (rows||[]).map(x=>({value:Number(x.id||x.item_id),code:x.item_code,name:x.name,category:x.category,label:`${x.name} · ${x.item_code}${x.category?` · ${x.category}`:''}`})).filter(x=>x.value>0)}
+function productFormConfig(cat,row=null){
  const isGift=cat==='gift';
- openForm(isGift?'新增礼包':'新增商品',{
-   path:'/api/products',
-   note:'道具内容必须从统一道具库选择。若没有需要的道具，请先进入“商品管理 → 道具库”新增。',
-   defaults:{price:isGift?1:0,stock:0,items:[],daily_limit:0,weekly_limit:0,monthly_limit:0,lifetime_limit:0},
+ return {
+   path:row?`/api/products/${Number(row.id)}`:'/api/products',method:row?'PUT':'POST',
+   note:'道具内容从统一道具库搜索选择，不会再一次性加载整个道具库。',
+   defaults:row?{sku:row.sku,name:row.name,price:row.price,stock:row.stock,items:row.items||[],daily_limit:row.daily_limit||0,weekly_limit:row.weekly_limit||0,monthly_limit:row.monthly_limit||0,lifetime_limit:row.lifetime_limit||0,enabled:String(Boolean(row.enabled))}:{sku:'',name:'',price:isGift?1:0,stock:0,items:[],daily_limit:0,weekly_limit:0,monthly_limit:0,lifetime_limit:0,enabled:'true'},
    fields:[
      ['sku','SKU'],['name',isGift?'礼包名称':'商品名称'],
      ['price',isGift?'平台币售价':'价格','number',true,{min:isGift?1:0,step:isGift?1:0.01}],
@@ -1075,23 +1074,30 @@ async function openProductCreateForm(cat){
        ['monthly_limit','每月限购次数','number',false,{min:0,step:1,placeholder:'0 = 不限购'}],
        ['lifetime_limit','永久限购次数','number',false,{min:0,step:1,placeholder:'0 = 不限购'}]
      ]:[]),
-     ['items',isGift?'礼包道具':'商品道具','item-builder',true,{options:itemPickerOptions(items)}]
+     ['items',isGift?'礼包道具':'商品道具','item-builder',true,{options:itemPickerOptions(row?.items||[]),remoteApi:'/api/game-items/picker'}],
+     ['enabled',isGift?'上架状态':'状态','select',true,{options:[{value:'true',label:isGift?'上架':'启用'},{value:'false',label:isGift?'下架':'停用'}]}]
    ],
-   transform:o=>({
-     sku:String(o.sku||'').trim(),name:String(o.name||'').trim(),category:cat,price:Number(o.price||0),stock:Number(o.stock||0),
-     daily_limit:isGift?Math.max(0,Number(o.daily_limit||0)):0,weekly_limit:isGift?Math.max(0,Number(o.weekly_limit||0)):0,
-     monthly_limit:isGift?Math.max(0,Number(o.monthly_limit||0)):0,lifetime_limit:isGift?Math.max(0,Number(o.lifetime_limit||0)):0,
-     items:parseItemBuilderValue(o.items),description:''
-   })
- });
+   transform:o=>{
+     const out={sku:String(o.sku||'').trim(),name:String(o.name||'').trim(),price:Number(o.price||0),stock:Number(o.stock||0),
+       daily_limit:isGift?Math.max(0,Number(o.daily_limit||0)):0,weekly_limit:isGift?Math.max(0,Number(o.weekly_limit||0)):0,
+       monthly_limit:isGift?Math.max(0,Number(o.monthly_limit||0)):0,lifetime_limit:isGift?Math.max(0,Number(o.lifetime_limit||0)):0,
+       items:parseItemBuilderValue(o.items),enabled:String(o.enabled)!=='false',description:''};
+     if(!row)out.category=cat;
+     return out;
+   }
+ };
 }
+function openProductForm(cat,row=null){openForm(row?(cat==='gift'?'编辑礼包':'编辑商品'):(cat==='gift'?'新增礼包':'新增商品'),productFormConfig(cat,row))}
+window.editProduct=id=>{const row=(window.__productRows||[]).find(x=>Number(x.id)===Number(id));if(row)openProductForm(row.category,row)};
+window.toggleProductEnabled=async id=>{const row=(window.__productRows||[]).find(x=>Number(x.id)===Number(id));if(!row)return;const next=!Boolean(row.enabled);const noun=row.category==='gift'?'礼包':'商品';try{const r=await api(`/api/products/${Number(id)}`,{method:'PUT',body:JSON.stringify({enabled:next})});showToast(r.message||`${noun}已${next?'上架':'下架'}`,'success');await renderProducts(row.category)}catch(e){showToast(e.message,'error',4200)}};
 async function renderProducts(cat){
- const rows=await api('/api/products?category='+cat),manage=hasPermission('products.manage');
+ const rows=await api('/api/products?category='+cat),manage=hasPermission('products.manage');window.__productRows=rows;
  const cols=[['SKU','sku'],['名称','name'],[cat==='gift'?'平台币售价':'价格','price'],['库存','stock'],['道具内容','item_summary']];
  if(cat==='gift')cols.push(['限购规则','purchase_limit_text']);
  cols.push(['状态','enabled',v=>badge(v?'active':'disabled')]);
+ if(manage)cols.push(['操作','id',(v,r)=>`<div class="table-action-buttons"><button class="btn small" onclick="editProduct(${Number(v)})">编辑</button><button class="btn small ${r.enabled?'danger':''}" onclick="toggleProductEnabled(${Number(v)})">${r.enabled?(cat==='gift'?'下架':'停用'):(cat==='gift'?'上架':'启用')}</button></div>`]);
  $('#content').innerHTML=panel(cat==='gift'?'礼包列表':'商品列表',table(rows,cols),manage?`<button class="btn primary" id="addBtn">＋ ${cat==='gift'?'新增礼包':'新增商品'}</button>`:'');
- if(manage)$('#addBtn').onclick=()=>openProductCreateForm(cat).catch(e=>showToast(e.message,'error',4200));
+ if(manage)$('#addBtn').onclick=()=>openProductForm(cat);
 }
 function openGameItemForm(row=null){
  const cfg={path:row?`/api/game-items/${Number(row.id)}`:'/api/game-items',method:row?'PUT':'POST',defaults:row?{item_code:row.item_code,name:row.name,category:row.category,enabled:String(Boolean(row.enabled))}:{item_code:'',name:'',category:'普通道具',enabled:'true'},fields:[['item_code','游戏道具ID / 代码'],['name','道具名称'],['category','道具分类'],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,item_code:String(o.item_code||'').trim(),name:String(o.name||'').trim(),category:String(o.category||'普通道具').trim()||'普通道具',enabled:String(o.enabled)!=='false'})};
@@ -1099,17 +1105,23 @@ function openGameItemForm(row=null){
 }
 window.editGameItem=id=>{const row=(window.__gameItemRows||[]).find(x=>Number(x.id)===Number(id));if(row)openGameItemForm(row)};
 window.deleteGameItem=async id=>{if(!confirm('确认从道具库删除该道具？已被礼包、商品或特权卡使用的道具不能删除。'))return;try{const r=await api(`/api/game-items/${Number(id)}`,{method:'DELETE'});showToast(r.message||'道具已删除','success');await renderGameItems()}catch(e){showToast(e.message,'error',4200)}};
+window.gameItemPage=page=>{gameItemSearch.page=Math.max(1,Number(page)||1);renderGameItems()};
 async function renderGameItems(){
- const rows=await api('/api/game-items');window.__gameItemRows=rows;const manage=hasPermission('products.manage');
+ const params=new URLSearchParams({page:String(gameItemSearch.page),page_size:String(gameItemSearch.page_size)});if(gameItemSearch.q)params.set('q',gameItemSearch.q);if(gameItemSearch.enabled)params.set('enabled',gameItemSearch.enabled);
+ const data=await api('/api/game-items?'+params.toString()),rows=data.items||[];window.__gameItemRows=rows;const manage=hasPermission('products.manage');
  const cols=[['道具ID / 代码','item_code'],['道具名称','name'],['分类','category'],['状态','enabled',v=>badge(v?'active':'disabled')],['创建时间','created_at']];
  if(manage)cols.push(['操作','id',v=>`<div class="table-action-buttons"><button class="btn small" onclick="editGameItem(${Number(v)})">编辑</button><button class="btn small danger" onclick="deleteGameItem(${Number(v)})">删除</button></div>`]);
- const importBox=manage?`<div class="game-item-import-box"><div><strong>批量导入道具库</strong><span>支持 Excel .xlsx / .xls、CSV、JSON、TXT。至少需要“道具ID/代码 + 道具名称”两列；同ID再次导入会更新名称、分类和状态。</span></div><input id="gameItemImportFile" type="file" accept=".xlsx,.xls,.csv,.json,.txt" hidden></div>`:'';
- $('#content').innerHTML=panel('道具库',`${importBox}<div class="query-scope-note">统一维护游戏服道具ID/代码。礼包、商品和特权卡只能从这里选择道具，避免手工文本写错。</div>${table(rows,cols)}`,manage?'<button class="btn" id="importGameItemsBtn">⇧ 导入文件</button> <button class="btn primary" id="addGameItemBtn">＋ 新增道具</button>':'');
+ const importBox=manage?`<div class="game-item-import-box"><div><strong>批量导入道具库</strong><span>支持 Excel .xlsx / .xls、CSV、JSON、TXT。同ID再次导入会更新。</span></div><input id="gameItemImportFile" type="file" accept=".xlsx,.xls,.csv,.json,.txt" hidden></div>`:'';
+ const queryBox=`<div class="game-item-query"><div class="query-field"><label>查询道具</label><input id="gameItemQuery" value="${esc(gameItemSearch.q)}" placeholder="道具ID / 名称 / 分类"></div><div class="query-field query-status"><label>状态</label><select id="gameItemEnabled"><option value="" ${!gameItemSearch.enabled?'selected':''}>全部</option><option value="true" ${gameItemSearch.enabled==='true'?'selected':''}>启用</option><option value="false" ${gameItemSearch.enabled==='false'?'selected':''}>停用</option></select></div><div class="query-actions"><button class="btn primary" id="gameItemSearchBtn">查询</button><button class="btn" id="gameItemResetBtn">重置</button></div></div>`;
+ const total=Number(data.total||0),page=Number(data.page||1),pages=Number(data.pages||1);
+ const pager=`<div class="game-item-pager"><span>共 ${total.toLocaleString()} 条 · 第 ${page}/${pages} 页</span><div><button class="btn small" ${page<=1?'disabled':''} onclick="gameItemPage(${page-1})">上一页</button><button class="btn small" ${page>=pages?'disabled':''} onclick="gameItemPage(${page+1})">下一页</button></div></div>`;
+ $('#content').innerHTML=panel('道具库',`${importBox}${queryBox}<div class="query-scope-note">默认每页只加载 ${gameItemSearch.page_size} 条，避免大规模道具库打开时卡顿。</div>${table(rows,cols)}${pager}`,manage?'<button class="btn" id="importGameItemsBtn">⇧ 导入文件</button> <button class="btn primary" id="addGameItemBtn">＋ 新增道具</button>':'');
+ const submitSearch=()=>{gameItemSearch.q=$('#gameItemQuery').value.trim();gameItemSearch.enabled=$('#gameItemEnabled').value;gameItemSearch.page=1;renderGameItems()};
+ $('#gameItemSearchBtn').onclick=submitSearch;$('#gameItemQuery').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submitSearch()}};$('#gameItemResetBtn').onclick=()=>{gameItemSearch={q:'',enabled:'',page:1,page_size:50};renderGameItems()};
  if(manage){
    $('#addGameItemBtn').onclick=()=>openGameItemForm();
-   const fileInput=$('#gameItemImportFile');
-   $('#importGameItemsBtn').onclick=()=>fileInput.click();
-   fileInput.onchange=async()=>{const file=fileInput.files?.[0];if(!file)return;const fd=new FormData();fd.append('file',file);const btn=$('#importGameItemsBtn');const old=btn.textContent;btn.disabled=true;btn.textContent='导入中…';try{const r=await apiUpload('/api/game-items/import',fd);showToast(r.message||'道具导入完成','success',3600);if(Array.isArray(r.errors)&&r.errors.length)showToast(`部分数据已跳过：\n${r.errors.slice(0,5).join('\n')}`,'error',5200);await renderGameItems()}catch(e){showToast(e.message,'error',4800)}finally{if(document.body.contains(btn)){btn.disabled=false;btn.textContent=old}}};
+   const fileInput=$('#gameItemImportFile');$('#importGameItemsBtn').onclick=()=>fileInput.click();
+   fileInput.onchange=async()=>{const file=fileInput.files?.[0];if(!file)return;const fd=new FormData();fd.append('file',file);const btn=$('#importGameItemsBtn');const old=btn.textContent;btn.disabled=true;btn.textContent='导入中…';try{const r=await apiUpload('/api/game-items/import',fd);showToast(r.message||'道具导入完成','success',3600);if(Array.isArray(r.errors)&&r.errors.length)showToast(`部分数据已跳过：\n${r.errors.slice(0,5).join('\n')}`,'error',5200);gameItemSearch.page=1;await renderGameItems()}catch(e){showToast(e.message,'error',4800)}finally{if(document.body.contains(btn)){btn.disabled=false;btn.textContent=old}}};
  }
 }
 async function renderCDK(){const rows=await api('/api/redemption-batches');const manage=hasPermission('cdk.manage');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>':'');if(manage){$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}}
@@ -1241,7 +1253,8 @@ function fieldControl(name,type,val,required,meta){
  if(type==='item-builder'){
    const items=Array.isArray(val)?val:[];
    const options=(meta?.options||[]).map(o=>`<option value="${esc(o.value)}" data-code="${esc(o.code||'')}" data-name="${esc(o.name||o.label||'')}" data-category="${esc(o.category||'')}">${esc(o.label)}</option>`).join('');
-   return `<div class="item-builder" data-item-builder><div class="item-builder-picker"><input type="search" class="item-library-search" placeholder="搜索道具ID / 名称 / 分类" autocomplete="off"><select class="item-library-select"><option value="">请选择游戏道具</option>${options}</select><input type="number" class="item-library-qty" min="1" step="1" value="1" aria-label="道具数量"><button type="button" class="btn item-library-add">添加</button></div><div class="item-builder-list"></div><input type="hidden" name="${name}" value="${esc(JSON.stringify(items))}"><div class="item-builder-help">从道具库选择道具，填写数量后点击“添加”；一个配置可添加多个道具。</div></div>`;
+   const remoteApi=meta?.remoteApi||'';
+   return `<div class="item-builder" data-item-builder data-item-api="${esc(remoteApi)}"><div class="item-builder-picker"><input type="search" class="item-library-search" placeholder="搜索道具ID / 名称 / 分类" autocomplete="off"><select class="item-library-select"><option value="">${remoteApi?'输入关键词搜索道具':'请选择游戏道具'}</option>${options}</select><input type="number" class="item-library-qty" min="1" step="1" value="1" aria-label="道具数量"><button type="button" class="btn item-library-add">添加</button></div><div class="item-builder-list"></div><input type="hidden" name="${name}" value="${esc(JSON.stringify(items))}"><div class="item-builder-help">输入道具ID、名称或分类搜索，选择道具并填写数量后添加。</div></div>`;
  }
  if(type==='search-select'){
    const emptyLabel=meta?.emptyLabel||'保持当前归属（不修改）';
@@ -1272,28 +1285,22 @@ function bindSearchSelects(root){
 }
 function bindItemBuilders(root){
   root.querySelectorAll('[data-item-builder]').forEach(wrap=>{
-    const search=wrap.querySelector('.item-library-search');
-    const select=wrap.querySelector('.item-library-select');
-    const qty=wrap.querySelector('.item-library-qty');
-    const add=wrap.querySelector('.item-library-add');
-    const list=wrap.querySelector('.item-builder-list');
-    const hidden=wrap.querySelector('input[type="hidden"]');
+    const search=wrap.querySelector('.item-library-search'),select=wrap.querySelector('.item-library-select'),qty=wrap.querySelector('.item-library-qty'),add=wrap.querySelector('.item-library-add'),list=wrap.querySelector('.item-builder-list'),hidden=wrap.querySelector('input[type="hidden"]');
     if(!select||!qty||!add||!list||!hidden)return;
-    const all=[...select.options].slice(1).map(o=>({value:Number(o.value),label:o.textContent||'',code:o.dataset.code||'',name:o.dataset.name||o.textContent||'',category:o.dataset.category||''}));
+    const remoteApi=wrap.dataset.itemApi||'';
+    let all=[...select.options].slice(1).map(o=>({value:Number(o.value),label:o.textContent||'',code:o.dataset.code||'',name:o.dataset.name||o.textContent||'',category:o.dataset.category||''}));
     let items=[];try{items=JSON.parse(hidden.value||'[]')}catch{items=[]}
     items=Array.isArray(items)?items.map(x=>({item_id:Number(x.item_id||x.id||0),quantity:Number(x.quantity||1)})).filter(x=>x.item_id>0&&x.quantity>0):[];
     const sync=()=>{hidden.value=JSON.stringify(items)};
-    const render=()=>{
-      if(!items.length){list.innerHTML='<div class="item-builder-empty">尚未添加道具</div>';sync();return;}
-      list.innerHTML=items.map((x,index)=>{const info=all.find(o=>o.value===Number(x.item_id));const label=info?.name||`道具 #${x.item_id}`;const code=info?.code?` · ${esc(info.code)}`:'';return `<div class="item-builder-row"><div class="item-builder-item"><strong>${esc(label)}</strong><span>${code}${info?.category?` · ${esc(info.category)}`:''}</span></div><input type="number" min="1" step="1" value="${Number(x.quantity)}" data-item-qty-index="${index}" aria-label="${esc(label)}数量"><button type="button" class="btn small danger" data-item-remove-index="${index}">删除</button></div>`}).join('');
-      list.querySelectorAll('[data-item-qty-index]').forEach(input=>input.onchange=()=>{const i=Number(input.dataset.itemQtyIndex);const v=Number(input.value||0);if(!Number.isInteger(v)||v<=0){showToast('道具数量必须是大于 0 的整数','error',3000);input.value=items[i].quantity;return}items[i].quantity=v;sync()});
-      list.querySelectorAll('[data-item-remove-index]').forEach(btn=>btn.onclick=()=>{items.splice(Number(btn.dataset.itemRemoveIndex),1);render()});
-      sync();
-    };
-    const filter=()=>{const q=String(search?.value||'').trim().toLowerCase();const selected=select.value;select.innerHTML='<option value="">请选择游戏道具</option>'+all.filter(o=>!q||`${o.code} ${o.name} ${o.category}`.toLowerCase().includes(q)).map(o=>`<option value="${o.value}" data-code="${esc(o.code)}" data-name="${esc(o.name)}" data-category="${esc(o.category)}">${esc(o.label)}</option>`).join('');if([...select.options].some(o=>o.value===selected))select.value=selected};
-    if(search)search.oninput=filter;
+    const mergeOptions=rows=>{(rows||[]).forEach(x=>{const opt=itemPickerOptions([x])[0];if(opt&&!all.some(a=>a.value===opt.value))all.push(opt)})};
+    const render=()=>{if(!items.length){list.innerHTML='<div class="item-builder-empty">尚未添加道具</div>';sync();return}list.innerHTML=items.map((x,index)=>{const info=all.find(o=>o.value===Number(x.item_id));const label=info?.name||`道具 #${x.item_id}`;const code=info?.code?` · ${esc(info.code)}`:'';return `<div class="item-builder-row"><div class="item-builder-item"><strong>${esc(label)}</strong><span>${code}${info?.category?` · ${esc(info.category)}`:''}</span></div><input type="number" min="1" step="1" value="${Number(x.quantity)}" data-item-qty-index="${index}" aria-label="${esc(label)}数量"><button type="button" class="btn small danger" data-item-remove-index="${index}">删除</button></div>`}).join('');list.querySelectorAll('[data-item-qty-index]').forEach(input=>input.onchange=()=>{const i=Number(input.dataset.itemQtyIndex),v=Number(input.value||0);if(!Number.isInteger(v)||v<=0){showToast('道具数量必须是大于 0 的整数','error',3000);input.value=items[i].quantity;return}items[i].quantity=v;sync()});list.querySelectorAll('[data-item-remove-index]').forEach(btn=>btn.onclick=()=>{items.splice(Number(btn.dataset.itemRemoveIndex),1);render()});sync()};
+    const rebuild=rows=>{const selected=select.value;select.innerHTML='<option value="">请选择游戏道具</option>'+rows.map(o=>`<option value="${o.value}" data-code="${esc(o.code)}" data-name="${esc(o.name)}" data-category="${esc(o.category)}">${esc(o.label)}</option>`).join('');if([...select.options].some(o=>o.value===selected))select.value=selected};
+    let searchTimer=0,requestSeq=0;
+    const remoteSearch=async()=>{const seq=++requestSeq,q=String(search?.value||'').trim();select.innerHTML='<option value="">搜索中…</option>';try{const ids=items.map(x=>x.item_id).join(',');const rows=await api(`${remoteApi}?q=${encodeURIComponent(q)}&limit=50${ids?`&ids=${encodeURIComponent(ids)}`:''}`);if(seq!==requestSeq)return;mergeOptions(rows);const visible=itemPickerOptions(rows);rebuild(visible);render()}catch(e){if(seq===requestSeq)select.innerHTML='<option value="">道具搜索失败</option>'}};
+    const localFilter=()=>{const q=String(search?.value||'').trim().toLowerCase();rebuild(all.filter(o=>!q||`${o.code} ${o.name} ${o.category}`.toLowerCase().includes(q)))};
+    if(search)search.oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(remoteApi?remoteSearch:localFilter,220)};
     add.onclick=()=>{const itemId=Number(select.value||0),amount=Number(qty.value||0);if(!itemId)return showToast('请先从道具库选择一个道具','error',3000);if(!Number.isInteger(amount)||amount<=0)return showToast('道具数量必须是大于 0 的整数','error',3000);const existing=items.find(x=>Number(x.item_id)===itemId);if(existing)existing.quantity=amount;else items.push({item_id:itemId,quantity:amount});qty.value='1';render()};
-    render();
+    render();if(remoteApi)remoteSearch();
   });
 }
 function parseItemBuilderValue(value){
