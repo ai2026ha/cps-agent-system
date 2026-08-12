@@ -502,3 +502,18 @@ html{scrollbar-gutter:stable}
 .login-card .login-brand-name.brand-name-xlong{font-size:18px}
 .sidebar .brand .brand-name,.sidebar .brand .brand-name *{box-sizing:border-box}
 .sidebar .brand .brand-name .brand-name-segment{font-size:inherit!important}
+
+/* V90: 统一游戏道具库选择器（礼包 / 商品 / 特权卡） */
+.item-builder{display:grid;gap:10px;padding:12px;border:1px solid #e1e6ef;border-radius:11px;background:#fafbfd}
+.item-builder-picker{display:grid;grid-template-columns:minmax(160px,.9fr) minmax(220px,1.35fr) 110px auto;gap:8px;align-items:center}
+.item-builder-picker input,.item-builder-picker select{width:100%;height:40px;border:1px solid #dce2ed;border-radius:8px;background:#fff;padding:8px 10px;outline:none;color:#172033}
+.item-builder-picker input:focus,.item-builder-picker select:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}
+.item-library-add{height:40px;white-space:nowrap}
+.item-builder-list{display:grid;gap:7px}
+.item-builder-empty{padding:12px;text-align:center;border:1px dashed #dce3ed;border-radius:9px;color:#8c97aa;background:#fff;font-size:12px}
+.item-builder-row{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;gap:8px;align-items:center;padding:9px 10px;border:1px solid #e3e8f0;border-radius:9px;background:#fff}
+.item-builder-item{min-width:0;display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}.item-builder-item strong{font-size:13px;color:#27354d}.item-builder-item span{font-size:11px;color:#8a95a8}
+.item-builder-row>input{width:100%;height:36px;border:1px solid #dce2ed;border-radius:8px;padding:6px 9px}
+.item-builder-help{font-size:11.5px;line-height:1.5;color:#8792a5}
+@media(max-width:800px){.item-builder-picker{grid-template-columns:1fr 1fr}.item-library-search{grid-column:1/-1}.item-builder-row{grid-template-columns:minmax(0,1fr) 90px auto}}
+@media(max-width:560px){.item-builder-picker{grid-template-columns:1fr}.item-library-search{grid-column:auto}.item-builder-row{grid-template-columns:minmax(0,1fr) 82px}.item-builder-row .danger{grid-column:1/-1}}

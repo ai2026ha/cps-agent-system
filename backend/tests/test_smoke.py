@@ -2526,7 +2526,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v89-agent-dashboard-hard-hide' in index_html
+    assert '/static/app.js?v=v90-game-item-library' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,13 +2833,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v89-agent-dashboard-hard-hide'
+        assert index.headers.get('x-cps-build') == 'v90-game-item-library'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v89-agent-dashboard-hard-hide')
+        js = c.get('/static/app.js?v=v90-game-item-library')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2899,9 +2899,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V89 · AGENT DASHBOARD HARD HIDE' in index_html
-    assert '/static/styles.css?v=v89-agent-dashboard-hard-hide' in index_html
-    assert '/static/app.js?v=v89-agent-dashboard-hard-hide' in index_html
+    assert 'V90 · GAME ITEM LIBRARY' in index_html
+    assert '/static/styles.css?v=v90-game-item-library' in index_html
+    assert '/static/app.js?v=v90-game-item-library' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2917,9 +2917,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V89 · AGENT DASHBOARD HARD HIDE' in index_html
-    assert '/static/styles.css?v=v89-agent-dashboard-hard-hide' in index_html
-    assert '/static/app.js?v=v89-agent-dashboard-hard-hide' in index_html
+    assert 'V90 · GAME ITEM LIBRARY' in index_html
+    assert '/static/styles.css?v=v90-game-item-library' in index_html
+    assert '/static/app.js?v=v90-game-item-library' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2943,9 +2943,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V89 · AGENT DASHBOARD HARD HIDE" in index_html
-    assert "/static/styles.css?v=v89-agent-dashboard-hard-hide" in index_html
-    assert "/static/app.js?v=v89-agent-dashboard-hard-hide" in index_html
+    assert "V90 · GAME ITEM LIBRARY" in index_html
+    assert "/static/styles.css?v=v90-game-item-library" in index_html
+    assert "/static/app.js?v=v90-game-item-library" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2977,7 +2977,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v89-agent-dashboard-hard-hide'
+        assert player.headers.get('x-cps-build') == 'v90-game-item-library'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3006,3 +3006,57 @@ def test_v89_agent_dashboard_hard_hides_commission_cards():
     agent_return = dashboard_api[dashboard_api.index('"dashboard_type": "agent"'):]
     for key in ['commission_rate', 'yesterday_commission', 'today_commission', 'total_commission']:
         assert f'"{key}"' not in agent_return
+
+
+def test_v90_game_item_library_and_reward_item_relations():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        h = auth(admin)
+        item1 = c.post('/api/game-items', headers=h, json={'item_code':'ITEM-1001','name':'测试强化石','category':'强化材料','enabled':True})
+        assert item1.status_code == 200, item1.text
+        item2 = c.post('/api/game-items', headers=h, json={'item_code':'ITEM-1002','name':'测试宝石','category':'宝石','enabled':True})
+        assert item2.status_code == 200, item2.text
+        i1, i2 = item1.json()['id'], item2.json()['id']
+
+        library = c.get('/api/game-items?enabled_only=true', headers=h)
+        assert library.status_code == 200
+        assert {x['item_code'] for x in library.json()} >= {'ITEM-1001','ITEM-1002'}
+
+        gift = c.post('/api/products', headers=h, json={
+            'sku':'V90-GIFT-001','name':'V90测试礼包','category':'gift','price':88,'stock':10,'description':'',
+            'items':[{'item_id':i1,'quantity':3},{'item_id':i2,'quantity':9}],
+        })
+        assert gift.status_code == 200, gift.text
+        gifts = c.get('/api/products?category=gift', headers=h)
+        row = next(x for x in gifts.json() if x['sku']=='V90-GIFT-001')
+        assert row['items'][0]['item_code']=='ITEM-1001'
+        assert row['items'][0]['quantity']==3
+        assert '测试强化石 × 3' in row['item_summary']
+        assert '测试宝石 × 9' in row['item_summary']
+
+        card = c.post('/api/privilege-cards', headers=h, json={
+            'name':'V90测试周卡','card_type':'week','price_coins':66,'enabled':True,
+            'items':[{'item_id':i1,'quantity':2}],
+        })
+        assert card.status_code == 200, card.text
+        cards = c.get('/api/privilege-cards', headers=h)
+        card_row = next(x for x in cards.json() if x['name']=='V90测试周卡')
+        assert card_row['items'][0]['item_code']=='ITEM-1001'
+        assert card_row['items'][0]['quantity']==2
+        assert card_row['daily_reward_content']=='测试强化石 × 2'
+
+        used_delete = c.delete(f'/api/game-items/{i1}', headers=h)
+        assert used_delete.status_code == 409
+
+
+def test_v90_item_picker_is_present_in_all_three_create_flows():
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    assert 'data-view="gameItems"' in index_html
+    assert 'V90 · GAME ITEM LIBRARY' in index_html
+    assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
+    assert "['items','每日奖励道具','item-builder'" in app_js
+    assert 'function bindItemBuilders(root)' in app_js
+    assert '.item-builder-picker' in css

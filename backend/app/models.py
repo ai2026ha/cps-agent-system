@@ -119,6 +119,26 @@ class Product(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+class GameItem(Base):
+    """游戏道具库。item_code 保存游戏服实际使用的道具ID/代码。"""
+    __tablename__ = "game_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    category: Mapped[str] = mapped_column(String(64), default="普通道具", index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ProductGameItem(Base):
+    __tablename__ = "product_game_items"
+    __table_args__ = (UniqueConstraint("product_id", "game_item_id", name="uq_product_game_item"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    game_item_id: Mapped[int] = mapped_column(ForeignKey("game_items.id"), index=True)
+    quantity: Mapped[int] = mapped_column(BigInteger, default=1)
+
+
 class PlatformCoinOrder(Base):
     __tablename__ = "platform_coin_orders"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -253,6 +273,15 @@ class PrivilegeCardRule(Base):
     daily_reward_content: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class PrivilegeCardGameItem(Base):
+    __tablename__ = "privilege_card_game_items"
+    __table_args__ = (UniqueConstraint("rule_id", "game_item_id", name="uq_privilege_game_item"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("privilege_card_rules.id"), index=True)
+    game_item_id: Mapped[int] = mapped_column(ForeignKey("game_items.id"), index=True)
+    quantity: Mapped[int] = mapped_column(BigInteger, default=1)
 
 
 class PrivilegeCardPurchase(Base):

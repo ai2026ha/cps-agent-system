@@ -53,6 +53,25 @@ class PlayerAdminUpdate(BaseModel):
     coin_action: str | None = None
     coin_amount: int | None = Field(default=None, ge=1, le=2_000_000_000)
 
+class RewardItemInput(BaseModel):
+    item_id: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=2_000_000_000)
+
+
+class GameItemCreate(BaseModel):
+    item_code: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=120)
+    category: str = Field(default="普通道具", max_length=64)
+    enabled: bool = True
+
+
+class GameItemUpdate(BaseModel):
+    item_code: str | None = Field(default=None, min_length=1, max_length=64)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    category: str | None = Field(default=None, max_length=64)
+    enabled: bool | None = None
+
+
 class ProductCreate(BaseModel):
     sku: str
     name: str
@@ -60,6 +79,7 @@ class ProductCreate(BaseModel):
     price: Decimal
     stock: int = 0
     description: str = ""
+    items: list[RewardItemInput] = Field(default_factory=list)
 
 class PlatformRechargeOrderCreate(BaseModel):
     """由玩家充值/支付系统创建的待支付平台币订单，后台管理端不能手工创建。"""
@@ -96,14 +116,16 @@ class PrivilegeCardCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     card_type: str
     price_coins: int = Field(gt=0, le=2_000_000_000)
-    daily_reward_content: str = Field(min_length=1, max_length=5000)
+    daily_reward_content: str = Field(default="", max_length=5000)
+    items: list[RewardItemInput] = Field(default_factory=list)
     enabled: bool = True
 
 class PrivilegeCardUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     card_type: str | None = None
     price_coins: int | None = Field(default=None, gt=0, le=2_000_000_000)
-    daily_reward_content: str | None = Field(default=None, min_length=1, max_length=5000)
+    daily_reward_content: str | None = Field(default=None, max_length=5000)
+    items: list[RewardItemInput] | None = None
     enabled: bool | None = None
 
 class PlayerPrivilegePurchase(BaseModel):

@@ -15,12 +15,12 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
-    AdminUser, SystemSetting, AdminIPWhitelist, AdminLoginIPState, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, PlatformCoinOrder, MallOrder, Shipment,
+    AdminUser, SystemSetting, AdminIPWhitelist, AdminLoginIPState, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, GameItem, ProductGameItem, PlatformCoinOrder, MallOrder, Shipment,
     RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord,
-    PrivilegeCardRule, PrivilegeCardPurchase, PrivilegeCardClaim, MailRecord,
+    PrivilegeCardRule, PrivilegeCardGameItem, PrivilegeCardPurchase, PrivilegeCardClaim, MailRecord,
 )
 from .schemas import (
-    LoginIn, AdminPasswordChange, AdminCreate, SystemBrandingUpdate, IPWhitelistCreate, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
+    LoginIn, AdminPasswordChange, AdminCreate, SystemBrandingUpdate, IPWhitelistCreate, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, GameItemCreate, GameItemUpdate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
     ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
     PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
@@ -868,7 +868,7 @@ def index():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v89-agent-dashboard-hard-hide",
+            "X-CPS-Build": "v90-game-item-library",
         },
     )
 
@@ -887,7 +887,7 @@ def player_center_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v89-agent-dashboard-hard-hide",
+            "X-CPS-Build": "v90-game-item-library",
         },
     )
 
@@ -899,7 +899,7 @@ def player_center_login_page():
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "X-CPS-Build": "v89-agent-dashboard-hard-hide",
+            "X-CPS-Build": "v90-game-item-library",
         },
     )
 
@@ -2003,6 +2003,52 @@ def privilege_card_duration(card_type: str) -> int:
         raise HTTPException(400, "特权卡类型只能是周卡、月卡或年卡")
     return PRIVILEGE_CARD_DAYS[value]
 
+def normalize_reward_items(db: Session, specs) -> list[tuple[GameItem, int]]:
+    """校验并解析道具配置；返回按传入顺序排列的 (道具, 数量)。"""
+    specs = list(specs or [])
+    if not specs:
+        return []
+    ids = [int(x.item_id) for x in specs]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(400, "同一个道具不能重复添加，请直接修改数量")
+    rows = db.query(GameItem).filter(GameItem.id.in_(ids)).all()
+    by_id = {x.id: x for x in rows}
+    missing = [x for x in ids if x not in by_id]
+    if missing:
+        raise HTTPException(400, f"道具库中不存在道具ID：{missing[0]}")
+    result = []
+    for spec in specs:
+        item = by_id[int(spec.item_id)]
+        if not item.enabled:
+            raise HTTPException(400, f"道具“{item.name}”已停用，不能加入新的配置")
+        result.append((item, int(spec.quantity)))
+    return result
+
+
+def reward_items_text(items: list[tuple[GameItem, int]]) -> str:
+    return "\n".join(f"{item.name} × {qty}" for item, qty in items)
+
+
+def product_reward_payload(db: Session, product_id: int) -> list[dict]:
+    rows = (db.query(ProductGameItem, GameItem)
+        .join(GameItem, GameItem.id == ProductGameItem.game_item_id)
+        .filter(ProductGameItem.product_id == product_id)
+        .order_by(ProductGameItem.id.asc()).all())
+    return [{"item_id": item.id, "item_code": item.item_code, "name": item.name, "category": item.category, "quantity": int(link.quantity or 0), "enabled": bool(item.enabled)} for link, item in rows]
+
+
+def privilege_reward_payload(db: Session, rule_id: int) -> list[dict]:
+    rows = (db.query(PrivilegeCardGameItem, GameItem)
+        .join(GameItem, GameItem.id == PrivilegeCardGameItem.game_item_id)
+        .filter(PrivilegeCardGameItem.rule_id == rule_id)
+        .order_by(PrivilegeCardGameItem.id.asc()).all())
+    return [{"item_id": item.id, "item_code": item.item_code, "name": item.name, "category": item.category, "quantity": int(link.quantity or 0), "enabled": bool(item.enabled)} for link, item in rows]
+
+
+def reward_payload_text(items: list[dict]) -> str:
+    return "\n".join(f"{x['name']} × {int(x['quantity'])}" for x in items)
+
+
 def privilege_order_no() -> str:
     local_now = datetime.now(BUSINESS_TZ)
     return f"PC{local_now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}"
@@ -2127,7 +2173,7 @@ def player_mall_products(player: Player = Depends(current_player), db: Session =
             "name": row.name,
             "coin_price": coin_price,
             "stock": int(row.stock or 0),
-            "description": row.description or "",
+            "description": (reward_payload_text(product_reward_payload(db, row.id)) or row.description or ""),
             "available": int(row.stock or 0) > 0,
         })
     return result
@@ -2275,7 +2321,7 @@ def player_privilege_cards(
             "id": row.id, "name": row.name, "card_type": row.card_type,
             "card_type_name": PRIVILEGE_CARD_NAMES.get(row.card_type, row.card_type),
             "duration_days": int(row.duration_days or 0), "price_coins": int(row.price_coins or 0),
-            "daily_reward_content": row.daily_reward_content or "",
+            "daily_reward_content": (reward_payload_text(privilege_reward_payload(db, row.id)) or row.daily_reward_content or ""),
         } for row in rules],
         "purchases": [privilege_purchase_payload(row, db, today) for row in purchases],
     }
@@ -2326,7 +2372,8 @@ def player_privilege_purchase(
     row = PrivilegeCardPurchase(
         order_no=order_no, player_id=locked_player.id, character_id=character.id, rule_id=rule.id,
         role_name=character.role_name, server_name=character.server_name, card_name=rule.name, card_type=rule.card_type,
-        duration_days=duration_days, price_coins=price, daily_reward_content=rule.daily_reward_content or "",
+        duration_days=duration_days, price_coins=price,
+        daily_reward_content=(reward_payload_text(privilege_reward_payload(db, rule.id)) or rule.daily_reward_content or ""),
         start_date=start_date, end_date=end_date, created_at=utc_now_naive(),
     )
     db.add(row)
@@ -3315,13 +3362,18 @@ def create_shipment(body: ShipmentCreate, db: Session = Depends(get_db), _=Depen
 @app.get("/api/privilege-cards")
 def privilege_cards_admin(db: Session = Depends(get_db), _=Depends(require_permission("privilege.manage"))):
     rows = db.query(PrivilegeCardRule).order_by(PrivilegeCardRule.id.asc()).all()
-    return [{
-        "id": x.id, "name": x.name, "card_type": x.card_type,
-        "card_type_name": PRIVILEGE_CARD_NAMES.get(x.card_type, x.card_type),
-        "duration_days": int(x.duration_days or 0), "price_coins": int(x.price_coins or 0),
-        "daily_reward_content": x.daily_reward_content or "", "enabled": bool(x.enabled),
-        "created_at": dt(x.created_at),
-    } for x in rows]
+    result = []
+    for x in rows:
+        items = privilege_reward_payload(db, x.id)
+        content = reward_payload_text(items) if items else (x.daily_reward_content or "")
+        result.append({
+            "id": x.id, "name": x.name, "card_type": x.card_type,
+            "card_type_name": PRIVILEGE_CARD_NAMES.get(x.card_type, x.card_type),
+            "duration_days": int(x.duration_days or 0), "price_coins": int(x.price_coins or 0),
+            "daily_reward_content": content, "items": items, "enabled": bool(x.enabled),
+            "created_at": dt(x.created_at),
+        })
+    return result
 
 
 @app.post("/api/privilege-cards")
@@ -3331,11 +3383,18 @@ def create_privilege_card(body: PrivilegeCardCreate, db: Session = Depends(get_d
     name = body.name.strip()
     if db.query(PrivilegeCardRule.id).filter(PrivilegeCardRule.name == name).first():
         raise HTTPException(409, "特权卡名称已存在")
+    reward_items = normalize_reward_items(db, body.items)
+    content = reward_items_text(reward_items) if reward_items else body.daily_reward_content.strip()
+    if not content:
+        raise HTTPException(400, "请至少添加一个每日奖励道具")
     row = PrivilegeCardRule(
         name=name, card_type=card_type, duration_days=duration, price_coins=body.price_coins,
-        daily_reward_content=body.daily_reward_content.strip(), enabled=body.enabled,
+        daily_reward_content=content, enabled=body.enabled,
     )
-    db.add(row); db.commit(); db.refresh(row)
+    db.add(row); db.flush()
+    for item, qty in reward_items:
+        db.add(PrivilegeCardGameItem(rule_id=row.id, game_item_id=item.id, quantity=qty))
+    db.commit(); db.refresh(row)
     return {"id": row.id, "message": "特权卡创建成功"}
 
 
@@ -3356,7 +3415,15 @@ def update_privilege_card(card_id: int, body: PrivilegeCardUpdate, db: Session =
         row.duration_days = privilege_card_duration(row.card_type)
     if "price_coins" in data:
         row.price_coins = int(data["price_coins"])
-    if "daily_reward_content" in data:
+    if "items" in data:
+        reward_items = normalize_reward_items(db, body.items or [])
+        if not reward_items:
+            raise HTTPException(400, "请至少添加一个每日奖励道具")
+        db.query(PrivilegeCardGameItem).filter(PrivilegeCardGameItem.rule_id == row.id).delete(synchronize_session=False)
+        for item, qty in reward_items:
+            db.add(PrivilegeCardGameItem(rule_id=row.id, game_item_id=item.id, quantity=qty))
+        row.daily_reward_content = reward_items_text(reward_items)
+    elif "daily_reward_content" in data:
         row.daily_reward_content = str(data["daily_reward_content"]).strip()
     if "enabled" in data:
         row.enabled = bool(data["enabled"])
@@ -3395,17 +3462,88 @@ def privilege_card_claim_records(
     } for claim, purchase, player in rows]
 
 
+# ---------- 游戏道具库 ----------
+@app.get("/api/game-items")
+def game_items(
+    q: str = "", enabled_only: bool = False, db: Session = Depends(get_db),
+    _=Depends(require_permission("products.view")),
+):
+    query = db.query(GameItem)
+    if enabled_only:
+        query = query.filter(GameItem.enabled.is_(True))
+    keyword = q.strip()
+    if keyword:
+        query = query.filter((GameItem.name.ilike(f"%{keyword}%")) | (GameItem.item_code.ilike(f"%{keyword}%")) | (GameItem.category.ilike(f"%{keyword}%")))
+    rows = query.order_by(GameItem.enabled.desc(), GameItem.category.asc(), GameItem.id.desc()).all()
+    return [{
+        "id": x.id, "item_code": x.item_code, "name": x.name, "category": x.category or "普通道具",
+        "enabled": bool(x.enabled), "created_at": dt(x.created_at),
+    } for x in rows]
+
+
+@app.post("/api/game-items")
+def create_game_item(body: GameItemCreate, db: Session = Depends(get_db), _=Depends(require_permission("products.manage"))):
+    code = body.item_code.strip()
+    name = body.name.strip()
+    category = body.category.strip() or "普通道具"
+    if db.query(GameItem.id).filter(GameItem.item_code == code).first():
+        raise HTTPException(409, "游戏道具ID/代码已存在")
+    row = GameItem(item_code=code, name=name, category=category, enabled=body.enabled)
+    db.add(row); db.commit(); db.refresh(row)
+    return {"id": row.id, "message": "道具已加入道具库"}
+
+
+@app.put("/api/game-items/{item_id}")
+def update_game_item(item_id: int, body: GameItemUpdate, db: Session = Depends(get_db), _=Depends(require_permission("products.manage"))):
+    row = db.get(GameItem, item_id)
+    if not row:
+        raise HTTPException(404, "道具不存在")
+    data = body.model_dump(exclude_unset=True)
+    if "item_code" in data:
+        code = str(data["item_code"]).strip()
+        duplicate = db.query(GameItem.id).filter(GameItem.item_code == code, GameItem.id != row.id).first()
+        if duplicate:
+            raise HTTPException(409, "游戏道具ID/代码已存在")
+        row.item_code = code
+    if "name" in data:
+        row.name = str(data["name"]).strip()
+    if "category" in data:
+        row.category = str(data["category"]).strip() or "普通道具"
+    if "enabled" in data:
+        row.enabled = bool(data["enabled"])
+    db.commit(); db.refresh(row)
+    return {"message": "道具已更新"}
+
+
+@app.delete("/api/game-items/{item_id}")
+def delete_game_item(item_id: int, db: Session = Depends(get_db), _=Depends(require_permission("products.manage"))):
+    row = db.get(GameItem, item_id)
+    if not row:
+        raise HTTPException(404, "道具不存在")
+    used_product = db.query(ProductGameItem.id).filter(ProductGameItem.game_item_id == row.id).first()
+    used_card = db.query(PrivilegeCardGameItem.id).filter(PrivilegeCardGameItem.game_item_id == row.id).first()
+    if used_product or used_card:
+        raise HTTPException(409, "该道具已被礼包、商品或特权卡使用，请先停用，不建议删除")
+    db.delete(row); db.commit()
+    return {"message": "道具已删除"}
+
+
 # ---------- 商品管理 ----------
 @app.get("/api/products")
 def products(category: str = "", db: Session = Depends(get_db), _=Depends(require_permission("products.view"))):
     q = db.query(Product)
     if category: q = q.filter(Product.category == category)
     rows = q.order_by(Product.id.desc()).all()
-    return [{"id": x.id, "sku": x.sku, "name": x.name, "category": x.category, "price": money(x.price), "stock": x.stock,
-             "description": x.description, "enabled": x.enabled, "created_at": dt(x.created_at)} for x in rows]
+    result = []
+    for x in rows:
+        items = product_reward_payload(db, x.id)
+        item_summary = reward_payload_text(items) if items else (x.description or "")
+        result.append({"id": x.id, "sku": x.sku, "name": x.name, "category": x.category, "price": money(x.price), "stock": x.stock,
+             "description": item_summary, "item_summary": item_summary, "items": items, "enabled": x.enabled, "created_at": dt(x.created_at)})
+    return result
 
 @app.post("/api/products")
-def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
+def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends(require_permission("products.manage"))):
     if body.category not in ("gift", "product"):
         raise HTTPException(400, "category 只能是 gift 或 product")
     if body.stock < 0:
@@ -3416,8 +3554,15 @@ def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends
             raise HTTPException(400, "网页商城礼包的平台币售价必须是大于 0 的整数")
     if db.query(Product).filter(Product.sku == body.sku).first():
         raise HTTPException(409, "SKU 已存在")
-    row = Product(**body.model_dump()); db.add(row); db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "商品创建成功"}
+    reward_items = normalize_reward_items(db, body.items)
+    payload = body.model_dump(exclude={"items"})
+    if reward_items:
+        payload["description"] = reward_items_text(reward_items)
+    row = Product(**payload); db.add(row); db.flush()
+    for item, qty in reward_items:
+        db.add(ProductGameItem(product_id=row.id, game_item_id=item.id, quantity=qty))
+    db.commit(); db.refresh(row)
+    return {"id": row.id, "message": "礼包创建成功" if body.category == "gift" else "商品创建成功"}
 
 # ---------- 兑换码管理 ----------
 @app.get("/api/redemption-batches")
