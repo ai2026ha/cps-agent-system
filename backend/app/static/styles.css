@@ -567,3 +567,21 @@ html{scrollbar-gutter:stable}
 @media(max-width:820px){.mail-compose-shell{max-width:100%}}
 @media(max-width:760px){.mail-compose-grid{grid-template-columns:1fr}.mail-field.full,.mail-target-box{grid-column:auto}.mail-compose .item-builder-picker{grid-template-columns:1fr 1fr}.mail-compose .item-library-search{grid-column:1/-1}.mail-compose-shell>.panel{padding:14px}.mail-compose-actions .primary{width:100%}}
 @media(max-width:560px){.mail-compose .item-builder-picker{grid-template-columns:1fr}.mail-compose .item-library-search{grid-column:auto}}
+
+
+/* V104：道具库与发送邮件使用同规格紧凑左对齐布局 */
+.game-item-shell{width:100%;max-width:780px;margin:0}
+.game-item-shell>.panel{margin-top:8px;padding:16px 18px 17px;overflow:hidden}
+.game-item-shell .panel-head{margin-bottom:12px;gap:10px;flex-wrap:wrap}
+.game-item-shell .panel-head .actions{display:flex;flex-wrap:wrap;gap:7px}
+.game-item-shell .game-item-import-box{margin-bottom:10px;padding:10px 12px}
+.game-item-shell .game-item-query{gap:8px 9px;margin-bottom:10px;padding:10px 12px}
+.game-item-shell .game-item-query .query-field{flex:1 1 260px}
+.game-item-shell .game-item-query .query-status{flex:0 0 120px}
+.game-item-shell .game-item-danger-zone{margin:10px 0 12px;padding:10px 12px}
+.game-item-shell .query-scope-note{margin-bottom:9px}
+.game-item-table-scroll{width:100%;overflow-x:auto;border-radius:9px;scrollbar-gutter:stable}
+.game-item-table-scroll table{min-width:690px}
+.game-item-shell .game-item-pager{margin-top:10px}
+@media(max-width:820px){.game-item-shell{max-width:100%}}
+@media(max-width:620px){.game-item-shell>.panel{padding:14px}.game-item-shell .game-item-query .query-field,.game-item-shell .game-item-query .query-status{flex:1 0 100%}.game-item-shell .panel-head .actions{width:100%}.game-item-shell .panel-head .actions .btn{flex:1}.game-item-table-scroll table{min-width:650px}}
