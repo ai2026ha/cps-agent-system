@@ -528,3 +528,7 @@ html{scrollbar-gutter:stable}
 
 /* V93: deployment-visible running version marker */
 .sidebar-build-marker{margin:16px 10px 4px;padding:8px 9px;border-top:1px solid rgba(132,151,184,.16);color:#6f83a8;font-size:10px;letter-spacing:.03em;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* V94: 道具库一键清空危险操作 */
+.btn.danger-action{border-color:#efc8c8;background:#fff5f5;color:#b12626;font-weight:700}
+.btn.danger-action:hover:not(:disabled){border-color:#df9d9d;background:#ffecec;color:#981f1f}

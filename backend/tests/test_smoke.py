@@ -2526,7 +2526,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v93-deploy-check-gift-item' in index_html
+    assert '/static/app.js?v=v94-game-item-clear-all' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,13 +2833,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v93-deploy-check-gift-item'
+        assert index.headers.get('x-cps-build') == 'v94-game-item-clear-all'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v93-deploy-check-gift-item')
+        js = c.get('/static/app.js?v=v94-game-item-clear-all')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2899,9 +2899,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V93 · DEPLOY CHECK' in index_html
-    assert '/static/styles.css?v=v93-deploy-check-gift-item' in index_html
-    assert '/static/app.js?v=v93-deploy-check-gift-item' in index_html
+    assert 'V94 · ITEM CLEAR ALL' in index_html
+    assert '/static/styles.css?v=v94-game-item-clear-all' in index_html
+    assert '/static/app.js?v=v94-game-item-clear-all' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2917,9 +2917,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V93 · DEPLOY CHECK' in index_html
-    assert '/static/styles.css?v=v93-deploy-check-gift-item' in index_html
-    assert '/static/app.js?v=v93-deploy-check-gift-item' in index_html
+    assert 'V94 · ITEM CLEAR ALL' in index_html
+    assert '/static/styles.css?v=v94-game-item-clear-all' in index_html
+    assert '/static/app.js?v=v94-game-item-clear-all' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2943,9 +2943,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V93 · DEPLOY CHECK" in index_html
-    assert "/static/styles.css?v=v93-deploy-check-gift-item" in index_html
-    assert "/static/app.js?v=v93-deploy-check-gift-item" in index_html
+    assert "V94 · ITEM CLEAR ALL" in index_html
+    assert "/static/styles.css?v=v94-game-item-clear-all" in index_html
+    assert "/static/app.js?v=v94-game-item-clear-all" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2977,7 +2977,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v93-deploy-check-gift-item'
+        assert player.headers.get('x-cps-build') == 'v94-game-item-clear-all'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3055,7 +3055,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V93 · DEPLOY CHECK' in index_html
+    assert 'V94 · ITEM CLEAR ALL' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3251,9 +3251,71 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v93-deploy-check-gift-item'
+        assert data['version'] == 'v94-game-item-clear-all'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
         assert data['features']['game_item_pagination'] is True
+        assert data['features']['game_item_clear_all'] is True
 
+
+
+def test_v94_game_item_clear_all_removes_library_and_structured_links():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        h = auth(admin)
+        first = c.post('/api/game-items', headers=h, json={
+            'item_code':'V94-CLEAR-1','name':'V94清空测试道具1','category':'测试','enabled':True,
+        })
+        second = c.post('/api/game-items', headers=h, json={
+            'item_code':'V94-CLEAR-2','name':'V94清空测试道具2','category':'测试','enabled':True,
+        })
+        assert first.status_code == 200 and second.status_code == 200
+        i1, i2 = first.json()['id'], second.json()['id']
+
+        gift = c.post('/api/products', headers=h, json={
+            'sku':'V94-CLEAR-GIFT','name':'V94清空关联礼包','category':'gift','price':1,'stock':10,
+            'items':[{'item_id':i1,'quantity':3},{'item_id':i2,'quantity':5}], 'enabled':True,
+        })
+        assert gift.status_code == 200, gift.text
+        card = c.post('/api/privilege-cards', headers=h, json={
+            'name':'V94清空关联周卡','card_type':'week','price_coins':1,'enabled':True,
+            'items':[{'item_id':i1,'quantity':2}],
+        })
+        assert card.status_code == 200, card.text
+
+        before = c.get('/api/game-items?page=1&page_size=50', headers=h)
+        assert before.status_code == 200
+        assert before.json()['total'] >= 2
+
+        cleared = c.delete('/api/game-items', headers=h)
+        assert cleared.status_code == 200, cleared.text
+        data = cleared.json()
+        assert data['deleted_items'] >= 2
+        assert data['deleted_product_links'] >= 2
+        assert data['deleted_privilege_links'] >= 1
+
+        after = c.get('/api/game-items?page=1&page_size=50', headers=h)
+        assert after.status_code == 200
+        assert after.json()['total'] == 0
+
+        # 关联被清理，但礼包/特权卡本身与其历史文本说明仍保留。
+        gifts = c.get('/api/products?category=gift', headers=h).json()
+        gift_row = next(x for x in gifts if x['sku']=='V94-CLEAR-GIFT')
+        assert gift_row['items'] == []
+        assert 'V94清空测试道具1' in gift_row['item_summary']
+        cards = c.get('/api/privilege-cards', headers=h).json()
+        card_row = next(x for x in cards if x['name']=='V94清空关联周卡')
+        assert card_row['items'] == []
+        assert 'V94清空测试道具1' in card_row['daily_reward_content']
+
+
+def test_v94_frontend_has_clear_all_game_items_action():
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    css = (static_dir / 'styles.css').read_text(encoding='utf-8')
+    assert 'window.clearAllGameItems=' in app_js
+    assert 'id="clearGameItemsBtn"' in app_js
+    assert "api('/api/game-items',{method:'DELETE'})" in app_js
+    assert '最后确认：清空后无法撤销' in app_js
+    assert '.btn.danger-action' in css

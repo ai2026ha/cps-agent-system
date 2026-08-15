@@ -32,8 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v93-deploy-check-gift-item"
-BUILD_LABEL = "V93 · DEPLOY CHECK"
+BUILD_VERSION = "v94-game-item-clear-all"
+BUILD_LABEL = "V94 · ITEM CLEAR ALL"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -1072,6 +1072,7 @@ def public_build_info():
             "game_item_search": True,
             "game_item_pagination": True,
             "game_item_picker_remote_search": True,
+            "game_item_clear_all": True,
         },
     }
 
@@ -3857,6 +3858,35 @@ def update_game_item(item_id: int, body: GameItemUpdate, db: Session = Depends(g
         row.enabled = bool(data["enabled"])
     db.commit(); db.refresh(row)
     return {"message": "道具已更新"}
+
+
+@app.delete("/api/game-items")
+def clear_all_game_items(db: Session = Depends(get_db), _=Depends(require_permission("products.manage"))):
+    """清空整个游戏道具库，并先移除礼包/商品/特权卡的结构化道具关联。
+
+    商品 description 与特权卡 daily_reward_content 的历史文本快照保留，避免现有列表
+    在清库后完全失去已配置内容说明；重新导入道具后可再编辑并建立新关联。
+    """
+    item_count = int(db.query(GameItem).count())
+    product_link_count = int(db.query(ProductGameItem).count())
+    card_link_count = int(db.query(PrivilegeCardGameItem).count())
+    if item_count == 0:
+        return {
+            "message": "道具库已经是空的",
+            "deleted_items": 0,
+            "deleted_product_links": 0,
+            "deleted_privilege_links": 0,
+        }
+    db.query(ProductGameItem).delete(synchronize_session=False)
+    db.query(PrivilegeCardGameItem).delete(synchronize_session=False)
+    db.query(GameItem).delete(synchronize_session=False)
+    db.commit()
+    return {
+        "message": f"已清空全部道具，共删除 {item_count} 条道具",
+        "deleted_items": item_count,
+        "deleted_product_links": product_link_count,
+        "deleted_privilege_links": card_link_count,
+    }
 
 
 @app.delete("/api/game-items/{item_id}")
