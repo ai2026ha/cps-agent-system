@@ -23,7 +23,7 @@ const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
  players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], playerBehaviorTest:['玩家行为测试','按真实角色模拟礼包购买、特权卡购买与累充领取'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','玩家中心使用平台币购买礼包后自动生成的订单记录'],
  shipments:['发货查询','商城订单发货状态'], gameItems:['道具库','统一维护礼包、商品与特权卡可选择的游戏道具'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], privilegeCards:['特权卡配置','周卡、月卡、年卡价格与每日奖励'], cdk:['兑换码列表','CDK 批次与兑换统计'],
- rechargeRules:['累充列表','累计充值金额奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录'],
+ rechargeRules:['累充列表','累计充值金额奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','按区服全区或指定角色发送邮件与道具奖励'], mailRecords:['发送记录','历史邮件发送记录'],
  profileSettings:['个人信息','查看当前后台账号并修改登录密码'], adminManagers:['管理员','新增和查看超级管理员账号'], systemEditor:['系统编辑','修改后台与玩家中心显示名称'], ipWhitelist:['白名单','限制后台访问IP并管理登录拉黑名单']
 };
 
@@ -1160,7 +1160,53 @@ async function renderCDK(){
  $('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新增兑换码</button> <button class="btn" id="genBtn">生成CDK</button>':'');
  if(manage){$('#addBtn').onclick=()=>openCDKBatchForm().catch(e=>showToast(e.message,'error',4200));$('#genBtn').onclick=()=>openGenerateCDKForm(rows)}
 }
-function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
+async function renderSendMail(){
+ const servers=await api('/api/mails/targets/servers');
+ const serverOptions=(servers||[]).map(x=>`<option value="${esc(x.server_name)}">${esc(x.server_name)}（${Number(x.character_count||0)} 个角色）</option>`).join('');
+ const itemBuilder=fieldControl('items','item-builder',[],false,{options:[],remoteApi:'/api/game-items/picker'});
+ const body=`<form id="mailComposeForm" class="mail-compose" autocomplete="off">
+   <div class="mail-compose-grid">
+     <div class="mail-field full"><label>邮件标题</label><input id="mailTitle" maxlength="160" required placeholder="请输入邮件标题"></div>
+     <div class="mail-field full"><label>邮件内容</label><textarea id="mailContent" maxlength="10000" placeholder="请输入邮件正文"></textarea></div>
+     <div class="mail-field"><label>发放方式</label><select id="mailTargetType"><option value="character">按角色发放</option><option value="server">按区服全区发放</option></select></div>
+     <div class="mail-target-box" id="mailCharacterTarget">
+       <label>目标角色</label>
+       <div class="mail-character-search"><input id="mailCharacterQuery" type="search" placeholder="搜索角色名 / 玩家账号 / 玩家ID / 区服" autocomplete="off"><button type="button" class="btn" id="mailCharacterSearchBtn">搜索</button></div>
+       <select id="mailCharacterSelect"><option value="">请输入关键词搜索角色</option></select>
+       <div class="mail-target-help" id="mailCharacterHelp">选择一个具体区服角色，邮件只发送给该角色。</div>
+     </div>
+     <div class="mail-target-box hidden" id="mailServerTarget">
+       <label>目标区服</label>
+       <select id="mailServerSelect"><option value="">请选择区服</option>${serverOptions}</select>
+       <div class="mail-target-help">全区发放会匹配该区服当前所有正常玩家的已绑定角色。</div>
+     </div>
+     <div class="mail-field full"><label>邮件道具</label>${itemBuilder}<div class="mail-target-help">道具可不添加；添加后会保存发送时的道具ID、名称与数量快照。</div></div>
+   </div>
+   <div class="mail-send-warning" id="mailSendWarning">当前为模拟发送：系统会完整记录发送目标、收件角色数量与道具奖励；接入游戏服邮件 API 后可直接在后端发送任务处对接真实投递。</div>
+   <div class="mail-compose-actions"><button type="submit" class="btn primary" id="mailSendBtn">发送邮件</button></div>
+ </form>`;
+ $('#content').innerHTML=panel('发送游戏邮件',body);
+ const form=$('#mailComposeForm');bindItemBuilders(form);
+ const typeEl=$('#mailTargetType'),characterBox=$('#mailCharacterTarget'),serverBox=$('#mailServerTarget');
+ const syncTarget=()=>{const isServer=typeEl.value==='server';serverBox.classList.toggle('hidden',!isServer);characterBox.classList.toggle('hidden',isServer);$('#mailSendWarning').classList.toggle('danger-note',isServer)};
+ typeEl.onchange=syncTarget;syncTarget();
+ let charSeq=0;
+ const searchCharacters=async()=>{const q=$('#mailCharacterQuery').value.trim(),seq=++charSeq,select=$('#mailCharacterSelect'),help=$('#mailCharacterHelp');select.innerHTML='<option value="">搜索中…</option>';try{const rows=await api(`/api/mails/targets/characters?q=${encodeURIComponent(q)}&limit=50`);if(seq!==charSeq)return;select.innerHTML='<option value="">请选择角色</option>'+rows.map(x=>`<option value="${Number(x.character_id)}">${esc(x.label)}</option>`).join('');help.textContent=rows.length?`找到 ${rows.length} 个角色，请选择准确角色。`:'没有找到匹配角色，请换关键词。'}catch(e){if(seq===charSeq){select.innerHTML='<option value="">角色搜索失败</option>';help.textContent=e.message}}};
+ $('#mailCharacterSearchBtn').onclick=searchCharacters;$('#mailCharacterQuery').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();searchCharacters()}};
+ form.onsubmit=async e=>{e.preventDefault();const btn=$('#mailSendBtn'),type=typeEl.value;const title=$('#mailTitle').value.trim();if(!title)return showToast('请输入邮件标题','error',3000);let items=[];try{items=parseOptionalItemBuilderValue(form.querySelector('[name="items"]')?.value||'[]')}catch(err){return showToast(err.message,'error',3600)};
+   const payload={title,content:$('#mailContent').value,target_type:type,items};
+   if(type==='server'){
+     payload.target_server_name=$('#mailServerSelect').value;
+     if(!payload.target_server_name)return showToast('请选择目标区服','error',3000);
+     const label=$('#mailServerSelect').selectedOptions?.[0]?.textContent||payload.target_server_name;
+     if(!confirm(`确认按区服全区发放？\n\n目标：${label}\n${items.length?`道具：${items.length} 种`:'无道具附件'}\n\n请确认区服无误。`))return;
+   }else{
+     payload.target_character_id=Number($('#mailCharacterSelect').value||0);
+     if(!payload.target_character_id)return showToast('请搜索并选择一个目标角色','error',3000);
+   }
+   const old=btn.textContent;btn.disabled=true;btn.textContent='发送中…';try{const r=await api('/api/mails',{method:'POST',body:JSON.stringify(payload)});showToast(r.message||'邮件发送任务已创建','success',3600);await renderSendMail()}catch(err){showToast(err.message,'error',4400)}finally{if(document.body.contains(btn)){btn.disabled=false;btn.textContent=old}}
+ };
+}
 
 function playerStatusBadge(v){return v==='active'?'<span class="badge ok">正常</span>':'<span class="badge bad">封禁</span>'}
 function playerCharactersCell(characters){
@@ -1234,7 +1280,7 @@ async function renderRechargeRules(){
 
 const ruleCols=[['名称','name'],['累充类型','recharge_type_name'],['累充金额','threshold_amount'],['奖励道具','reward_content'],['状态','enabled',v=>badge(v?'active':'disabled')],['操作','id',(v)=>hasPermission('recharge.manage')?`<button class="btn compact" onclick="editRechargeRule(${Number(v)})">编辑</button>`:'<span class="muted">-</span>']];
 const claimCols=[['玩家PK','player_id'],['规则PK','rule_id'],['状态','status',badge],['领取时间','claimed_at']];
-const mailCols=[['标题','title'],['目标类型','target_type'],['目标','target_value'],['状态','send_status',badge],['发送人','created_by'],['发送时间','sent_at']];
+const mailCols=[['标题','title'],['发放方式','target_type',v=>v==='server'?'全区发放':v==='character'?'角色发放':esc(v)],['目标','target_value'],['收件角色','recipient_count',v=>`${Number(v||0)} 个`],['道具内容','reward_content',v=>v?`<span class="mail-reward-cell">${esc(v)}</span>`:'<span class="muted">无道具</span>'],['状态','send_status',badge],['发送人','created_by'],['发送时间','sent_at']];
 
 function buildAgentForm(caps){
  const allowed=Number(caps.allowed_child_level);
@@ -1275,8 +1321,7 @@ const forms={
  generateCDK:{path:null,fields:[['batch_id','CDK批次PK','number'],['count','生成数量','number'],['prefix','前缀']]},
  settlement:{path:'/api/settlements',fields:[['agent_id','代理PK','number'],['period_start','开始日期','date'],['period_end','结束日期','date']]},
  privilege:{path:'/api/privilege-cards',fields:[['name','特权卡名称'],['card_type','类型','select',true,{options:[{value:'week',label:'周卡（7天）'},{value:'month',label:'月卡（30天）'},{value:'year',label:'年卡（365天）'}]}],['price_coins','平台币售价','number',true,{min:1,step:1}],['daily_reward_content','每日奖励内容','textarea'],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,enabled:String(o.enabled)!=='false'})},
- claim:{path:'/api/claims',fields:[['player_id','玩家PK','number'],['rule_id','规则PK','number']]},
- mail:{path:'/api/mails',fields:[['title','邮件标题'],['content','邮件内容','textarea'],['target_type','目标类型(player/server/all)'],['target_value','玩家ID/区服，可空','text',false]]}
+ claim:{path:'/api/claims',fields:[['player_id','玩家PK','number'],['rule_id','规则PK','number']]}
 };
 function inputAttrs(meta,type){
  const attrs=[];
@@ -1351,6 +1396,12 @@ function bindItemBuilders(root){
 function parseItemBuilderValue(value){
   let rows=[];try{rows=JSON.parse(String(value||'[]'))}catch{throw new Error('道具配置格式错误')}
   if(!Array.isArray(rows)||!rows.length)throw new Error('请至少从道具库添加一个游戏道具');
+  return rows.map(x=>{const item_id=Number(x.item_id||0),quantity=Number(x.quantity||0);if(!Number.isInteger(item_id)||item_id<=0||!Number.isInteger(quantity)||quantity<=0)throw new Error('道具与数量配置不正确');return {item_id,quantity}});
+}
+function parseOptionalItemBuilderValue(value){
+  let rows=[];try{rows=JSON.parse(String(value||'[]'))}catch{throw new Error('道具配置格式错误')}
+  if(!Array.isArray(rows))throw new Error('道具配置格式错误');
+  if(!rows.length)return [];
   return rows.map(x=>{const item_id=Number(x.item_id||0),quantity=Number(x.quantity||0);if(!Number.isInteger(item_id)||item_id<=0||!Number.isInteger(quantity)||quantity<=0)throw new Error('道具与数量配置不正确');return {item_id,quantity}});
 }
 function openForm(title,cfg){

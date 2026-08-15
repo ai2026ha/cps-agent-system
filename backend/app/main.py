@@ -32,8 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v100-product-sort"
-BUILD_LABEL = "V100 · AUTO SORT"
+BUILD_VERSION = "v101-mail-rewards-targeting"
+BUILD_LABEL = "V101 · MAIL REWARDS"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -919,6 +919,30 @@ def sync_real_payment_aggregates():
         db.close()
 
 
+def ensure_mail_record_delivery_columns():
+    """V101：旧库邮件记录补充目标角色/区服、收件人数与奖励快照字段。"""
+    inspector = inspect(engine)
+    if "mail_records" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("mail_records")}
+    statements = []
+    if "target_server_name" not in columns:
+        statements.append("ALTER TABLE mail_records ADD COLUMN target_server_name VARCHAR(100)")
+    if "target_character_id" not in columns:
+        statements.append("ALTER TABLE mail_records ADD COLUMN target_character_id INTEGER")
+    if "recipient_count" not in columns:
+        statements.append("ALTER TABLE mail_records ADD COLUMN recipient_count INTEGER DEFAULT 0 NOT NULL")
+    if "reward_content" not in columns:
+        statements.append("ALTER TABLE mail_records ADD COLUMN reward_content TEXT DEFAULT '' NOT NULL")
+    if "reward_snapshot" not in columns:
+        statements.append("ALTER TABLE mail_records ADD COLUMN reward_snapshot TEXT DEFAULT '[]' NOT NULL")
+    if not statements:
+        return
+    with engine.begin() as conn:
+        for sql in statements:
+            conn.execute(text(sql))
+
+
 def ensure_agent_public_identity_format():
     """把历史代理统一迁移为 A1/A2/A3...，并让邀请码始终等于代理ID。
 
@@ -969,6 +993,7 @@ def startup():
     ensure_redemption_code_character_columns()
     ensure_redemption_batch_rule_columns()
     ensure_recharge_rule_type_column()
+    ensure_mail_record_delivery_columns()
     ensure_agent_public_identity_format()
     sync_real_payment_aggregates()
     seed_admin()
@@ -1173,6 +1198,9 @@ def public_build_info():
             "product_auto_sort": True,
             "product_sort_edit": True,
             "product_public_code_removed": True,
+            "mail_reward_items": True,
+            "mail_server_broadcast": True,
+            "mail_character_target": True,
             "postgres_migration_safe": True,
         },
     }
@@ -4416,18 +4444,122 @@ def create_claim(body: ClaimCreate, db: Session = Depends(get_db), _=Depends(cur
     return {"id": row.id, "message": "领取成功"}
 
 # ---------- 邮件管理 ----------
+def mail_reward_snapshot(db: Session, specs) -> tuple[list[dict], str]:
+    reward_items = normalize_reward_items(db, specs)
+    snapshot = [{
+        "item_id": item.id, "item_code": item.item_code, "name": item.name,
+        "category": item.category, "quantity": int(qty),
+    } for item, qty in reward_items]
+    return snapshot, reward_items_text(reward_items)
+
+
+def mail_record_payload(row: MailRecord) -> dict:
+    try:
+        items = json.loads(row.reward_snapshot or "[]")
+        if not isinstance(items, list):
+            items = []
+    except Exception:
+        items = []
+    return {
+        "id": row.id, "title": row.title, "content": row.content,
+        "target_type": row.target_type, "target_value": row.target_value,
+        "target_server_name": row.target_server_name, "target_character_id": row.target_character_id,
+        "recipient_count": int(row.recipient_count or 0),
+        "reward_content": row.reward_content or "", "items": items,
+        "send_status": row.send_status, "created_by": row.created_by,
+        "sent_at": dt(row.sent_at), "created_at": dt(row.created_at),
+    }
+
+
+@app.get("/api/mails/targets/servers")
+def mail_target_servers(db: Session = Depends(get_db), _=Depends(require_permission("mail.send"))):
+    rows = (db.query(PlayerCharacter.server_name, func.count(PlayerCharacter.id))
+        .join(Player, Player.id == PlayerCharacter.player_id)
+        .filter(Player.status == "active", PlayerCharacter.server_name.isnot(None), PlayerCharacter.server_name != "")
+        .group_by(PlayerCharacter.server_name)
+        .order_by(PlayerCharacter.server_name.asc()).all())
+    return [{"server_name": str(name), "character_count": int(count or 0)} for name, count in rows]
+
+
+@app.get("/api/mails/targets/characters")
+def mail_target_characters(
+    q: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("mail.send")),
+):
+    query = db.query(PlayerCharacter, Player).join(Player, Player.id == PlayerCharacter.player_id).filter(Player.status == "active")
+    keyword = q.strip()
+    if keyword:
+        like = f"%{keyword}%"
+        query = query.filter(
+            (PlayerCharacter.role_name.ilike(like)) | (PlayerCharacter.server_name.ilike(like)) |
+            (Player.username.ilike(like)) | (Player.player_id.ilike(like))
+        )
+    rows = query.order_by(PlayerCharacter.server_name.asc(), PlayerCharacter.role_name.asc(), PlayerCharacter.id.asc()).limit(limit).all()
+    return [{
+        "character_id": c.id, "role_name": c.role_name, "server_name": c.server_name,
+        "username": p.username, "player_id": p.player_id,
+        "label": f"{c.server_name} / {c.role_name} · {p.username}",
+    } for c, p in rows]
+
+
 @app.get("/api/mails")
 def mails(db: Session = Depends(get_db), _=Depends(current_admin)):
     rows = db.query(MailRecord).order_by(MailRecord.id.desc()).all()
-    return [{"id": x.id, "title": x.title, "content": x.content, "target_type": x.target_type, "target_value": x.target_value,
-             "send_status": x.send_status, "created_by": x.created_by, "sent_at": dt(x.sent_at), "created_at": dt(x.created_at)} for x in rows]
+    return [mail_record_payload(x) for x in rows]
+
 
 @app.post("/api/mails")
 def send_mail(body: MailCreate, db: Session = Depends(get_db), admin=Depends(current_admin)):
-    # 第一版记录发送任务。接入游戏服 API/消息队列后，在这里实际投递。
-    row = MailRecord(**body.model_dump(), send_status="sent", created_by=admin.username, sent_at=datetime.utcnow())
-    db.add(row); db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "邮件发送记录已创建（当前为模拟发送）"}
+    target_type = body.target_type
+    target_server_name = None
+    target_character_id = None
+    target_value = ""
+    recipient_count = 0
+
+    if target_type == "server":
+        target_server_name = str(body.target_server_name or "").strip()
+        if not target_server_name:
+            raise HTTPException(400, "请选择要全区发放的区服")
+        recipient_count = int(
+            db.query(func.count(PlayerCharacter.id))
+            .join(Player, Player.id == PlayerCharacter.player_id)
+            .filter(Player.status == "active", PlayerCharacter.server_name == target_server_name).scalar() or 0
+        )
+        if recipient_count <= 0:
+            raise HTTPException(400, "该区服当前没有可发放的角色")
+        target_value = target_server_name
+    else:
+        if not body.target_character_id:
+            raise HTTPException(400, "请选择要发放的角色")
+        row = (db.query(PlayerCharacter, Player)
+            .join(Player, Player.id == PlayerCharacter.player_id)
+            .filter(PlayerCharacter.id == int(body.target_character_id), Player.status == "active").first())
+        if not row:
+            raise HTTPException(404, "目标角色不存在或所属玩家已停用")
+        character, player = row
+        target_character_id = character.id
+        target_server_name = character.server_name
+        recipient_count = 1
+        target_value = f"{character.server_name} / {character.role_name}"[:160]
+
+    snapshot, reward_content = mail_reward_snapshot(db, body.items)
+    mail = MailRecord(
+        title=body.title.strip(), content=body.content or "",
+        target_type=target_type, target_value=target_value,
+        target_server_name=target_server_name, target_character_id=target_character_id,
+        recipient_count=recipient_count, reward_content=reward_content,
+        reward_snapshot=json.dumps(snapshot, ensure_ascii=False),
+        send_status="sent", created_by=admin.username, sent_at=datetime.utcnow(),
+    )
+    db.add(mail); db.commit(); db.refresh(mail)
+    mode_text = "全区发放" if target_type == "server" else "角色发放"
+    return {
+        "id": mail.id, "recipient_count": recipient_count,
+        "message": f"邮件{mode_text}任务已创建，共 {recipient_count} 个角色（当前为模拟发送）",
+        "mail": mail_record_payload(mail),
+    }
 
 # ---------- 智能辅助 ----------
 @app.get("/api/intelligence/alerts")

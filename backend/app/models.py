@@ -378,8 +378,15 @@ class MailRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(160))
     content: Mapped[str] = mapped_column(Text)
-    target_type: Mapped[str] = mapped_column(String(32), default="player")
+    # V101：server=按区服全区，character=按具体角色。保留旧值用于兼容历史记录。
+    target_type: Mapped[str] = mapped_column(String(32), default="character")
     target_value: Mapped[str] = mapped_column(String(160), default="")
+    target_server_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    target_character_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recipient_count: Mapped[int] = mapped_column(Integer, default=0)
+    # reward_content / reward_snapshot 都是发送时快照，避免后续道具改名或清库影响历史邮件。
+    reward_content: Mapped[str] = mapped_column(Text, default="")
+    reward_snapshot: Mapped[str] = mapped_column(Text, default="[]")
     send_status: Mapped[str] = mapped_column(String(20), default="queued")
     created_by: Mapped[str] = mapped_column(String(64), default="admin")
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

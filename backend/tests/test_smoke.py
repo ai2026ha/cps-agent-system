@@ -2530,7 +2530,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v100-product-sort' in index_html
+    assert '/static/app.js?v=v101-mail-rewards-targeting' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2837,13 +2837,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v100-product-sort'
+        assert index.headers.get('x-cps-build') == 'v101-mail-rewards-targeting'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v100-product-sort')
+        js = c.get('/static/app.js?v=v101-mail-rewards-targeting')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2903,9 +2903,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V100 · AUTO SORT' in index_html
-    assert '/static/styles.css?v=v100-product-sort' in index_html
-    assert '/static/app.js?v=v100-product-sort' in index_html
+    assert 'V101 · MAIL REWARDS' in index_html
+    assert '/static/styles.css?v=v101-mail-rewards-targeting' in index_html
+    assert '/static/app.js?v=v101-mail-rewards-targeting' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2921,9 +2921,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V100 · AUTO SORT' in index_html
-    assert '/static/styles.css?v=v100-product-sort' in index_html
-    assert '/static/app.js?v=v100-product-sort' in index_html
+    assert 'V101 · MAIL REWARDS' in index_html
+    assert '/static/styles.css?v=v101-mail-rewards-targeting' in index_html
+    assert '/static/app.js?v=v101-mail-rewards-targeting' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2947,9 +2947,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V100 · AUTO SORT" in index_html
-    assert "/static/styles.css?v=v100-product-sort" in index_html
-    assert "/static/app.js?v=v100-product-sort" in index_html
+    assert "V101 · MAIL REWARDS" in index_html
+    assert "/static/styles.css?v=v101-mail-rewards-targeting" in index_html
+    assert "/static/app.js?v=v101-mail-rewards-targeting" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2981,7 +2981,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v100-product-sort'
+        assert player.headers.get('x-cps-build') == 'v101-mail-rewards-targeting'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3059,7 +3059,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V100 · AUTO SORT' in index_html
+    assert 'V101 · MAIL REWARDS' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3255,7 +3255,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v100-product-sort'
+        assert data['version'] == 'v101-mail-rewards-targeting'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
@@ -3618,3 +3618,81 @@ def test_v100_products_remove_sku_and_support_sorting():
         static_js = (Path(__file__).resolve().parents[1] / 'app' / 'static' / 'app.js').read_text(encoding='utf-8')
         assert 'SKU' not in static_js
         assert "['排序','sort_order']" in static_js
+
+
+def test_v101_mail_can_send_by_server_or_character_with_reward_items():
+    with TestClient(app) as c:
+        token = login(c, 'admin', 'ChangeMe123!')
+        headers = auth(token)
+
+        # 准备两个同区服角色和一个其它区服角色，验证“全区”只统计目标区服。
+        db = SessionLocal()
+        try:
+            p1 = Player(player_id='V101P1', username='v101_mail_p1', password_hash='x', role_name='邮件剑客1', server_name='邮件一区', status='active')
+            p2 = Player(player_id='V101P2', username='v101_mail_p2', password_hash='x', role_name='邮件剑客2', server_name='邮件一区', status='active')
+            p3 = Player(player_id='V101P3', username='v101_mail_p3', password_hash='x', role_name='邮件剑客3', server_name='邮件二区', status='active')
+            db.add_all([p1, p2, p3]); db.flush()
+            c1 = PlayerCharacter(player_id=p1.id, role_name='邮件剑客1', server_name='邮件一区', is_primary=True)
+            c2 = PlayerCharacter(player_id=p2.id, role_name='邮件剑客2', server_name='邮件一区', is_primary=True)
+            c3 = PlayerCharacter(player_id=p3.id, role_name='邮件剑客3', server_name='邮件二区', is_primary=True)
+            db.add_all([c1, c2, c3]); db.commit(); db.refresh(c1)
+            c1_id = c1.id
+        finally:
+            db.close()
+
+        item_resp = c.post('/api/game-items', headers=headers, json={
+            'item_code': 'V101-MAIL-ITEM', 'name': '邮件奖励宝箱', 'category': '邮件', 'enabled': True,
+        })
+        assert item_resp.status_code == 200, item_resp.text
+        picker = c.get('/api/game-items/picker', headers=headers, params={'q': 'V101-MAIL-ITEM'})
+        assert picker.status_code == 200, picker.text
+        item = next(x for x in picker.json() if x['item_code'] == 'V101-MAIL-ITEM')
+
+        servers = c.get('/api/mails/targets/servers', headers=headers)
+        assert servers.status_code == 200, servers.text
+        server = next(x for x in servers.json() if x['server_name'] == '邮件一区')
+        assert server['character_count'] == 2
+
+        sent_server = c.post('/api/mails', headers=headers, json={
+            'title': '全区福利', 'content': '测试全区邮件', 'target_type': 'server',
+            'target_server_name': '邮件一区', 'items': [{'item_id': item['id'], 'quantity': 3}],
+        })
+        assert sent_server.status_code == 200, sent_server.text
+        server_data = sent_server.json()
+        assert server_data['recipient_count'] == 2
+        assert server_data['mail']['target_type'] == 'server'
+        assert server_data['mail']['target_value'] == '邮件一区'
+        assert server_data['mail']['reward_content'] == '邮件奖励宝箱 × 3'
+        assert server_data['mail']['items'][0]['item_code'] == 'V101-MAIL-ITEM'
+        assert server_data['mail']['items'][0]['quantity'] == 3
+
+        chars = c.get('/api/mails/targets/characters', headers=headers, params={'q': '邮件剑客1'})
+        assert chars.status_code == 200, chars.text
+        char = next(x for x in chars.json() if x['character_id'] == c1_id)
+        assert char['server_name'] == '邮件一区'
+
+        sent_char = c.post('/api/mails', headers=headers, json={
+            'title': '角色福利', 'content': '单角色发送', 'target_type': 'character',
+            'target_character_id': c1_id, 'items': [],
+        })
+        assert sent_char.status_code == 200, sent_char.text
+        char_data = sent_char.json()
+        assert char_data['recipient_count'] == 1
+        assert char_data['mail']['target_type'] == 'character'
+        assert '邮件剑客1' in char_data['mail']['target_value']
+        assert char_data['mail']['reward_content'] == ''
+
+        records = c.get('/api/mails', headers=headers)
+        assert records.status_code == 200, records.text
+        ids = {x['id'] for x in records.json()}
+        assert server_data['id'] in ids and char_data['id'] in ids
+
+
+def test_v101_mail_frontend_has_target_modes_and_item_builder():
+    html = (Path(__file__).resolve().parent.parent / 'app' / 'static' / 'app.js').read_text(encoding='utf-8')
+    assert "按区服全区发放" in html
+    assert "按角色发放" in html
+    assert "/api/mails/targets/servers" in html
+    assert "/api/mails/targets/characters" in html
+    assert "parseOptionalItemBuilderValue" in html
+    assert "remoteApi:'/api/game-items/picker'" in html

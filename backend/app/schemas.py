@@ -225,7 +225,9 @@ class ClaimCreate(BaseModel):
     rule_id: int
 
 class MailCreate(BaseModel):
-    title: str
-    content: str
-    target_type: str = "player"
-    target_value: str = ""
+    title: str = Field(min_length=1, max_length=160)
+    content: str = Field(default="", max_length=10000)
+    target_type: str = Field(pattern="^(server|character)$")
+    target_server_name: str | None = Field(default=None, max_length=100)
+    target_character_id: int | None = Field(default=None, gt=0)
+    items: list[RewardItemInput] = Field(default_factory=list)
