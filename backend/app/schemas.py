@@ -204,9 +204,22 @@ class SettlementCreate(BaseModel):
     period_end: date
 
 class RechargeRuleCreate(BaseModel):
-    name: str
-    threshold_amount: Decimal
-    reward_content: str
+    name: str = Field(min_length=1, max_length=120)
+    recharge_type: str = Field(default="permanent", pattern="^(daily|permanent)$")
+    threshold_amount: Decimal = Field(gt=0)
+    reward_content: str = Field(default="", max_length=5000)
+    items: list[RewardItemInput] = Field(default_factory=list)
+    enabled: bool = True
+
+
+class RechargeRuleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    recharge_type: str | None = Field(default=None, pattern="^(daily|permanent)$")
+    threshold_amount: Decimal | None = Field(default=None, gt=0)
+    reward_content: str | None = Field(default=None, max_length=5000)
+    items: list[RewardItemInput] | None = None
+    enabled: bool | None = None
+
 
 class ClaimCreate(BaseModel):
     player_id: int

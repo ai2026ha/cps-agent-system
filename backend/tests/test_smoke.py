@@ -2530,7 +2530,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v97-postgres-migration-fix' in index_html
+    assert '/static/app.js?v=v99-recharge-daily-permanent' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2837,13 +2837,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v97-postgres-migration-fix'
+        assert index.headers.get('x-cps-build') == 'v99-recharge-daily-permanent'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v97-postgres-migration-fix')
+        js = c.get('/static/app.js?v=v99-recharge-daily-permanent')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2903,9 +2903,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V97 · POSTGRES MIGRATION FIX' in index_html
-    assert '/static/styles.css?v=v97-postgres-migration-fix' in index_html
-    assert '/static/app.js?v=v97-postgres-migration-fix' in index_html
+    assert 'V99 · DAILY / PERMANENT RECHARGE' in index_html
+    assert '/static/styles.css?v=v99-recharge-daily-permanent' in index_html
+    assert '/static/app.js?v=v99-recharge-daily-permanent' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2921,9 +2921,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V97 · POSTGRES MIGRATION FIX' in index_html
-    assert '/static/styles.css?v=v97-postgres-migration-fix' in index_html
-    assert '/static/app.js?v=v97-postgres-migration-fix' in index_html
+    assert 'V99 · DAILY / PERMANENT RECHARGE' in index_html
+    assert '/static/styles.css?v=v99-recharge-daily-permanent' in index_html
+    assert '/static/app.js?v=v99-recharge-daily-permanent' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2947,9 +2947,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V97 · POSTGRES MIGRATION FIX" in index_html
-    assert "/static/styles.css?v=v97-postgres-migration-fix" in index_html
-    assert "/static/app.js?v=v97-postgres-migration-fix" in index_html
+    assert "V99 · DAILY / PERMANENT RECHARGE" in index_html
+    assert "/static/styles.css?v=v99-recharge-daily-permanent" in index_html
+    assert "/static/app.js?v=v99-recharge-daily-permanent" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2981,7 +2981,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v97-postgres-migration-fix'
+        assert player.headers.get('x-cps-build') == 'v99-recharge-daily-permanent'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3059,7 +3059,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V97 · POSTGRES MIGRATION FIX' in index_html
+    assert 'V99 · DAILY / PERMANENT RECHARGE' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3255,7 +3255,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v97-postgres-migration-fix'
+        assert data['version'] == 'v99-recharge-daily-permanent'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
@@ -3332,7 +3332,7 @@ def test_v95_game_item_clear_zone_visible():
     css = (base / "styles.css").read_text(encoding="utf-8")
     assert 'game-item-danger-zone' in js
     assert '清空全部道具（${total.toLocaleString()} 条）' in js
-    assert 'page-version-tag' in js
+    assert 'V95' not in js
     assert '.game-item-danger-zone' in css
 
 
@@ -3428,3 +3428,127 @@ def test_v96_cdk_edit_character_limit_expiry_and_reward_items():
             assert row.reward_content == 'V96强化石 × 9'
         finally:
             db.close()
+
+
+
+def test_v98_recharge_rule_edit_amount_label_and_reward_items():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        item1 = c.post('/api/game-items', headers=auth(admin), json={
+            'item_code': 'V98-ITEM-1', 'name': 'V98强化石', 'category': '材料', 'enabled': True
+        })
+        assert item1.status_code == 200, item1.text
+        item2 = c.post('/api/game-items', headers=auth(admin), json={
+            'item_code': 'V98-ITEM-2', 'name': 'V98宝石箱', 'category': '礼包', 'enabled': True
+        })
+        assert item2.status_code == 200, item2.text
+        rule = c.post('/api/recharge-rules', headers=auth(admin), json={
+            'name': 'V98累充奖励', 'threshold_amount': 588,
+            'items': [
+                {'item_id': item1.json()['id'], 'quantity': 10},
+                {'item_id': item2.json()['id'], 'quantity': 2},
+            ],
+            'enabled': True,
+        })
+        assert rule.status_code == 200, rule.text
+        rule_id = rule.json()['id']
+        rows = c.get('/api/recharge-rules', headers=auth(admin)).json()
+        row = next(x for x in rows if x['id'] == rule_id)
+        assert row['threshold_amount'] == 588.0
+        assert len(row['items']) == 2
+        assert 'V98强化石 × 10' in row['reward_content']
+        assert 'V98宝石箱 × 2' in row['reward_content']
+
+        edit = c.put(f'/api/recharge-rules/{rule_id}', headers=auth(admin), json={
+            'name': 'V98累充奖励编辑', 'threshold_amount': 688,
+            'items': [{'item_id': item2.json()['id'], 'quantity': 5}],
+            'enabled': False,
+        })
+        assert edit.status_code == 200, edit.text
+        edited = edit.json()['rule']
+        assert edited['name'] == 'V98累充奖励编辑'
+        assert edited['threshold_amount'] == 688.0
+        assert edited['enabled'] is False
+        assert len(edited['items']) == 1
+        assert edited['items'][0]['quantity'] == 5
+        assert edited['reward_content'] == 'V98宝石箱 × 5'
+
+        app_js = (Path(__file__).resolve().parents[1] / 'app' / 'static' / 'app.js').read_text(encoding='utf-8')
+        assert "['累充金额','threshold_amount']" in app_js
+        assert 'openRechargeRuleForm' in app_js
+        assert "['items','奖励道具','item-builder'" in app_js
+        assert '累充门槛' not in app_js
+
+
+def test_v99_recharge_daily_and_permanent_rule_types():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        item = c.post('/api/game-items', headers=auth(admin), json={
+            'item_code':'V99-REWARD','name':'V99每日奖励','category':'奖励','enabled':True
+        })
+        assert item.status_code == 200, item.text
+        item_id = item.json()['id']
+        daily = c.post('/api/recharge-rules', headers=auth(admin), json={
+            'name':'V99每日累充100','recharge_type':'daily','threshold_amount':100,
+            'items':[{'item_id':item_id,'quantity':1}],'enabled':True
+        })
+        assert daily.status_code == 200, daily.text
+        assert daily.json()['rule']['recharge_type'] == 'daily'
+        assert daily.json()['rule']['recharge_type_name'] == '每日累充'
+        permanent = c.post('/api/recharge-rules', headers=auth(admin), json={
+            'name':'V99永久累充100','recharge_type':'permanent','threshold_amount':100,
+            'items':[{'item_id':item_id,'quantity':2}],'enabled':True
+        })
+        assert permanent.status_code == 200, permanent.text
+        assert permanent.json()['rule']['recharge_type_name'] == '永久累充'
+
+        agent = c.post('/api/agents', headers=auth(admin), json={
+            'username':'v99_agent','password':'AgentPass123!','agent_name':'V99代理',
+            'commission_rate':0.1,'subagent_limit':1,'agent_level':1
+        })
+        assert agent.status_code == 200, agent.text
+        invite = agent.json()['invite_code']
+        reg = c.post(f'/api/public/registration/{invite}', json={
+            'username':'v99_player','password':'PlayerPass123!','role_name':'V99角色','server_name':'V99区'
+        })
+        assert reg.status_code == 200, reg.text
+        db = SessionLocal()
+        try:
+            player = db.query(Player).filter(Player.username=='v99_player').first()
+            char = PlayerCharacter(player_id=player.id, role_name='V99角色', server_name='V99区', is_primary=True)
+            db.add(char)
+            player.platform_coin_balance = 500
+            db.commit(); db.refresh(char)
+            char_id = char.id
+        finally:
+            db.close()
+        pt = c.post('/api/player/auth/login', json={'username':'v99_player','password':'PlayerPass123!'}).json()['access_token']
+        # 发平台币仅用于消费，不增加累充；购买礼包后同时产生今日/永久累充。
+        gift = c.post('/api/products', headers=auth(admin), json={
+            'sku':'V99-GIFT','name':'V99测试礼包','category':'gift','price':100,'stock':10,'description':'测试'
+        })
+        assert gift.status_code == 200, gift.text
+        buy = c.post(f"/api/player/mall/purchase/{gift.json()['id']}", headers=auth(pt), json={'quantity':1,'character_id':char_id})
+        assert buy.status_code == 200, buy.text
+        info = c.get('/api/player/cumulative-recharge', headers=auth(pt), params={'character_id':char_id}).json()
+        drow = next(x for x in info['rules'] if x['id']==daily.json()['id'])
+        prow = next(x for x in info['rules'] if x['id']==permanent.json()['id'])
+        assert drow['current_recharge'] == 100.0 and drow['eligible'] is True and drow['claimed'] is False
+        assert prow['current_recharge'] == 100.0 and prow['eligible'] is True and prow['claimed'] is False
+        dclaim = c.post(f"/api/player/cumulative-recharge/{daily.json()['id']}/claim", headers=auth(pt), params={'character_id':char_id})
+        assert dclaim.status_code == 200, dclaim.text
+        assert dclaim.json()['recharge_type'] == 'daily'
+        # 同一天不能重复领取每日累充。
+        again = c.post(f"/api/player/cumulative-recharge/{daily.json()['id']}/claim", headers=auth(pt), params={'character_id':char_id})
+        assert again.status_code == 409
+        pclaim = c.post(f"/api/player/cumulative-recharge/{permanent.json()['id']}/claim", headers=auth(pt), params={'character_id':char_id})
+        assert pclaim.status_code == 200, pclaim.text
+        assert pclaim.json()['recharge_type'] == 'permanent'
+
+        edit = c.put(f"/api/recharge-rules/{daily.json()['id']}", headers=auth(admin), json={'recharge_type':'permanent'})
+        assert edit.status_code == 200, edit.text
+        assert edit.json()['rule']['recharge_type'] == 'permanent'
+
+        app_js = (Path(__file__).resolve().parents[1] / 'app' / 'static' / 'app.js').read_text(encoding='utf-8')
+        assert "['recharge_type','累充类型','select'" in app_js
+        assert "['累充类型','recharge_type_name']" in app_js

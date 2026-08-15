@@ -254,9 +254,22 @@ class RechargeRule(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True)
     threshold_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    reward_content: Mapped[str] = mapped_column(Text)
+    # V99: permanent=永久累充；daily=每日累充（北京时间自然日重置）。
+    recharge_type: Mapped[str] = mapped_column(String(20), default="permanent", index=True)
+    # 兼容历史规则的文本奖励；V98 新规则优先使用 recharge_rule_game_items 结构化道具。
+    reward_content: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class RechargeRuleGameItem(Base):
+    __tablename__ = "recharge_rule_game_items"
+    __table_args__ = (UniqueConstraint("rule_id", "game_item_id", name="uq_recharge_rule_game_item"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("recharge_rules.id"), index=True)
+    game_item_id: Mapped[int] = mapped_column(ForeignKey("game_items.id"), index=True)
+    quantity: Mapped[int] = mapped_column(BigInteger, default=1)
+
 
 class ClaimRecord(Base):
     __tablename__ = "claim_records"
@@ -281,6 +294,25 @@ class CharacterClaimRecord(Base):
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
     character_id: Mapped[int] = mapped_column(ForeignKey("player_characters.id"), index=True)
     rule_id: Mapped[int] = mapped_column(ForeignKey("recharge_rules.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="claimed")
+    claimed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class DailyRechargeClaimRecord(Base):
+    """V99：每日累充按北京时间自然日、具体角色独立领取。
+
+    character_id 使用普通整数而不是外键，并约定 0 代表未绑定角色的历史账号，
+    这样可以建立稳定的四字段唯一约束，避免 NULL 在数据库中允许重复。
+    """
+    __tablename__ = "daily_recharge_claim_records"
+    __table_args__ = (
+        UniqueConstraint("player_id", "character_id", "rule_id", "claim_date", name="uq_daily_recharge_claim"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    character_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("recharge_rules.id"), index=True)
+    claim_date: Mapped[date] = mapped_column(Date, index=True)
     status: Mapped[str] = mapped_column(String(20), default="claimed")
     claimed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 

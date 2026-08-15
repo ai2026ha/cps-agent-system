@@ -19,21 +19,21 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
     AdminUser, SystemSetting, AdminIPWhitelist, AdminLoginIPState, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, GameItem, ProductGameItem, PlatformCoinOrder, MallOrder, Shipment,
-    RedemptionBatch, RedemptionBatchGameItem, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord,
+    RedemptionBatch, RedemptionBatchGameItem, RedemptionCode, Settlement, RechargeRule, RechargeRuleGameItem, ClaimRecord, CharacterClaimRecord, DailyRechargeClaimRecord,
     PrivilegeCardRule, PrivilegeCardGameItem, PrivilegeCardPurchase, PrivilegeCardClaim, MailRecord,
 )
 from .schemas import (
     LoginIn, AdminPasswordChange, AdminCreate, SystemBrandingUpdate, IPWhitelistCreate, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, ProductUpdate, GameItemCreate, GameItemUpdate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
     ShipmentCreate, RedemptionBatchCreate, RedemptionBatchUpdate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
-    RechargeRuleCreate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
+    RechargeRuleCreate, RechargeRuleUpdate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
     PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
 )
 from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v97-postgres-migration-fix"
-BUILD_LABEL = "V97 · POSTGRES MIGRATION FIX"
+BUILD_VERSION = "v99-recharge-daily-permanent"
+BUILD_LABEL = "V99 · DAILY / PERMANENT RECHARGE"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -801,6 +801,18 @@ def ensure_redemption_batch_rule_columns():
             conn.execute(text("UPDATE redemption_codes SET reward_content = '' WHERE reward_content IS NULL"))
 
 
+def ensure_recharge_rule_type_column():
+    """V99：给历史累充规则补充每日/永久类型；旧规则一律按永久累充兼容。"""
+    inspector = inspect(engine)
+    if "recharge_rules" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("recharge_rules")}
+    with engine.begin() as conn:
+        if "recharge_type" not in columns:
+            conn.execute(text("ALTER TABLE recharge_rules ADD COLUMN recharge_type VARCHAR(20) DEFAULT 'permanent'"))
+        conn.execute(text("UPDATE recharge_rules SET recharge_type = 'permanent' WHERE recharge_type IS NULL OR recharge_type NOT IN ('daily','permanent')"))
+
+
 def player_character_payloads(db: Session, player_ids: list[int]) -> dict[int, list[dict]]:
     """批量读取玩家角色，主角色优先，其次按最近记录和主键排序。"""
     if not player_ids:
@@ -921,6 +933,7 @@ def startup():
     ensure_mall_order_character_columns()
     ensure_redemption_code_character_columns()
     ensure_redemption_batch_rule_columns()
+    ensure_recharge_rule_type_column()
     ensure_agent_public_identity_format()
     sync_real_payment_aggregates()
     seed_admin()
@@ -1119,6 +1132,9 @@ def public_build_info():
             "cdk_character_limit": True,
             "cdk_expiry": True,
             "cdk_reward_items": True,
+            "recharge_rule_edit": True,
+            "recharge_reward_items": True,
+            "recharge_daily_permanent": True,
             "postgres_migration_safe": True,
         },
     }
@@ -2207,6 +2223,19 @@ def privilege_reward_payload(db: Session, rule_id: int) -> list[dict]:
         .order_by(PrivilegeCardGameItem.id.asc()).all())
     return [{"item_id": item.id, "item_code": item.item_code, "name": item.name, "category": item.category, "quantity": int(link.quantity or 0), "enabled": bool(item.enabled)} for link, item in rows]
 
+def recharge_rule_reward_payload(db: Session, rule_id: int) -> list[dict]:
+    rows = (db.query(RechargeRuleGameItem, GameItem)
+        .join(GameItem, GameItem.id == RechargeRuleGameItem.game_item_id)
+        .filter(RechargeRuleGameItem.rule_id == rule_id)
+        .order_by(RechargeRuleGameItem.id.asc()).all())
+    return [{"item_id": item.id, "item_code": item.item_code, "name": item.name, "category": item.category, "quantity": int(link.quantity or 0), "enabled": bool(item.enabled)} for link, item in rows]
+
+
+def recharge_rule_reward_text(db: Session, rule: RechargeRule) -> str:
+    items = recharge_rule_reward_payload(db, rule.id)
+    return reward_payload_text(items) if items else (rule.reward_content or "")
+
+
 def redemption_batch_reward_payload(db: Session, batch_id: int) -> list[dict]:
     rows = (db.query(RedemptionBatchGameItem, GameItem)
         .join(GameItem, GameItem.id == RedemptionBatchGameItem.game_item_id)
@@ -2711,11 +2740,7 @@ def player_cumulative_recharge(
     player: Player = Depends(current_player),
     db: Session = Depends(get_db),
 ):
-    """V64：按玩家选择的具体角色/区服计算累充资格。
-
-    玩家中心传 claimable_only=true，只返回当前角色已经达标且尚未领取的奖励。
-    默认保留完整规则列表，兼容既有接口和后台测试。
-    """
+    """V99：每日累充按北京时间自然日统计/领取，永久累充按历史累计统计。"""
     rules = (
         db.query(RechargeRule)
         .filter(RechargeRule.enabled.is_(True))
@@ -2725,18 +2750,20 @@ def player_cumulative_recharge(
     character = resolve_player_character(db, player, character_id)
     today = business_today()
     today_start, tomorrow_start = business_date_bounds(today, today)
+    character_key = int(character.id) if character is not None else 0
+
     if character is None:
-        # 兼容尚未绑定角色的历史账号：继续沿用旧的玩家级累充/领取记录。
-        claimed_ids = {
+        permanent_claimed_ids = {
             row[0] for row in db.query(ClaimRecord.rule_id).filter(ClaimRecord.player_id == player.id).all()
         }
+        # 历史无角色账号的永久值继续沿用兼容字段；每日值只统计当日商城消费。
         total = Decimal(player.total_recharge or 0)
         today_total = paid_mall_cumulative_recharge(
             db, player_ids=[player.id], start_dt=today_start, end_dt=tomorrow_start
         )
         role_name, server_name, resolved_character_id = "未绑定角色", "未绑定区服", None
     else:
-        claimed_ids = {
+        permanent_claimed_ids = {
             row[0] for row in db.query(CharacterClaimRecord.rule_id).filter(
                 CharacterClaimRecord.player_id == player.id,
                 CharacterClaimRecord.character_id == character.id,
@@ -2751,17 +2778,35 @@ def player_cumulative_recharge(
         )
         role_name, server_name, resolved_character_id = character.role_name, character.server_name, character.id
 
+    daily_claimed_ids = {
+        row[0] for row in db.query(DailyRechargeClaimRecord.rule_id).filter(
+            DailyRechargeClaimRecord.player_id == player.id,
+            DailyRechargeClaimRecord.character_id == character_key,
+            DailyRechargeClaimRecord.claim_date == today,
+        ).all()
+    }
+
     payload = []
     for rule in rules:
-        claimed = rule.id in claimed_ids
-        eligible = total >= Decimal(rule.threshold_amount or 0)
+        recharge_type = rule.recharge_type or "permanent"
+        if recharge_type == "daily":
+            progress = today_total
+            claimed = rule.id in daily_claimed_ids
+        else:
+            progress = total
+            claimed = rule.id in permanent_claimed_ids
+        eligible = progress >= Decimal(rule.threshold_amount or 0)
         if claimable_only and (claimed or not eligible):
             continue
         payload.append({
             "id": rule.id,
             "name": rule.name,
+            "recharge_type": recharge_type,
+            "recharge_type_name": "每日累充" if recharge_type == "daily" else "永久累充",
             "threshold_amount": money(rule.threshold_amount),
-            "reward_content": rule.reward_content,
+            "current_recharge": money(progress),
+            "reward_content": recharge_rule_reward_text(db, rule),
+            "items": recharge_rule_reward_payload(db, rule.id),
             "claimed": claimed,
             "eligible": eligible,
         })
@@ -2786,11 +2831,51 @@ def player_claim_cumulative_recharge(
     if not rule or not rule.enabled:
         raise HTTPException(404, "累充奖励不存在或已停用")
     character = resolve_player_character(db, player, character_id)
+    recharge_type = rule.recharge_type or "permanent"
+    today = business_today()
+    today_start, tomorrow_start = business_date_bounds(today, today)
+    character_key = int(character.id) if character is not None else 0
+
+    if recharge_type == "daily":
+        progress = paid_mall_cumulative_recharge(
+            db,
+            player_ids=[player.id],
+            character_id=character.id if character is not None else None,
+            start_dt=today_start,
+            end_dt=tomorrow_start,
+        )
+        if progress < Decimal(rule.threshold_amount or 0):
+            raise HTTPException(400, "该角色今日累充未达到领取金额" if character else "今日累充未达到领取金额")
+        existing = db.query(DailyRechargeClaimRecord).filter(
+            DailyRechargeClaimRecord.player_id == player.id,
+            DailyRechargeClaimRecord.character_id == character_key,
+            DailyRechargeClaimRecord.rule_id == rule.id,
+            DailyRechargeClaimRecord.claim_date == today,
+        ).first()
+        if existing:
+            raise HTTPException(409, "该角色今日已经领取此奖励" if character else "今日已经领取此奖励")
+        row = DailyRechargeClaimRecord(
+            player_id=player.id,
+            character_id=character_key,
+            rule_id=rule.id,
+            claim_date=today,
+            status="claimed",
+        )
+        db.add(row); db.commit(); db.refresh(row)
+        return {
+            "id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at),
+            "recharge_type": "daily", "recharge_type_name": "每日累充", "claim_date": str(today),
+            "character_id": character.id if character else None,
+            "role_name": character.role_name if character else "未绑定角色",
+            "server_name": character.server_name if character else "未绑定区服",
+            "reward_content": recharge_rule_reward_text(db, rule), "items": recharge_rule_reward_payload(db, rule.id),
+        }
+
+    # 永久累充：继续保持同一角色同一规则终身仅领取一次。
     if character is None:
-        # 兼容未绑定角色的历史账号。
         total = Decimal(player.total_recharge or 0)
         if total < Decimal(rule.threshold_amount or 0):
-            raise HTTPException(400, "累计充值未达到领取门槛")
+            raise HTTPException(400, "永久累充未达到领取金额")
         existing = db.query(ClaimRecord).filter(
             ClaimRecord.player_id == player.id, ClaimRecord.rule_id == rule.id
         ).first()
@@ -2798,13 +2883,13 @@ def player_claim_cumulative_recharge(
             raise HTTPException(409, "该奖励已经领取")
         row = ClaimRecord(player_id=player.id, rule_id=rule.id, status="claimed")
         db.add(row); db.commit(); db.refresh(row)
-        return {"id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at)}
+        return {"id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at),
+                "recharge_type": "permanent", "recharge_type_name": "永久累充",
+                "reward_content": recharge_rule_reward_text(db, rule), "items": recharge_rule_reward_payload(db, rule.id)}
 
-    total = paid_mall_cumulative_recharge(
-        db, player_ids=[player.id], character_id=character.id
-    )
+    total = paid_mall_cumulative_recharge(db, player_ids=[player.id], character_id=character.id)
     if total < Decimal(rule.threshold_amount or 0):
-        raise HTTPException(400, "该角色永久累充未达到领取门槛")
+        raise HTTPException(400, "该角色永久累充未达到领取金额")
     existing = db.query(CharacterClaimRecord).filter(
         CharacterClaimRecord.player_id == player.id,
         CharacterClaimRecord.character_id == character.id,
@@ -2818,7 +2903,9 @@ def player_claim_cumulative_recharge(
     db.add(row); db.commit(); db.refresh(row)
     return {
         "id": row.id, "message": "领取成功", "claimed_at": dt(row.claimed_at),
+        "recharge_type": "permanent", "recharge_type_name": "永久累充",
         "character_id": character.id, "role_name": character.role_name, "server_name": character.server_name,
+        "reward_content": recharge_rule_reward_text(db, rule), "items": recharge_rule_reward_payload(db, rule.id),
     }
 
 
@@ -3966,6 +4053,7 @@ def clear_all_game_items(db: Session = Depends(get_db), _=Depends(require_permis
     product_link_count = int(db.query(ProductGameItem).count())
     card_link_count = int(db.query(PrivilegeCardGameItem).count())
     cdk_link_count = int(db.query(RedemptionBatchGameItem).count())
+    recharge_link_count = int(db.query(RechargeRuleGameItem).count())
     if item_count == 0:
         return {
             "message": "道具库已经是空的",
@@ -3973,10 +4061,12 @@ def clear_all_game_items(db: Session = Depends(get_db), _=Depends(require_permis
             "deleted_product_links": 0,
             "deleted_privilege_links": 0,
             "deleted_cdk_links": 0,
+            "deleted_recharge_links": 0,
         }
     db.query(ProductGameItem).delete(synchronize_session=False)
     db.query(PrivilegeCardGameItem).delete(synchronize_session=False)
     db.query(RedemptionBatchGameItem).delete(synchronize_session=False)
+    db.query(RechargeRuleGameItem).delete(synchronize_session=False)
     db.query(GameItem).delete(synchronize_session=False)
     db.commit()
     return {
@@ -3985,6 +4075,7 @@ def clear_all_game_items(db: Session = Depends(get_db), _=Depends(require_permis
         "deleted_product_links": product_link_count,
         "deleted_privilege_links": card_link_count,
         "deleted_cdk_links": cdk_link_count,
+        "deleted_recharge_links": recharge_link_count,
     }
 
 
@@ -3996,8 +4087,9 @@ def delete_game_item(item_id: int, db: Session = Depends(get_db), _=Depends(requ
     used_product = db.query(ProductGameItem.id).filter(ProductGameItem.game_item_id == row.id).first()
     used_card = db.query(PrivilegeCardGameItem.id).filter(PrivilegeCardGameItem.game_item_id == row.id).first()
     used_cdk = db.query(RedemptionBatchGameItem.id).filter(RedemptionBatchGameItem.game_item_id == row.id).first()
-    if used_product or used_card or used_cdk:
-        raise HTTPException(409, "该道具已被礼包、商品、特权卡或兑换码使用，请先编辑对应配置，不建议直接删除")
+    used_recharge = db.query(RechargeRuleGameItem.id).filter(RechargeRuleGameItem.game_item_id == row.id).first()
+    if used_product or used_card or used_cdk or used_recharge:
+        raise HTTPException(409, "该道具已被礼包、商品、特权卡、兑换码或累充奖励使用，请先编辑对应配置，不建议直接删除")
     db.delete(row); db.commit()
     return {"message": "道具已删除"}
 
@@ -4192,15 +4284,75 @@ def redeem(body: RedeemIn, db: Session = Depends(get_db), _=Depends(current_admi
     db.commit(); return {"message": "兑换成功", "reward_content": reward_content}
 
 # ---------- 累充管理 ----------
+def recharge_rule_payload(db: Session, row: RechargeRule) -> dict:
+    items = recharge_rule_reward_payload(db, row.id)
+    content = reward_payload_text(items) if items else (row.reward_content or "")
+    return {
+        "id": row.id, "name": row.name, "recharge_type": row.recharge_type or "permanent",
+        "recharge_type_name": "每日累充" if (row.recharge_type or "permanent") == "daily" else "永久累充",
+        "threshold_amount": money(row.threshold_amount),
+        "reward_content": content, "items": items, "enabled": bool(row.enabled), "created_at": dt(row.created_at),
+    }
+
+
 @app.get("/api/recharge-rules")
 def recharge_rules(db: Session = Depends(get_db), _=Depends(require_permission("recharge.view"))):
-    rows = db.query(RechargeRule).order_by(RechargeRule.threshold_amount.asc()).all()
-    return [{"id": x.id, "name": x.name, "threshold_amount": money(x.threshold_amount), "reward_content": x.reward_content, "enabled": x.enabled, "created_at": dt(x.created_at)} for x in rows]
+    rows = db.query(RechargeRule).order_by(RechargeRule.threshold_amount.asc(), RechargeRule.id.asc()).all()
+    return [recharge_rule_payload(db, x) for x in rows]
+
 
 @app.post("/api/recharge-rules")
-def create_recharge_rule(body: RechargeRuleCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
-    row = RechargeRule(**body.model_dump()); db.add(row); db.commit(); db.refresh(row)
-    return {"id": row.id, "message": "累充规则创建成功"}
+def create_recharge_rule(body: RechargeRuleCreate, db: Session = Depends(get_db), _=Depends(require_permission("recharge.manage"))):
+    name = body.name.strip()
+    if db.query(RechargeRule.id).filter(RechargeRule.name == name).first():
+        raise HTTPException(409, "累充规则名称已存在")
+    reward_items = normalize_reward_items(db, body.items)
+    legacy_reward = str(body.reward_content or "").strip()
+    # V98 后台界面强制从道具库选择；API 保留历史文本奖励兼容，避免旧规则/旧测试客户端升级后失效。
+    if not reward_items and not legacy_reward:
+        raise HTTPException(400, "请至少添加一个累充奖励道具")
+    row = RechargeRule(
+        name=name, recharge_type=body.recharge_type or "permanent", threshold_amount=Decimal(body.threshold_amount),
+        reward_content=reward_items_text(reward_items) if reward_items else legacy_reward, enabled=bool(body.enabled),
+    )
+    db.add(row); db.flush()
+    for item, qty in reward_items:
+        db.add(RechargeRuleGameItem(rule_id=row.id, game_item_id=item.id, quantity=qty))
+    db.commit(); db.refresh(row)
+    return {"id": row.id, "message": "累充规则创建成功", "rule": recharge_rule_payload(db, row)}
+
+
+@app.put("/api/recharge-rules/{rule_id}")
+def update_recharge_rule(rule_id: int, body: RechargeRuleUpdate, db: Session = Depends(get_db), _=Depends(require_permission("recharge.manage"))):
+    row = db.query(RechargeRule).filter(RechargeRule.id == rule_id).with_for_update().first()
+    if not row:
+        raise HTTPException(404, "累充规则不存在")
+    fields = body.model_fields_set
+    if "name" in fields:
+        name = (body.name or "").strip()
+        duplicate = db.query(RechargeRule.id).filter(RechargeRule.name == name, RechargeRule.id != row.id).first()
+        if duplicate:
+            raise HTTPException(409, "累充规则名称已存在")
+        row.name = name
+    if "recharge_type" in fields:
+        row.recharge_type = body.recharge_type or "permanent"
+    if "threshold_amount" in fields:
+        row.threshold_amount = Decimal(body.threshold_amount)
+    if "enabled" in fields:
+        row.enabled = bool(body.enabled)
+    if "items" in fields:
+        reward_items = normalize_reward_items(db, body.items or [])
+        if not reward_items:
+            raise HTTPException(400, "请至少添加一个累充奖励道具")
+        db.query(RechargeRuleGameItem).filter(RechargeRuleGameItem.rule_id == row.id).delete(synchronize_session=False)
+        for item, qty in reward_items:
+            db.add(RechargeRuleGameItem(rule_id=row.id, game_item_id=item.id, quantity=qty))
+        row.reward_content = reward_items_text(reward_items)
+    elif "reward_content" in fields:
+        row.reward_content = str(body.reward_content or "")
+    db.commit(); db.refresh(row)
+    return {"message": "累充规则已更新", "rule": recharge_rule_payload(db, row)}
+
 
 @app.get("/api/claims")
 def claims(db: Session = Depends(get_db), principal=Depends(require_permission("claims.view"))):
@@ -4215,9 +4367,18 @@ def claims(db: Session = Depends(get_db), principal=Depends(require_permission("
 def create_claim(body: ClaimCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
     player = db.get(Player, body.player_id); rule = db.get(RechargeRule, body.rule_id)
     if not player or not rule: raise HTTPException(404, "玩家或累充规则不存在")
-    if Decimal(player.total_recharge or 0) < Decimal(rule.threshold_amount): raise HTTPException(400, "玩家累计充值未达到领取门槛")
-    if db.query(ClaimRecord).filter(ClaimRecord.player_id == body.player_id, ClaimRecord.rule_id == body.rule_id).first(): raise HTTPException(409, "该奖励已经领取")
-    row = ClaimRecord(**body.model_dump()); db.add(row); db.commit(); db.refresh(row)
+    if (rule.recharge_type or "permanent") == "daily":
+        today = business_today()
+        today_start, tomorrow_start = business_date_bounds(today, today)
+        progress = paid_mall_cumulative_recharge(db, player_ids=[player.id], start_dt=today_start, end_dt=tomorrow_start)
+        if progress < Decimal(rule.threshold_amount): raise HTTPException(400, "玩家今日累充未达到领取金额")
+        if db.query(DailyRechargeClaimRecord).filter(DailyRechargeClaimRecord.player_id == player.id, DailyRechargeClaimRecord.character_id == 0, DailyRechargeClaimRecord.rule_id == rule.id, DailyRechargeClaimRecord.claim_date == today).first(): raise HTTPException(409, "玩家今日已经领取该奖励")
+        row = DailyRechargeClaimRecord(player_id=player.id, character_id=0, rule_id=rule.id, claim_date=today, status="claimed")
+    else:
+        if Decimal(player.total_recharge or 0) < Decimal(rule.threshold_amount): raise HTTPException(400, "玩家永久累充未达到领取金额")
+        if db.query(ClaimRecord).filter(ClaimRecord.player_id == body.player_id, ClaimRecord.rule_id == body.rule_id).first(): raise HTTPException(409, "该奖励已经领取")
+        row = ClaimRecord(**body.model_dump())
+    db.add(row); db.commit(); db.refresh(row)
     return {"id": row.id, "message": "领取成功"}
 
 # ---------- 邮件管理 ----------

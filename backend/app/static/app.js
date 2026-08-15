@@ -23,7 +23,7 @@ const titles = {
  dashboard:['数据总览','CPS 运营核心指标'], agents:['下级渠道','管理当前账号直属下级渠道'], settlements:['渠道结算','查看下级代理真实支付总流水或按北京时间日期区间查询'],
  players:['玩家列表','玩家通过代理专属注册地址注册后自动进入列表'], playerBehaviorTest:['玩家行为测试','按真实角色模拟礼包购买、特权卡购买与累充领取'], platformOrders:['平台币订单','玩家充值支付自动生成的订单记录'], paymentTest:['支付测试','仅超级管理员模拟玩家平台币充值完整流程'], mallOrders:['商城订单','玩家中心使用平台币购买礼包后自动生成的订单记录'],
  shipments:['发货查询','商城订单发货状态'], gameItems:['道具库','统一维护礼包、商品与特权卡可选择的游戏道具'], gifts:['礼包列表','礼包类商品'], products:['商品列表','普通商城商品'], privilegeCards:['特权卡配置','周卡、月卡、年卡价格与每日奖励'], cdk:['兑换码列表','CDK 批次与兑换统计'],
- rechargeRules:['累充列表','累计充值奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录'],
+ rechargeRules:['累充列表','累计充值金额奖励规则'], claims:['领取记录','玩家累充奖励领取情况'], sendMail:['发送邮件','向玩家或区服发送游戏邮件'], mailRecords:['发送记录','历史邮件发送记录'],
  profileSettings:['个人信息','查看当前后台账号并修改登录密码'], adminManagers:['管理员','新增和查看超级管理员账号'], systemEditor:['系统编辑','修改后台与玩家中心显示名称'], ipWhitelist:['白名单','限制后台访问IP并管理登录拉黑名单']
 };
 
@@ -269,7 +269,7 @@ async function loadView(view){if(!canView(view)){currentView=firstAllowedView();
  if(view==='gifts') return renderProducts('gift'); if(view==='products') return renderProducts('product');
  if(view==='privilegeCards') return renderPrivilegeCards();
  if(view==='cdk') return renderCDK();
- if(view==='rechargeRules') return renderList('/api/recharge-rules',ruleCols,'累充列表',hasPermission('recharge.manage')?()=>openForm('新增累充规则',forms.rule):null);
+ if(view==='rechargeRules') return renderRechargeRules();
  if(view==='claims') return renderList('/api/claims',claimCols,'领取记录',hasPermission('claims.manage')?()=>openForm('新增领取记录',forms.claim):null);
  if(view==='sendMail') return renderSendMail(); if(view==='mailRecords') return renderList('/api/mails',mailCols,'发送记录');
  if(view==='profileSettings') return renderProfileSettings();
@@ -655,7 +655,7 @@ function playerBehaviorTestPage(){
    <div class="payment-test-card"><h4>2A. 真实模拟购买礼包</h4><label>礼包</label><select id="behaviorGiftSelect"><option value="">请选择礼包</option>${s.gifts.map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · ${Number(x.price).toLocaleString()} 平台币</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorGiftBtn">购买礼包</button></div>
    <div class="payment-test-card"><h4>2B. 真实模拟购买特权卡</h4><label>特权卡</label><select id="behaviorCardSelect"><option value="">请选择特权卡</option>${s.cards.filter(x=>x.enabled).map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · ${Number(x.price_coins).toLocaleString()} 平台币</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorCardBtn">购买特权卡</button></div>
  </div>
- <div class="payment-test-card"><h4>2C. 真实模拟领取累充</h4>${s.selectedCharacterId?`<div class="query-scope-note">当日累充：${Number(c.today_recharge||0).toLocaleString()} 平台币 ｜ 永久累充：${Number(c.total_recharge||0).toLocaleString()} 平台币</div>`:'<div class="payment-test-empty">请先选择角色。</div>'}<label>当前可领取奖励</label><select id="behaviorRuleSelect"><option value="">请选择累充奖励</option>${(c.rules||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · 门槛 ${Number(x.threshold_amount||0).toLocaleString()}</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorClaimBtn">领取累充奖励</button></div>`;
+ <div class="payment-test-card"><h4>2C. 真实模拟领取累充</h4>${s.selectedCharacterId?`<div class="query-scope-note">当日累充：${Number(c.today_recharge||0).toLocaleString()} 平台币 ｜ 永久累充：${Number(c.total_recharge||0).toLocaleString()} 平台币</div>`:'<div class="payment-test-empty">请先选择角色。</div>'}<label>当前可领取奖励</label><select id="behaviorRuleSelect"><option value="">请选择累充奖励</option>${(c.rules||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name)} · ${esc(x.recharge_type_name||'永久累充')} · 累充金额 ${Number(x.threshold_amount||0).toLocaleString()}</option>`).join('')}</select><button class="btn primary payment-test-create" id="behaviorClaimBtn">领取累充奖励</button></div>`;
 }
 async function searchBehaviorCharacters(){
  const keyword=$('#behaviorKeyword')?.value.trim()||'';
@@ -1105,7 +1105,7 @@ function openGameItemForm(row=null){
 }
 window.editGameItem=id=>{const row=(window.__gameItemRows||[]).find(x=>Number(x.id)===Number(id));if(row)openGameItemForm(row)};
 window.deleteGameItem=async id=>{if(!confirm('确认从道具库删除该道具？已被礼包、商品或特权卡使用的道具不能删除。'))return;try{const r=await api(`/api/game-items/${Number(id)}`,{method:'DELETE'});showToast(r.message||'道具已删除','success');await renderGameItems()}catch(e){showToast(e.message,'error',4200)}};
-window.clearAllGameItems=async total=>{const count=Math.max(0,Number(total)||0);if(count<=0)return showToast('道具库已经是空的','error',2600);if(!confirm(`确认清空道具库全部 ${count.toLocaleString()} 条道具？\n\n此操作还会移除礼包、商品、特权卡与道具库的结构化关联。`))return;if(!confirm('最后确认：清空后无法撤销，是否继续？'))return;try{const r=await api('/api/game-items',{method:'DELETE'});showToast(r.message||'全部道具已清空','success',3600);gameItemSearch={q:'',enabled:'',page:1,page_size:50};await renderGameItems()}catch(e){showToast(e.message,'error',4800)}};
+window.clearAllGameItems=async total=>{const count=Math.max(0,Number(total)||0);if(count<=0)return showToast('道具库已经是空的','error',2600);if(!confirm(`确认清空道具库全部 ${count.toLocaleString()} 条道具？\n\n此操作还会移除礼包、商品、特权卡、兑换码、累充奖励与道具库的结构化关联。`))return;if(!confirm('最后确认：清空后无法撤销，是否继续？'))return;try{const r=await api('/api/game-items',{method:'DELETE'});showToast(r.message||'全部道具已清空','success',3600);gameItemSearch={q:'',enabled:'',page:1,page_size:50};await renderGameItems()}catch(e){showToast(e.message,'error',4800)}};
 window.gameItemPage=page=>{gameItemSearch.page=Math.max(1,Number(page)||1);renderGameItems()};
 async function renderGameItems(){
  const params=new URLSearchParams({page:String(gameItemSearch.page),page_size:String(gameItemSearch.page_size)});if(gameItemSearch.q)params.set('q',gameItemSearch.q);if(gameItemSearch.enabled)params.set('enabled',gameItemSearch.enabled);
@@ -1116,8 +1116,8 @@ async function renderGameItems(){
  const queryBox=`<div class="game-item-query"><div class="query-field"><label>查询道具</label><input id="gameItemQuery" value="${esc(gameItemSearch.q)}" placeholder="道具ID / 名称 / 分类"></div><div class="query-field query-status"><label>状态</label><select id="gameItemEnabled"><option value="" ${!gameItemSearch.enabled?'selected':''}>全部</option><option value="true" ${gameItemSearch.enabled==='true'?'selected':''}>启用</option><option value="false" ${gameItemSearch.enabled==='false'?'selected':''}>停用</option></select></div><div class="query-actions"><button class="btn primary" id="gameItemSearchBtn">查询</button><button class="btn" id="gameItemResetBtn">重置</button></div></div>`;
  const total=Number(data.total||0),page=Number(data.page||1),pages=Number(data.pages||1);
  const pager=`<div class="game-item-pager"><span>共 ${total.toLocaleString()} 条 · 第 ${page}/${pages} 页</span><div><button class="btn small" ${page<=1?'disabled':''} onclick="gameItemPage(${page-1})">上一页</button><button class="btn small" ${page>=pages?'disabled':''} onclick="gameItemPage(${page+1})">下一页</button></div></div>`;
- const dangerBox=manage?`<div class="game-item-danger-zone"><div class="game-item-danger-copy"><strong>危险操作</strong><span>清空后会删除整个道具库，并解除礼包、商品、特权卡与道具库的结构化关联。此操作不可撤销。</span></div><button class="btn game-item-clear-all" id="clearGameItemsBtn" ${total<=0?'disabled':''}>清空全部道具（${total.toLocaleString()} 条）</button></div>`:'';
- $('#content').innerHTML=panel('道具库 <span class="page-version-tag">V95</span>',`${importBox}${queryBox}${dangerBox}<div class="query-scope-note">默认每页只加载 ${gameItemSearch.page_size} 条，避免大规模道具库打开时卡顿。</div>${table(rows,cols)}${pager}`,manage?`<button class="btn" id="importGameItemsBtn">⇧ 导入文件</button> <button class="btn primary" id="addGameItemBtn">＋ 新增道具</button>`:'');
+ const dangerBox=manage?`<div class="game-item-danger-zone"><div class="game-item-danger-copy"><strong>危险操作</strong><span>清空后会删除整个道具库，并解除礼包、商品、特权卡、兑换码、累充奖励与道具库的结构化关联。此操作不可撤销。</span></div><button class="btn game-item-clear-all" id="clearGameItemsBtn" ${total<=0?'disabled':''}>清空全部道具（${total.toLocaleString()} 条）</button></div>`:'';
+ $('#content').innerHTML=panel('道具库',`${importBox}${queryBox}${dangerBox}<div class="query-scope-note">默认每页只加载 ${gameItemSearch.page_size} 条，避免大规模道具库打开时卡顿。</div>${table(rows,cols)}${pager}`,manage?`<button class="btn" id="importGameItemsBtn">⇧ 导入文件</button> <button class="btn primary" id="addGameItemBtn">＋ 新增道具</button>`:'');
  const submitSearch=()=>{gameItemSearch.q=$('#gameItemQuery').value.trim();gameItemSearch.enabled=$('#gameItemEnabled').value;gameItemSearch.page=1;renderGameItems()};
  $('#gameItemSearchBtn').onclick=submitSearch;$('#gameItemQuery').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();submitSearch()}};$('#gameItemResetBtn').onclick=()=>{gameItemSearch={q:'',enabled:'',page:1,page_size:50};renderGameItems()};
  if(manage){
@@ -1219,7 +1219,18 @@ const mallCols=[['订单号','order_no'],['玩家账号','player_account'],['角
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
 const productCols=[['SKU','sku'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
 const cdkCols=[['CDK名称','name'],['奖励道具','items',(_,r)=>cdkRewardSummary(r)],['每角色兑换','per_character_limit',cdkLimitText],['过期时间','expires_at',v=>v||'<span class="muted">永不过期</span>'],['总数','total_count'],['未兑换数','unused_count'],['已兑换数','redeemed_count'],['状态','enabled',cdkStatusCell],['创建时间','created_at'],['操作','id',(_,r)=>hasPermission('cdk.manage')?`<button class="btn compact" onclick="editCDKBatch(${Number(r.id)})">编辑</button>`:'<span class="muted">-</span>']];
-const ruleCols=[['名称','name'],['累充门槛','threshold_amount'],['奖励内容','reward_content'],['状态','enabled',v=>badge(v?'active':'disabled')]];
+function openRechargeRuleForm(row=null){
+ const cfg={path:row?`/api/recharge-rules/${Number(row.id)}`:'/api/recharge-rules',method:row?'PUT':'POST',note:'每日累充按北京时间自然日统计，每天重新累计并可领取一次；永久累充按该角色历史累计消费统计，同一档终身只能领取一次。奖励道具从统一道具库搜索选择。',defaults:row?{name:row.name,recharge_type:row.recharge_type||'permanent',threshold_amount:row.threshold_amount,items:row.items||[],enabled:String(Boolean(row.enabled))}:{name:'',recharge_type:'permanent',threshold_amount:'',items:[],enabled:'true'},fields:[['name','规则名称'],['recharge_type','累充类型','select',true,{options:[{value:'daily',label:'每日累充'},{value:'permanent',label:'永久累充'}]}],['threshold_amount','累充金额','number',true,{min:0.01,step:0.01}],['items','奖励道具','item-builder',true,{options:itemPickerOptions(row?.items||[]),remoteApi:'/api/game-items/picker'}],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,recharge_type:String(o.recharge_type||'permanent'),threshold_amount:Number(o.threshold_amount),items:parseItemBuilderValue(o.items),enabled:String(o.enabled)!=='false'})};
+ openForm(row?'编辑累充奖励':'新增累充奖励',cfg);
+}
+window.editRechargeRule=id=>{const row=(window.__rechargeRuleRows||[]).find(x=>Number(x.id)===Number(id));if(row)openRechargeRuleForm(row)};
+async function renderRechargeRules(){
+ const rows=await api('/api/recharge-rules');window.__rechargeRuleRows=rows;
+ $('#content').innerHTML=panel('累充列表',table(rows,ruleCols),hasPermission('recharge.manage')?'<button class="btn primary" id="addRechargeRuleBtn">＋ 新增累充奖励</button>':'');
+ const btn=$('#addRechargeRuleBtn');if(btn)btn.onclick=()=>openRechargeRuleForm();
+}
+
+const ruleCols=[['名称','name'],['累充类型','recharge_type_name'],['累充金额','threshold_amount'],['奖励道具','reward_content'],['状态','enabled',v=>badge(v?'active':'disabled')],['操作','id',(v)=>hasPermission('recharge.manage')?`<button class="btn compact" onclick="editRechargeRule(${Number(v)})">编辑</button>`:'<span class="muted">-</span>']];
 const claimCols=[['玩家PK','player_id'],['规则PK','rule_id'],['状态','status',badge],['领取时间','claimed_at']];
 const mailCols=[['标题','title'],['目标类型','target_type'],['目标','target_value'],['状态','send_status',badge],['发送人','created_by'],['发送时间','sent_at']];
 
@@ -1261,7 +1272,6 @@ const forms={
  cdk:{path:'/api/redemption-batches',fields:[['name','CDK名称']]},
  generateCDK:{path:null,fields:[['batch_id','CDK批次PK','number'],['count','生成数量','number'],['prefix','前缀']]},
  settlement:{path:'/api/settlements',fields:[['agent_id','代理PK','number'],['period_start','开始日期','date'],['period_end','结束日期','date']]},
- rule:{path:'/api/recharge-rules',fields:[['name','规则名称'],['threshold_amount','累充门槛','number'],['reward_content','奖励内容','textarea']]},
  privilege:{path:'/api/privilege-cards',fields:[['name','特权卡名称'],['card_type','类型','select',true,{options:[{value:'week',label:'周卡（7天）'},{value:'month',label:'月卡（30天）'},{value:'year',label:'年卡（365天）'}]}],['price_coins','平台币售价','number',true,{min:1,step:1}],['daily_reward_content','每日奖励内容','textarea'],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,enabled:String(o.enabled)!=='false'})},
  claim:{path:'/api/claims',fields:[['player_id','玩家PK','number'],['rule_id','规则PK','number']]},
  mail:{path:'/api/mails',fields:[['title','邮件标题'],['content','邮件内容','textarea'],['target_type','目标类型(player/server/all)'],['target_value','玩家ID/区服，可空','text',false]]}
