@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import json
 import webbrowser
 from pathlib import Path
 
@@ -15,6 +16,7 @@ VENV = ROOT / ".venv"
 REQ = BACKEND / "requirements-local.txt"
 PORT = 8000
 URL = f"http://127.0.0.1:{PORT}"
+EXPECTED_BUILD = "v97-postgres-migration-fix"
 
 
 def venv_python() -> Path:
@@ -45,6 +47,16 @@ def port_open() -> bool:
         return s.connect_ex(("127.0.0.1", PORT)) == 0
 
 
+
+def running_build() -> str | None:
+    try:
+        with urllib.request.urlopen(f"{URL}/api/public/build-info", timeout=1.0) as r:
+            data = json.loads(r.read().decode("utf-8"))
+            return str(data.get("version") or "") or None
+    except Exception:
+        return None
+
+
 def wait_and_open_browser() -> None:
     for _ in range(80):
         try:
@@ -63,10 +75,19 @@ def main() -> int:
         return 2
 
     if port_open():
-        print(f"检测到端口 {PORT} 已有程序运行。")
-        print(f"如果 CPS 已启动，请直接打开：{URL}")
-        webbrowser.open(URL)
-        return 0
+        build = running_build()
+        if build == EXPECTED_BUILD:
+            print(f"检测到当前版本 {EXPECTED_BUILD} 已在运行。")
+            webbrowser.open(URL)
+            return 0
+        if build:
+            print(f"检测到旧 CPS 进程仍在运行：{build}")
+            print(f"当前源码版本应为：{EXPECTED_BUILD}")
+            print("请先关闭之前的 CPS 启动窗口/进程，再重新双击启动系统.bat。")
+            print("仅刷新浏览器无法让已运行的 Python 进程加载新源码。")
+            return 4
+        print(f"端口 {PORT} 已被其它程序占用，无法启动当前 CPS。")
+        return 4
 
     try:
         py = ensure_venv()

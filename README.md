@@ -118,3 +118,11 @@ CDK 兑换角色/区服绑定等 V67 功能继续保留。
 - 玩家购买按玩家账号统计，周期按 Asia/Shanghai（北京时间）自然日/周/月计算。
 - 玩家中心展示限购规则、已购次数与剩余次数；达到任一限购上限后后端拒绝继续购买。
 
+
+
+## V97 PostgreSQL 部署修复
+
+- 修复 V96 兑换码升级迁移在 PostgreSQL 上使用整数布尔默认值导致启动失败的问题。
+- PostgreSQL 使用 `FALSE`，SQLite 使用 `0`，同一份代码兼容本地和 Render/PostgreSQL。
+- `/healthz` 与 `/api/public/build-info` 会返回当前运行版本，启动日志会输出实际源码目录和数据库类型。
+- Windows 本地启动器检测到旧 CPS 进程时不再静默打开旧版本。

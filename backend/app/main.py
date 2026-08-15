@@ -32,8 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v96-cdk-rules-rewards"
-BUILD_LABEL = "V96 · CDK RULES & REWARDS"
+BUILD_VERSION = "v97-postgres-migration-fix"
+BUILD_LABEL = "V97 · POSTGRES MIGRATION FIX"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -768,20 +768,32 @@ def ensure_redemption_code_character_columns():
             conn.execute(text("ALTER TABLE redemption_codes ADD COLUMN server_name VARCHAR(100)"))
 
 def ensure_redemption_batch_rule_columns():
-    """V96：给历史兑换码批次补充角色次数、过期时间与兑换奖励快照字段。"""
+    """V97：跨 SQLite/PostgreSQL 安全补充兑换码规则字段。
+
+    V96 使用了整数形式的布尔默认值，SQLite 可以接受，但 PostgreSQL 会因为
+    integer -> boolean 类型不匹配而让应用在 startup 阶段直接失败。生产部署平台
+    因此可能继续保留上一份健康版本。这里根据数据库方言使用正确的布尔字面量，
+    并让失败过的 V96 部署可以在下一次启动时安全重试迁移。
+    """
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
+    is_postgres = engine.dialect.name.startswith("postgres")
+    false_literal = "FALSE" if is_postgres else "0"
     with engine.begin() as conn:
         if "redemption_batches" in tables:
             columns = {c["name"] for c in inspector.get_columns("redemption_batches")}
             if "per_character_limit" not in columns:
                 conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN per_character_limit INTEGER DEFAULT 0"))
             if "reward_required" not in columns:
-                conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN reward_required BOOLEAN DEFAULT 0"))
+                conn.execute(text(
+                    f"ALTER TABLE redemption_batches ADD COLUMN reward_required BOOLEAN DEFAULT {false_literal}"
+                ))
             if "expires_at" not in columns:
                 conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN expires_at TIMESTAMP"))
             conn.execute(text("UPDATE redemption_batches SET per_character_limit = 0 WHERE per_character_limit IS NULL"))
-            conn.execute(text("UPDATE redemption_batches SET reward_required = 0 WHERE reward_required IS NULL"))
+            conn.execute(text(
+                f"UPDATE redemption_batches SET reward_required = {false_literal} WHERE reward_required IS NULL"
+            ))
         if "redemption_codes" in tables:
             code_columns = {c["name"] for c in inspector.get_columns("redemption_codes")}
             if "reward_content" not in code_columns:
@@ -899,6 +911,7 @@ def ensure_agent_public_identity_format():
 
 @app.on_event("startup")
 def startup():
+    print(f"[CPS] starting {BUILD_VERSION} | db={engine.dialect.name} | main={Path(__file__).resolve()} | static={STATIC_DIR.resolve()}", flush=True)
     Base.metadata.create_all(bind=engine)
     ensure_agent_hierarchy_columns()
     ensure_platform_order_columns()
@@ -914,7 +927,7 @@ def startup():
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "build": BUILD_VERSION}
 
 @app.get("/")
 def index():
@@ -1102,6 +1115,11 @@ def public_build_info():
             "game_item_pagination": True,
             "game_item_picker_remote_search": True,
             "game_item_clear_all": True,
+            "cdk_edit": True,
+            "cdk_character_limit": True,
+            "cdk_expiry": True,
+            "cdk_reward_items": True,
+            "postgres_migration_safe": True,
         },
     }
 
