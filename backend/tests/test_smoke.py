@@ -2530,7 +2530,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v101-mail-rewards-targeting' in index_html
+    assert '/static/app.js?v=v103-mail-left-layout' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2837,13 +2837,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v101-mail-rewards-targeting'
+        assert index.headers.get('x-cps-build') == 'v103-mail-left-layout'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v101-mail-rewards-targeting')
+        js = c.get('/static/app.js?v=v103-mail-left-layout')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2903,9 +2903,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V101 · MAIL REWARDS' in index_html
-    assert '/static/styles.css?v=v101-mail-rewards-targeting' in index_html
-    assert '/static/app.js?v=v101-mail-rewards-targeting' in index_html
+    assert 'V103 · MAIL COMPACT' in index_html
+    assert '/static/styles.css?v=v103-mail-left-layout' in index_html
+    assert '/static/app.js?v=v103-mail-left-layout' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2921,9 +2921,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V101 · MAIL REWARDS' in index_html
-    assert '/static/styles.css?v=v101-mail-rewards-targeting' in index_html
-    assert '/static/app.js?v=v101-mail-rewards-targeting' in index_html
+    assert 'V103 · MAIL COMPACT' in index_html
+    assert '/static/styles.css?v=v103-mail-left-layout' in index_html
+    assert '/static/app.js?v=v103-mail-left-layout' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2947,9 +2947,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V101 · MAIL REWARDS" in index_html
-    assert "/static/styles.css?v=v101-mail-rewards-targeting" in index_html
-    assert "/static/app.js?v=v101-mail-rewards-targeting" in index_html
+    assert "V103 · MAIL COMPACT" in index_html
+    assert "/static/styles.css?v=v103-mail-left-layout" in index_html
+    assert "/static/app.js?v=v103-mail-left-layout" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2981,7 +2981,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v101-mail-rewards-targeting'
+        assert player.headers.get('x-cps-build') == 'v103-mail-left-layout'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3059,7 +3059,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V101 · MAIL REWARDS' in index_html
+    assert 'V103 · MAIL COMPACT' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3255,7 +3255,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v101-mail-rewards-targeting'
+        assert data['version'] == 'v103-mail-left-layout'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True

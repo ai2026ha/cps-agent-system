@@ -543,3 +543,27 @@ html{scrollbar-gutter:stable}
 
 /* V101：邮件按区服/角色发放 + 道具附件 */
 .mail-compose{display:grid;gap:14px}.mail-compose-grid{display:grid;grid-template-columns:minmax(180px,.55fr) minmax(0,1.45fr);gap:14px 16px}.mail-field,.mail-target-box{min-width:0}.mail-field.full{grid-column:1/-1}.mail-field>label,.mail-target-box>label{display:block;margin:0 0 7px;color:#59657a;font-size:12px;font-weight:700}.mail-field>input,.mail-field>textarea,.mail-field>select,.mail-target-box>select,.mail-character-search>input{width:100%;border:1px solid #dce2ed;border-radius:9px;background:#fff;color:#172033;outline:none}.mail-field>input,.mail-field>select,.mail-target-box>select,.mail-character-search>input{height:42px;padding:8px 10px}.mail-field>textarea{min-height:118px;padding:10px 12px;resize:vertical;line-height:1.6}.mail-field>input:focus,.mail-field>textarea:focus,.mail-field>select:focus,.mail-target-box>select:focus,.mail-character-search>input:focus{border-color:#9aabc8;box-shadow:0 0 0 3px #304d8020}.mail-target-box{grid-column:2;align-self:end}.mail-character-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-bottom:8px}.mail-character-search .btn{height:42px}.mail-target-help{margin-top:6px;color:#8792a5;font-size:11.5px;line-height:1.55}.mail-send-warning{padding:11px 13px;border:1px solid #dbe5f2;border-radius:10px;background:#f6f9fd;color:#65748b;font-size:12px;line-height:1.65}.mail-send-warning.danger-note{border-color:#f1d6a8;background:#fff9ec;color:#856126}.mail-compose-actions{display:flex;justify-content:flex-end}.mail-compose-actions .primary{width:auto;min-width:120px;margin:0}.mail-reward-cell{display:inline-block;max-width:260px;white-space:pre-line;line-height:1.5;color:#42506a}.mail-target-box.hidden{display:none!important}@media(max-width:760px){.mail-compose-grid{grid-template-columns:1fr}.mail-field.full,.mail-target-box{grid-column:auto}.mail-character-search{grid-template-columns:1fr}.mail-character-search .btn{width:100%}.mail-compose-actions .primary{width:100%}}
+
+/* V103：发送邮件保持紧凑宽度，并改为内容区左对齐 */
+.mail-compose-shell{width:100%;max-width:780px;margin:0}
+.mail-compose-shell>.panel{margin-top:8px;padding:16px 18px 17px}
+.mail-compose-shell .panel-head{margin-bottom:12px}
+.mail-compose{gap:11px}
+.mail-compose-grid{grid-template-columns:145px minmax(0,1fr);gap:11px 12px}
+.mail-field>label,.mail-target-box>label{margin-bottom:6px}
+.mail-field>input,.mail-field>select,.mail-target-box>select,.mail-character-search>input{height:39px;padding:7px 9px}
+.mail-character-search .btn{height:39px}
+.mail-field>textarea{min-height:88px;max-height:180px;padding:9px 10px}
+.mail-compose .item-builder{gap:8px;padding:10px}
+.mail-compose .item-builder-picker{grid-template-columns:minmax(120px,.8fr) minmax(180px,1.25fr) 90px auto;gap:7px}
+.mail-compose .item-builder-picker input,.mail-compose .item-builder-picker select{height:37px;padding:7px 9px}
+.mail-compose .item-builder-empty{padding:9px}
+.mail-compose .item-builder-row{grid-template-columns:minmax(0,1fr) 90px auto;padding:7px 9px}
+.mail-compose .item-builder-row>input{height:34px}
+.mail-target-help{margin-top:4px;font-size:11px}
+.mail-send-warning{padding:9px 11px;font-size:11.5px;line-height:1.55}
+.mail-compose-actions{padding-top:1px}
+.mail-compose-actions .primary{min-width:112px}
+@media(max-width:820px){.mail-compose-shell{max-width:100%}}
+@media(max-width:760px){.mail-compose-grid{grid-template-columns:1fr}.mail-field.full,.mail-target-box{grid-column:auto}.mail-compose .item-builder-picker{grid-template-columns:1fr 1fr}.mail-compose .item-library-search{grid-column:1/-1}.mail-compose-shell>.panel{padding:14px}.mail-compose-actions .primary{width:100%}}
+@media(max-width:560px){.mail-compose .item-builder-picker{grid-template-columns:1fr}.mail-compose .item-library-search{grid-column:auto}}

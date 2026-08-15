@@ -1185,7 +1185,7 @@ async function renderSendMail(){
    <div class="mail-send-warning" id="mailSendWarning">当前为模拟发送：系统会完整记录发送目标、收件角色数量与道具奖励；接入游戏服邮件 API 后可直接在后端发送任务处对接真实投递。</div>
    <div class="mail-compose-actions"><button type="submit" class="btn primary" id="mailSendBtn">发送邮件</button></div>
  </form>`;
- $('#content').innerHTML=panel('发送游戏邮件',body);
+ $('#content').innerHTML=`<div class="mail-compose-shell">${panel('发送游戏邮件',body)}</div>`;
  const form=$('#mailComposeForm');bindItemBuilders(form);
  const typeEl=$('#mailTargetType'),characterBox=$('#mailCharacterTarget'),serverBox=$('#mailServerTarget');
  const syncTarget=()=>{const isServer=typeEl.value==='server';serverBox.classList.toggle('hidden',!isServer);characterBox.classList.toggle('hidden',isServer);$('#mailSendWarning').classList.toggle('danger-note',isServer)};

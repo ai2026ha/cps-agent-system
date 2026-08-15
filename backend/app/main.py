@@ -32,8 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v101-mail-rewards-targeting"
-BUILD_LABEL = "V101 · MAIL REWARDS"
+BUILD_VERSION = "v103-mail-left-layout"
+BUILD_LABEL = "V103 · MAIL COMPACT"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
