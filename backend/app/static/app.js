@@ -506,7 +506,7 @@ function mallOrderSearchQuery(){
 function mallOrderSearchBar(){
  return `<div class="mall-order-search-bar">
    <div class="query-field"><label>账号查询</label><input id="mallAccountQuery" value="${esc(mallOrderSearch.account)}" placeholder="输入玩家账号"></div>
-   <div class="query-field"><label>商品查询</label><input id="mallProductQuery" value="${esc(mallOrderSearch.product)}" placeholder="输入礼包名称 / SKU"></div>
+   <div class="query-field"><label>商品查询</label><input id="mallProductQuery" value="${esc(mallOrderSearch.product)}" placeholder="输入礼包名称"></div>
    <div class="query-actions"><button class="btn primary" id="mallQueryBtn">查询</button><button class="btn" id="mallResetBtn">重置</button></div>
  </div>`;
 }
@@ -1063,9 +1063,10 @@ function productFormConfig(cat,row=null){
  return {
    path:row?`/api/products/${Number(row.id)}`:'/api/products',method:row?'PUT':'POST',
    note:'道具内容从统一道具库搜索选择，不会再一次性加载整个道具库。',
-   defaults:row?{sku:row.sku,name:row.name,price:row.price,stock:row.stock,items:row.items||[],daily_limit:row.daily_limit||0,weekly_limit:row.weekly_limit||0,monthly_limit:row.monthly_limit||0,lifetime_limit:row.lifetime_limit||0,enabled:String(Boolean(row.enabled))}:{sku:'',name:'',price:isGift?1:0,stock:0,items:[],daily_limit:0,weekly_limit:0,monthly_limit:0,lifetime_limit:0,enabled:'true'},
+   defaults:row?{name:row.name,sort_order:row.sort_order,price:row.price,stock:row.stock,items:row.items||[],daily_limit:row.daily_limit||0,weekly_limit:row.weekly_limit||0,monthly_limit:row.monthly_limit||0,lifetime_limit:row.lifetime_limit||0,enabled:String(Boolean(row.enabled))}:{name:'',price:isGift?1:0,stock:0,items:[],daily_limit:0,weekly_limit:0,monthly_limit:0,lifetime_limit:0,enabled:'true'},
    fields:[
-     ['sku','SKU'],['name',isGift?'礼包名称':'商品名称'],
+     ['name',isGift?'礼包名称':'商品名称'],
+     ...(row?[[ 'sort_order','排序','number',true,{min:1,step:1,placeholder:'数字越小越靠前'} ]]:[]),
      ['price',isGift?'平台币售价':'价格','number',true,{min:isGift?1:0,step:isGift?1:0.01}],
      ['stock','库存','number',true,{min:0,step:1}],
      ...(isGift?[
@@ -1078,11 +1079,12 @@ function productFormConfig(cat,row=null){
      ['enabled',isGift?'上架状态':'状态','select',true,{options:[{value:'true',label:isGift?'上架':'启用'},{value:'false',label:isGift?'下架':'停用'}]}]
    ],
    transform:o=>{
-     const out={sku:String(o.sku||'').trim(),name:String(o.name||'').trim(),price:Number(o.price||0),stock:Number(o.stock||0),
+     const out={name:String(o.name||'').trim(),price:Number(o.price||0),stock:Number(o.stock||0),
        daily_limit:isGift?Math.max(0,Number(o.daily_limit||0)):0,weekly_limit:isGift?Math.max(0,Number(o.weekly_limit||0)):0,
        monthly_limit:isGift?Math.max(0,Number(o.monthly_limit||0)):0,lifetime_limit:isGift?Math.max(0,Number(o.lifetime_limit||0)):0,
        items:parseItemBuilderValue(o.items),enabled:String(o.enabled)!=='false',description:''};
      if(!row)out.category=cat;
+     if(row)out.sort_order=Math.max(1,Number(o.sort_order||row.sort_order||1));
      return out;
    }
  };
@@ -1092,7 +1094,7 @@ window.editProduct=id=>{const row=(window.__productRows||[]).find(x=>Number(x.id
 window.toggleProductEnabled=async id=>{const row=(window.__productRows||[]).find(x=>Number(x.id)===Number(id));if(!row)return;const next=!Boolean(row.enabled);const noun=row.category==='gift'?'礼包':'商品';try{const r=await api(`/api/products/${Number(id)}`,{method:'PUT',body:JSON.stringify({enabled:next})});showToast(r.message||`${noun}已${next?'上架':'下架'}`,'success');await renderProducts(row.category)}catch(e){showToast(e.message,'error',4200)}};
 async function renderProducts(cat){
  const rows=await api('/api/products?category='+cat),manage=hasPermission('products.manage');window.__productRows=rows;
- const cols=[['SKU','sku'],['名称','name'],[cat==='gift'?'平台币售价':'价格','price'],['库存','stock'],['道具内容','item_summary']];
+ const cols=[['排序','sort_order'],['名称','name'],[cat==='gift'?'平台币售价':'价格','price'],['库存','stock'],['道具内容','item_summary']];
  if(cat==='gift')cols.push(['限购规则','purchase_limit_text']);
  cols.push(['状态','enabled',v=>badge(v?'active':'disabled')]);
  if(manage)cols.push(['操作','id',(v,r)=>`<div class="table-action-buttons"><button class="btn small" onclick="editProduct(${Number(v)})">编辑</button><button class="btn small ${r.enabled?'danger':''}" onclick="toggleProductEnabled(${Number(v)})">${r.enabled?(cat==='gift'?'下架':'停用'):(cat==='gift'?'上架':'启用')}</button></div>`]);
@@ -1217,7 +1219,7 @@ const platformCols=[
 ];
 const mallCols=[['订单号','order_no'],['玩家账号','player_account'],['角色名','role_name'],['区服','server_name'],['礼包名称','product_name'],['数量','quantity'],['平台币','coin_amount',v=>Number(v||0).toLocaleString()],['支付','pay_status',v=>v==='paid'?'<span class="badge ok">已支付</span>':badge(v)],['发货','delivery_status',v=>badge(({waiting:'待发货',sent:'已发货',success:'成功',failed:'失败'})[v]||v)],['创建时间','created_at']];
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
-const productCols=[['SKU','sku'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
+const productCols=[['排序','sort_order'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
 const cdkCols=[['CDK名称','name'],['奖励道具','items',(_,r)=>cdkRewardSummary(r)],['每角色兑换','per_character_limit',cdkLimitText],['过期时间','expires_at',v=>v||'<span class="muted">永不过期</span>'],['总数','total_count'],['未兑换数','unused_count'],['已兑换数','redeemed_count'],['状态','enabled',cdkStatusCell],['创建时间','created_at'],['操作','id',(_,r)=>hasPermission('cdk.manage')?`<button class="btn compact" onclick="editCDKBatch(${Number(r.id)})">编辑</button>`:'<span class="muted">-</span>']];
 function openRechargeRuleForm(row=null){
  const cfg={path:row?`/api/recharge-rules/${Number(row.id)}`:'/api/recharge-rules',method:row?'PUT':'POST',note:'每日累充按北京时间自然日统计，每天重新累计并可领取一次；永久累充按该角色历史累计消费统计，同一档终身只能领取一次。奖励道具从统一道具库搜索选择。',defaults:row?{name:row.name,recharge_type:row.recharge_type||'permanent',threshold_amount:row.threshold_amount,items:row.items||[],enabled:String(Boolean(row.enabled))}:{name:'',recharge_type:'permanent',threshold_amount:'',items:[],enabled:'true'},fields:[['name','规则名称'],['recharge_type','累充类型','select',true,{options:[{value:'daily',label:'每日累充'},{value:'permanent',label:'永久累充'}]}],['threshold_amount','累充金额','number',true,{min:0.01,step:0.01}],['items','奖励道具','item-builder',true,{options:itemPickerOptions(row?.items||[]),remoteApi:'/api/game-items/picker'}],['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]],transform:o=>({...o,recharge_type:String(o.recharge_type||'permanent'),threshold_amount:Number(o.threshold_amount),items:parseItemBuilderValue(o.items),enabled:String(o.enabled)!=='false'})};
@@ -1268,7 +1270,7 @@ const forms={
  admin:{path:'/api/system/admins',pendingText:'创建中…',note:'新建账号将直接获得超级管理员权限。账号至少 4 位，密码至少 8 位。',fields:[['username','管理员账号','text',true,{autocomplete:'off',placeholder:'请输入管理员账号',minLength:4}],['password','登录密码','password',true,{autocomplete:'new-password',placeholder:'至少 8 位',minLength:8}]]},
  mall:{path:'/api/orders/mall',fields:[['order_no','订单号'],['player_id','玩家PK','number'],['agent_id','代理PK','number',false],['product_id','商品PK','number'],['quantity','数量','number'],['amount','金额','number'],['pay_status','支付状态']]},
  shipment:{path:'/api/shipments',fields:[['mall_order_id','商城订单PK','number'],['provider','发货服务商'],['tracking_no','发货单号','text',false],['status','状态(sent/failed/success)'],['message','说明','textarea',false]]},
- product:{path:'/api/products',fields:[['sku','SKU'],['name','名称'],['category','分类(gift/product)'],['price','价格','number'],['stock','库存','number'],['description','说明','textarea',false]]},
+ product:{path:'/api/products',fields:[['name','名称'],['category','分类(gift/product)'],['price','价格','number'],['stock','库存','number'],['description','说明','textarea',false]]},
  cdk:{path:'/api/redemption-batches',fields:[['name','CDK名称']]},
  generateCDK:{path:null,fields:[['batch_id','CDK批次PK','number'],['count','生成数量','number'],['prefix','前缀']]},
  settlement:{path:'/api/settlements',fields:[['agent_id','代理PK','number'],['period_start','开始日期','date'],['period_end','结束日期','date']]},

@@ -73,7 +73,6 @@ class GameItemUpdate(BaseModel):
 
 
 class ProductCreate(BaseModel):
-    sku: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=120)
     category: str = "product"
     price: Decimal
@@ -89,7 +88,7 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
-    sku: str | None = Field(default=None, min_length=1, max_length=64)
+    sort_order: int | None = Field(default=None, ge=1, le=2_000_000_000)
     name: str | None = Field(default=None, min_length=1, max_length=120)
     price: Decimal | None = None
     stock: int | None = Field(default=None, ge=0)

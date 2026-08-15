@@ -1969,8 +1969,8 @@ def test_v57_mall_order_search_and_character_snapshot():
         by_product = c.get('/api/orders/mall', headers=auth(admin), params={'product': '角色礼包'})
         assert by_product.status_code == 200, by_product.text
         assert any(x['order_no'] == order_no for x in by_product.json())
-        by_sku = c.get('/api/orders/mall', headers=auth(admin), params={'product': 'V57-ROLE-GIFT'})
-        assert any(x['order_no'] == order_no for x in by_sku.json())
+        by_name = c.get('/api/orders/mall', headers=auth(admin), params={'product': 'V57角色礼包'})
+        assert any(x['order_no'] == order_no for x in by_name.json())
 
 
 def test_v58_player_mall_uses_dropdown_and_auto_detail():
@@ -2530,7 +2530,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v99-recharge-daily-permanent' in index_html
+    assert '/static/app.js?v=v100-product-sort' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2837,13 +2837,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v99-recharge-daily-permanent'
+        assert index.headers.get('x-cps-build') == 'v100-product-sort'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v99-recharge-daily-permanent')
+        js = c.get('/static/app.js?v=v100-product-sort')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2903,9 +2903,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V99 · DAILY / PERMANENT RECHARGE' in index_html
-    assert '/static/styles.css?v=v99-recharge-daily-permanent' in index_html
-    assert '/static/app.js?v=v99-recharge-daily-permanent' in index_html
+    assert 'V100 · AUTO SORT' in index_html
+    assert '/static/styles.css?v=v100-product-sort' in index_html
+    assert '/static/app.js?v=v100-product-sort' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2921,9 +2921,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V99 · DAILY / PERMANENT RECHARGE' in index_html
-    assert '/static/styles.css?v=v99-recharge-daily-permanent' in index_html
-    assert '/static/app.js?v=v99-recharge-daily-permanent' in index_html
+    assert 'V100 · AUTO SORT' in index_html
+    assert '/static/styles.css?v=v100-product-sort' in index_html
+    assert '/static/app.js?v=v100-product-sort' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2947,9 +2947,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V99 · DAILY / PERMANENT RECHARGE" in index_html
-    assert "/static/styles.css?v=v99-recharge-daily-permanent" in index_html
-    assert "/static/app.js?v=v99-recharge-daily-permanent" in index_html
+    assert "V100 · AUTO SORT" in index_html
+    assert "/static/styles.css?v=v100-product-sort" in index_html
+    assert "/static/app.js?v=v100-product-sort" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2981,7 +2981,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v99-recharge-daily-permanent'
+        assert player.headers.get('x-cps-build') == 'v100-product-sort'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3032,7 +3032,7 @@ def test_v90_game_item_library_and_reward_item_relations():
         })
         assert gift.status_code == 200, gift.text
         gifts = c.get('/api/products?category=gift', headers=h)
-        row = next(x for x in gifts.json() if x['sku']=='V90-GIFT-001')
+        row = next(x for x in gifts.json() if x['name']=='V90测试礼包')
         assert row['items'][0]['item_code']=='ITEM-1001'
         assert row['items'][0]['quantity']==3
         assert '测试强化石 × 3' in row['item_summary']
@@ -3059,7 +3059,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V99 · DAILY / PERMANENT RECHARGE' in index_html
+    assert 'V100 · AUTO SORT' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3255,7 +3255,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v99-recharge-daily-permanent'
+        assert data['version'] == 'v100-product-sort'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
@@ -3305,7 +3305,7 @@ def test_v94_game_item_clear_all_removes_library_and_structured_links():
 
         # 关联被清理，但礼包/特权卡本身与其历史文本说明仍保留。
         gifts = c.get('/api/products?category=gift', headers=h).json()
-        gift_row = next(x for x in gifts if x['sku']=='V94-CLEAR-GIFT')
+        gift_row = next(x for x in gifts if x['name']=='V94清空关联礼包')
         assert gift_row['items'] == []
         assert 'V94清空测试道具1' in gift_row['item_summary']
         cards = c.get('/api/privilege-cards', headers=h).json()
@@ -3552,3 +3552,69 @@ def test_v99_recharge_daily_and_permanent_rule_types():
         app_js = (Path(__file__).resolve().parents[1] / 'app' / 'static' / 'app.js').read_text(encoding='utf-8')
         assert "['recharge_type','累充类型','select'" in app_js
         assert "['累充类型','recharge_type_name']" in app_js
+
+
+
+def test_v100_products_remove_sku_and_support_sorting():
+    with TestClient(app) as c:
+        login = c.post('/api/auth/login', json={'username': 'admin', 'password': 'ChangeMe123!'})
+        assert login.status_code == 200, login.text
+        admin = login.json()['access_token']
+        headers = {'Authorization': f'Bearer {admin}'}
+
+        # Ensure at least one game item is available for structured product rewards.
+        item_resp = c.post('/api/game-items', headers=headers, json={
+            'item_code': 'V100-SORT-ITEM', 'name': 'V100排序道具', 'category': '测试', 'enabled': True
+        })
+        assert item_resp.status_code in (200, 409), item_resp.text
+        picker = c.get('/api/game-items/picker', headers=headers, params={'q': 'V100-SORT-ITEM'})
+        assert picker.status_code == 200, picker.text
+        item = next(x for x in picker.json() if x['item_code'] == 'V100-SORT-ITEM')
+
+        before = c.get('/api/products', headers=headers, params={'category': 'gift'})
+        assert before.status_code == 200, before.text
+        existing_max = max([int(x.get('sort_order') or 0) for x in before.json()] or [0])
+
+        first = c.post('/api/products', headers=headers, json={
+            'name': 'V100自动排序礼包A', 'category': 'gift', 'price': 10, 'stock': 5,
+            'items': [{'item_id': item['id'], 'quantity': 1}], 'enabled': True
+        })
+        second = c.post('/api/products', headers=headers, json={
+            'name': 'V100自动排序礼包B', 'category': 'gift', 'price': 20, 'stock': 5,
+            'items': [{'item_id': item['id'], 'quantity': 2}], 'enabled': True
+        })
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+
+        rows_resp = c.get('/api/products', headers=headers, params={'category': 'gift'})
+        assert rows_resp.status_code == 200, rows_resp.text
+        rows = rows_resp.json()
+        a = next(x for x in rows if x['name'] == 'V100自动排序礼包A')
+        b = next(x for x in rows if x['name'] == 'V100自动排序礼包B')
+        assert 'sku' not in a and 'sku' not in b
+        assert a['sort_order'] == existing_max + 1
+        assert b['sort_order'] == existing_max + 2
+
+        edit = c.put(f"/api/products/{b['id']}", headers=headers, json={'sort_order': 1})
+        assert edit.status_code == 200, edit.text
+        sorted_rows = c.get('/api/products', headers=headers, params={'category': 'gift'}).json()
+        edited = next(x for x in sorted_rows if x['id'] == b['id'])
+        assert edited['sort_order'] == 1
+        # API and player mall payloads no longer expose SKU.
+        assert all('sku' not in x for x in sorted_rows)
+
+        player_register = c.post('/api/public/registration/SUPERADMIN', json={
+            'username': 'v100playersort', 'password': 'player12345'
+        })
+        if player_register.status_code not in (200, 409):
+            assert False, player_register.text
+        player_login = c.post('/api/player/auth/login', json={'username': 'v100playersort', 'password': 'player12345'})
+        assert player_login.status_code == 200, player_login.text
+        player_headers = {'Authorization': f"Bearer {player_login.json()['access_token']}"}
+        player_products = c.get('/api/player/mall/products', headers=player_headers)
+        assert player_products.status_code == 200, player_products.text
+        assert all('sku' not in x for x in player_products.json())
+
+        static_js = (Path(__file__).resolve().parents[1] / 'app' / 'static' / 'app.js').read_text(encoding='utf-8')
+        assert 'SKU' not in static_js
+        assert "['排序','sort_order']" in static_js

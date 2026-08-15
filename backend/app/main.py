@@ -32,8 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v99-recharge-daily-permanent"
-BUILD_LABEL = "V99 · DAILY / PERMANENT RECHARGE"
+BUILD_VERSION = "v100-product-sort"
+BUILD_LABEL = "V100 · AUTO SORT"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -729,6 +729,40 @@ def ensure_product_purchase_limit_columns():
         conn.execute(text("UPDATE products SET lifetime_limit = 0 WHERE lifetime_limit IS NULL"))
 
 
+def ensure_product_sort_order_column():
+    """V100：为礼包/商品增加业务排序。旧数据按原先 id 倒序展示顺序回填。"""
+    inspector = inspect(engine)
+    if "products" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("products")}
+    if "sort_order" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE products ADD COLUMN sort_order INTEGER DEFAULT 0"))
+    db = SessionLocal()
+    try:
+        changed = False
+        for category in ("gift", "product"):
+            rows = db.query(Product).filter(Product.category == category).order_by(Product.id.desc()).all()
+            if not rows:
+                continue
+            positive = [int(row.sort_order or 0) for row in rows if int(row.sort_order or 0) > 0]
+            if not positive:
+                for index, row in enumerate(rows, start=1):
+                    row.sort_order = index
+                    changed = True
+            else:
+                next_sort = max(positive) + 1
+                for row in rows:
+                    if int(row.sort_order or 0) <= 0:
+                        row.sort_order = next_sort
+                        next_sort += 1
+                        changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
 def ensure_mall_order_character_columns():
     """V57：给已上线商城订单补充“购买角色”快照字段。
 
@@ -930,6 +964,7 @@ def startup():
     ensure_player_admin_columns()
     ensure_player_character_data()
     ensure_product_purchase_limit_columns()
+    ensure_product_sort_order_column()
     ensure_mall_order_character_columns()
     ensure_redemption_code_character_columns()
     ensure_redemption_batch_rule_columns()
@@ -1135,6 +1170,9 @@ def public_build_info():
             "recharge_rule_edit": True,
             "recharge_reward_items": True,
             "recharge_daily_permanent": True,
+            "product_auto_sort": True,
+            "product_sort_edit": True,
+            "product_public_code_removed": True,
             "postgres_migration_safe": True,
         },
     }
@@ -2380,7 +2418,7 @@ def player_me(
 @app.get("/api/player/mall/products")
 def player_mall_products(player: Player = Depends(current_player), db: Session = Depends(get_db)):
     # 玩家中心只销售后台“礼包列表”中已启用的礼包。
-    rows = db.query(Product).filter(Product.category == "gift", Product.enabled.is_(True)).order_by(Product.id.desc()).all()
+    rows = db.query(Product).filter(Product.category == "gift", Product.enabled.is_(True)).order_by(Product.sort_order.asc(), Product.id.desc()).all()
     result = []
     for row in rows:
         try:
@@ -2391,7 +2429,6 @@ def player_mall_products(player: Player = Depends(current_player), db: Session =
         stock_ok = int(row.stock or 0) > 0
         result.append({
             "id": row.id,
-            "sku": row.sku,
             "name": row.name,
             "coin_price": coin_price,
             "stock": int(row.stock or 0),
@@ -3593,7 +3630,7 @@ def mall_orders(
     db: Session = Depends(get_db),
     principal=Depends(require_permission("orders.view")),
 ):
-    """商城订单只来自玩家中心购买；支持按玩家账号、商品名称/SKU 查询。"""
+    """商城订单只来自玩家中心购买；支持按玩家账号、礼包/商品名称查询。"""
     q = (
         db.query(MallOrder, Player, Product)
         .join(Player, Player.id == MallOrder.player_id)
@@ -3607,7 +3644,7 @@ def mall_orders(
         q = q.filter(Player.username.ilike(f"%{account}%"))
     if product:
         like = f"%{product}%"
-        q = q.filter((Product.name.ilike(like)) | (Product.sku.ilike(like)))
+        q = q.filter(Product.name.ilike(like))
     rows = q.order_by(MallOrder.created_at.desc(), MallOrder.id.desc()).all()
     return [{
         "id": order.id,
@@ -3619,7 +3656,6 @@ def mall_orders(
         "agent_id": order.agent_id,
         "product_id": order.product_id,
         "product_name": product_row.name,
-        "product_sku": product_row.sku,
         "quantity": int(order.quantity or 0),
         "amount": money(order.amount),
         "coin_amount": int(Decimal(order.amount or 0)),
@@ -4099,12 +4135,12 @@ def delete_game_item(item_id: int, db: Session = Depends(get_db), _=Depends(requ
 def products(category: str = "", db: Session = Depends(get_db), _=Depends(require_permission("products.view"))):
     q = db.query(Product)
     if category: q = q.filter(Product.category == category)
-    rows = q.order_by(Product.id.desc()).all()
+    rows = q.order_by(Product.sort_order.asc(), Product.id.desc()).all()
     result = []
     for x in rows:
         items = product_reward_payload(db, x.id)
         item_summary = reward_payload_text(items) if items else (x.description or "")
-        result.append({"id": x.id, "sku": x.sku, "name": x.name, "category": x.category, "price": money(x.price), "stock": x.stock,
+        result.append({"id": x.id, "name": x.name, "category": x.category, "price": money(x.price), "stock": x.stock, "sort_order": int(x.sort_order or 0),
              "description": item_summary, "item_summary": item_summary, "items": items,
              "daily_limit": int(x.daily_limit or 0), "weekly_limit": int(x.weekly_limit or 0),
              "monthly_limit": int(x.monthly_limit or 0), "lifetime_limit": int(x.lifetime_limit or 0),
@@ -4122,15 +4158,17 @@ def create_product(body: ProductCreate, db: Session = Depends(get_db), _=Depends
         price = Decimal(body.price)
         if price <= 0 or price != price.to_integral_value():
             raise HTTPException(400, "网页商城礼包的平台币售价必须是大于 0 的整数")
-    if db.query(Product).filter(Product.sku == body.sku).first():
-        raise HTTPException(409, "SKU 已存在")
     reward_items = normalize_reward_items(db, body.items)
     payload = body.model_dump(exclude={"items"})
     if body.category != "gift":
         payload.update(daily_limit=0, weekly_limit=0, monthly_limit=0, lifetime_limit=0)
     if reward_items:
         payload["description"] = reward_items_text(reward_items)
-    row = Product(**payload); db.add(row); db.flush()
+    max_sort = db.query(func.coalesce(func.max(Product.sort_order), 0)).filter(Product.category == body.category).scalar() or 0
+    internal_code = f"AUTO-{body.category.upper()}-{secrets.token_hex(12).upper()}"
+    while db.query(Product.id).filter(Product.internal_code == internal_code).first():
+        internal_code = f"AUTO-{body.category.upper()}-{secrets.token_hex(12).upper()}"
+    row = Product(**payload, internal_code=internal_code, sort_order=int(max_sort) + 1); db.add(row); db.flush()
     for item, qty in reward_items:
         db.add(ProductGameItem(product_id=row.id, game_item_id=item.id, quantity=qty))
     db.commit(); db.refresh(row)
@@ -4143,14 +4181,10 @@ def update_product(product_id: int, body: ProductUpdate, db: Session = Depends(g
     if not row:
         raise HTTPException(404, "商品不存在")
     data = body.model_dump(exclude_unset=True)
-    if "sku" in data:
-        sku = str(data["sku"]).strip()
-        duplicate = db.query(Product.id).filter(Product.sku == sku, Product.id != row.id).first()
-        if duplicate:
-            raise HTTPException(409, "SKU 已存在")
-        row.sku = sku
     if "name" in data:
         row.name = str(data["name"]).strip()
+    if "sort_order" in data:
+        row.sort_order = int(data["sort_order"])
     if "price" in data:
         price = Decimal(data["price"])
         if row.category == "gift" and (price <= 0 or price != price.to_integral_value()):

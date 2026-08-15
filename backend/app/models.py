@@ -110,7 +110,8 @@ class PlayerCoinLedger(Base):
 class Product(Base):
     __tablename__ = "products"
     id: Mapped[int] = mapped_column(primary_key=True)
-    sku: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # 历史数据库仍保留 sku 列，仅作为系统内部唯一标识；前后台不再展示或要求填写。
+    internal_code: Mapped[str] = mapped_column("sku", String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120), index=True)
     category: Mapped[str] = mapped_column(String(24), default="product")  # gift/product
     price: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
@@ -122,6 +123,8 @@ class Product(Base):
     monthly_limit: Mapped[int] = mapped_column(Integer, default=0)
     lifetime_limit: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # V100：业务排序，数字越小越靠前；新建时自动排到当前分类最后。
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 class GameItem(Base):
