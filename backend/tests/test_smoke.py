@@ -11,7 +11,34 @@ os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "ChangeMe123!"
 os.environ["PAYMENT_CALLBACK_SECRET"] = "test-payment-secret"
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient as FastAPITestClient
+
+
+class TestClient(FastAPITestClient):
+    """测试客户端自动完成算术验证码，既保持既有业务测试简洁，也确保生产接口强制验证码。"""
+    def post(self, url, *args, **kwargs):
+        skip_auto_captcha = kwargs.pop("skip_auto_captcha", False)
+        payload = kwargs.get("json")
+        if (
+            not skip_auto_captcha
+            and isinstance(url, str)
+            and url.startswith("/api/public/registration/")
+            and isinstance(payload, dict)
+            and "captcha_token" not in payload
+        ):
+            invite = url.rstrip("/").split("/")[-1]
+            captcha = self.get(f"/api/public/registration/{invite}/captcha")
+            assert captcha.status_code == 200, captcha.text
+            data = captcha.json()
+            question = str(data["question"]).replace("= ?", "").strip()
+            left, right = [int(x.strip()) for x in question.split("+")]
+            kwargs["json"] = {
+                **payload,
+                "captcha_token": data["captcha_token"],
+                "captcha_answer": str(left + right),
+            }
+        return super().post(url, *args, **kwargs)
+
 from app.main import app, business_today, sync_real_payment_aggregates
 from app.database import SessionLocal
 from app.models import Player, PlayerCharacter, PlatformCoinOrder, PlayerCoinLedger, MallOrder, RedemptionCode, PrivilegeCardPurchase, PrivilegeCardClaim, AdminIPWhitelist, AdminLoginIPState
@@ -2530,7 +2557,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v104-game-item-left-layout' in index_html
+    assert '/static/app.js?v=v106-registration-arithmetic-captcha' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2837,13 +2864,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v104-game-item-left-layout'
+        assert index.headers.get('x-cps-build') == 'v106-registration-arithmetic-captcha'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v104-game-item-left-layout')
+        js = c.get('/static/app.js?v=v106-registration-arithmetic-captcha')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2903,9 +2930,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V104 · ITEM LIBRARY COMPACT' in index_html
-    assert '/static/styles.css?v=v104-game-item-left-layout' in index_html
-    assert '/static/app.js?v=v104-game-item-left-layout' in index_html
+    assert 'V106 · REGISTRATION CAPTCHA' in index_html
+    assert '/static/styles.css?v=v106-registration-arithmetic-captcha' in index_html
+    assert '/static/app.js?v=v106-registration-arithmetic-captcha' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2921,9 +2948,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V104 · ITEM LIBRARY COMPACT' in index_html
-    assert '/static/styles.css?v=v104-game-item-left-layout' in index_html
-    assert '/static/app.js?v=v104-game-item-left-layout' in index_html
+    assert 'V106 · REGISTRATION CAPTCHA' in index_html
+    assert '/static/styles.css?v=v106-registration-arithmetic-captcha' in index_html
+    assert '/static/app.js?v=v106-registration-arithmetic-captcha' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2947,9 +2974,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V104 · ITEM LIBRARY COMPACT" in index_html
-    assert "/static/styles.css?v=v104-game-item-left-layout" in index_html
-    assert "/static/app.js?v=v104-game-item-left-layout" in index_html
+    assert "V106 · REGISTRATION CAPTCHA" in index_html
+    assert "/static/styles.css?v=v106-registration-arithmetic-captcha" in index_html
+    assert "/static/app.js?v=v106-registration-arithmetic-captcha" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2981,7 +3008,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v104-game-item-left-layout'
+        assert player.headers.get('x-cps-build') == 'v106-registration-arithmetic-captcha'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3059,7 +3086,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V104 · ITEM LIBRARY COMPACT' in index_html
+    assert 'V106 · REGISTRATION CAPTCHA' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3255,7 +3282,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v104-game-item-left-layout'
+        assert data['version'] == 'v106-registration-arithmetic-captcha'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
@@ -3706,3 +3733,47 @@ def test_v104_game_item_layout_matches_mail_left_compact():
     assert 'class="game-item-shell"' in js
     assert '.game-item-shell{width:100%;max-width:780px;margin:0}' in css
     assert '.game-item-table-scroll{width:100%;overflow-x:auto' in css
+
+
+def test_registration_arithmetic_captcha_is_required_and_one_time():
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        agent = create_agent(c, admin, 'captcha_agent', '验证码代理', 1, 1)
+        assert agent.status_code == 200, agent.text
+        invite = agent.json()['agent_id']
+
+        missing = c.post(f'/api/public/registration/{invite}', skip_auto_captcha=True, json={
+            'username': 'captcha_missing',
+            'password': 'PlayerPass123!',
+        })
+        assert missing.status_code == 422
+
+        cap = c.get(f'/api/public/registration/{invite}/captcha')
+        assert cap.status_code == 200, cap.text
+        data = cap.json()
+        assert '+' in data['question']
+        wrong = c.post(f'/api/public/registration/{invite}', skip_auto_captcha=True, json={
+            'username': 'captcha_wrong',
+            'password': 'PlayerPass123!',
+            'captcha_token': data['captcha_token'],
+            'captcha_answer': '9999',
+        })
+        assert wrong.status_code == 400
+        assert '验证码答案不正确' in wrong.json()['detail']
+
+        cap = c.get(f'/api/public/registration/{invite}/captcha')
+        data = cap.json()
+        expr = data['question'].replace('= ?', '').strip()
+        left, right = [int(x.strip()) for x in expr.split('+')]
+        payload = {
+            'username': 'captcha_success',
+            'password': 'PlayerPass123!',
+            'captcha_token': data['captcha_token'],
+            'captcha_answer': str(left + right),
+        }
+        ok = c.post(f'/api/public/registration/{invite}', skip_auto_captcha=True, json=payload)
+        assert ok.status_code == 200, ok.text
+
+        reused = c.post(f'/api/public/registration/{invite}', skip_auto_captcha=True, json={**payload, 'username': 'captcha_reused'})
+        assert reused.status_code == 400
+        assert '验证码已使用' in reused.json()['detail']

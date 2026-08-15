@@ -6,6 +6,9 @@ import time as time_module
 import csv
 import io
 import json
+import base64
+import hashlib
+import hmac
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -28,12 +31,12 @@ from .schemas import (
     RechargeRuleCreate, RechargeRuleUpdate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
     PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
 )
-from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player
+from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player, JWT_SECRET
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v104-game-item-left-layout"
-BUILD_LABEL = "V104 · ITEM LIBRARY COMPACT"
+BUILD_VERSION = "v106-registration-arithmetic-captcha"
+BUILD_LABEL = "V106 · REGISTRATION CAPTCHA"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -51,6 +54,88 @@ app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 BUSINESS_TZ = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Shanghai"))
 LOGIN_FAILURE_LIMIT = max(int(os.getenv("ADMIN_LOGIN_FAILURE_LIMIT", "8")), 2)
 LOGIN_FAILURE_WINDOW_SECONDS = max(int(os.getenv("ADMIN_LOGIN_FAILURE_WINDOW_SECONDS", "600")), 60)
+REGISTRATION_CAPTCHA_TTL_SECONDS = max(int(os.getenv("REGISTRATION_CAPTCHA_TTL_SECONDS", "300")), 60)
+_USED_REGISTRATION_CAPTCHAS: dict[str, int] = {}
+
+
+def _captcha_b64encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _captcha_b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def _captcha_signature(payload_b64: str) -> str:
+    return hmac.new(JWT_SECRET.encode("utf-8"), payload_b64.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def create_registration_captcha(invite_code: str) -> dict:
+    # 简单算术验证码：1~20 的加法，兼顾可读性和防脚本批量注册。
+    left = secrets.randbelow(20) + 1
+    right = secrets.randbelow(20) + 1
+    answer = left + right
+    nonce = secrets.token_urlsafe(16)
+    expires_at = int(time_module.time()) + REGISTRATION_CAPTCHA_TTL_SECONDS
+    normalized_invite = (invite_code or "").strip()
+    answer_digest = hmac.new(
+        JWT_SECRET.encode("utf-8"),
+        f"{nonce}|{normalized_invite}|{answer}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    payload = {
+        "invite": normalized_invite,
+        "nonce": nonce,
+        "exp": expires_at,
+        "answer": answer_digest,
+    }
+    payload_b64 = _captcha_b64encode(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    token = f"{payload_b64}.{_captcha_signature(payload_b64)}"
+    return {
+        "question": f"{left} + {right} = ?",
+        "captcha_token": token,
+        "expires_in": REGISTRATION_CAPTCHA_TTL_SECONDS,
+    }
+
+
+def verify_registration_captcha(invite_code: str, token: str, answer: str) -> None:
+    now = int(time_module.time())
+    # 顺便回收已使用验证码记录，避免进程常驻时无限增长。
+    expired_nonces = [nonce for nonce, exp in _USED_REGISTRATION_CAPTCHAS.items() if exp < now]
+    for nonce in expired_nonces:
+        _USED_REGISTRATION_CAPTCHAS.pop(nonce, None)
+
+    try:
+        payload_b64, supplied_sig = str(token or "").rsplit(".", 1)
+        expected_sig = _captcha_signature(payload_b64)
+        if not hmac.compare_digest(supplied_sig, expected_sig):
+            raise ValueError("bad signature")
+        payload = json.loads(_captcha_b64decode(payload_b64).decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "验证码无效，请刷新后重试")
+
+    normalized_invite = (invite_code or "").strip()
+    if payload.get("invite") != normalized_invite:
+        raise HTTPException(400, "验证码与当前注册链接不匹配，请刷新后重试")
+    expires_at = int(payload.get("exp") or 0)
+    if expires_at < now:
+        raise HTTPException(400, "验证码已过期，请刷新后重试")
+    nonce = str(payload.get("nonce") or "")
+    if not nonce or nonce in _USED_REGISTRATION_CAPTCHAS:
+        raise HTTPException(400, "验证码已使用，请刷新后重试")
+    try:
+        numeric_answer = int(str(answer).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(400, "验证码答案不正确")
+    expected_answer_digest = hmac.new(
+        JWT_SECRET.encode("utf-8"),
+        f"{nonce}|{normalized_invite}|{numeric_answer}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(str(payload.get("answer") or ""), expected_answer_digest):
+        raise HTTPException(400, "验证码答案不正确")
+    _USED_REGISTRATION_CAPTCHAS[nonce] = expires_at
 
 
 def normalize_ip(value: str | None) -> str | None:
@@ -2089,6 +2174,13 @@ def registration_channel(db: Session, invite_code: str):
     return agent
 
 
+@app.get("/api/public/registration/{invite_code}/captcha")
+def registration_captcha(invite_code: str, db: Session = Depends(get_db)):
+    # 先验证注册链接本身有效，避免无效渠道无限领取验证码。
+    registration_channel(db, invite_code)
+    return create_registration_captcha(invite_code)
+
+
 @app.get("/api/public/registration/{invite_code}")
 def registration_info(invite_code: str, db: Session = Depends(get_db)):
     agent = registration_channel(db, invite_code)
@@ -2112,6 +2204,7 @@ def registration_info(invite_code: str, db: Session = Depends(get_db)):
 @app.post("/api/public/registration/{invite_code}")
 def register_player(invite_code: str, body: PlayerRegister, db: Session = Depends(get_db)):
     agent = registration_channel(db, invite_code)
+    verify_registration_captcha(invite_code, body.captcha_token, body.captcha_answer)
     username = body.username.strip()
     if db.query(Player).filter(Player.username == username).first():
         raise HTTPException(409, "玩家账号已存在")

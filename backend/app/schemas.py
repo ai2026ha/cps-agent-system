@@ -43,6 +43,8 @@ class AgentUpdate(BaseModel):
 class PlayerRegister(BaseModel):
     username: str = Field(min_length=4, max_length=64)
     password: str = Field(min_length=8, max_length=128)
+    captcha_token: str = Field(min_length=20, max_length=2048)
+    captcha_answer: str = Field(min_length=1, max_length=16)
 
 
 

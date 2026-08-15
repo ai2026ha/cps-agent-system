@@ -1,2 +1,2 @@
-V103
-v103-mail-left-layout
+V106
+v106-registration-arithmetic-captcha
