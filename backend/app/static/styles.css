@@ -532,3 +532,11 @@ html{scrollbar-gutter:stable}
 /* V94: 道具库一键清空危险操作 */
 .btn.danger-action{border-color:#efc8c8;background:#fff5f5;color:#b12626;font-weight:700}
 .btn.danger-action:hover:not(:disabled){border-color:#df9d9d;background:#ffecec;color:#981f1f}
+
+
+/* V95: 道具库清空功能改为页面内独立危险操作区，避免顶部工具栏不可见 */
+.page-version-tag{display:inline-flex;align-items:center;margin-left:7px;padding:2px 6px;border-radius:999px;background:#edf3ff;color:#4770b7;font-size:10px;font-weight:800;vertical-align:middle}
+.game-item-danger-zone{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:12px 0 14px;padding:12px 14px;border:1px solid #f1c5c8;border-radius:11px;background:#fff7f7}
+.game-item-danger-copy{min-width:0;display:flex;flex-direction:column;gap:4px}.game-item-danger-copy strong{color:#a82935;font-size:13px}.game-item-danger-copy span{color:#8b5e63;font-size:12px;line-height:1.55}
+.btn.game-item-clear-all{flex:0 0 auto;border-color:#d84b58;background:#c93242;color:#fff;font-weight:800;white-space:nowrap}.btn.game-item-clear-all:hover{background:#b82a38}.btn.game-item-clear-all:disabled{border-color:#e3b9bd;background:#e8c7ca;color:#fff;cursor:not-allowed;opacity:.7}
+@media(max-width:760px){.game-item-danger-zone{align-items:stretch;flex-direction:column}.btn.game-item-clear-all{width:100%}}

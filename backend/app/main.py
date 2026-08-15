@@ -32,8 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v94-game-item-clear-all"
-BUILD_LABEL = "V94 · ITEM CLEAR ALL"
+BUILD_VERSION = "v95-game-item-clear-visible"
+BUILD_LABEL = "V95 · ITEM CLEAR VISIBLE"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
