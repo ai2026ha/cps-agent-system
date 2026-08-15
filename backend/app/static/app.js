@@ -1127,7 +1127,37 @@ async function renderGameItems(){
    fileInput.onchange=async()=>{const file=fileInput.files?.[0];if(!file)return;const fd=new FormData();fd.append('file',file);const btn=$('#importGameItemsBtn');const old=btn.textContent;btn.disabled=true;btn.textContent='导入中…';try{const r=await apiUpload('/api/game-items/import',fd);showToast(r.message||'道具导入完成','success',3600);if(Array.isArray(r.errors)&&r.errors.length)showToast(`部分数据已跳过：\n${r.errors.slice(0,5).join('\n')}`,'error',5200);gameItemSearch.page=1;await renderGameItems()}catch(e){showToast(e.message,'error',4800)}finally{if(document.body.contains(btn)){btn.disabled=false;btn.textContent=old}}};
  }
 }
-async function renderCDK(){const rows=await api('/api/redemption-batches');const manage=hasPermission('cdk.manage');$('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新建批次</button> <button class="btn" id="genBtn">生成CDK</button>':'');if(manage){$('#addBtn').onclick=()=>openForm('新建CDK批次',forms.cdk);$('#genBtn').onclick=()=>openForm('生成兑换码',forms.generateCDK)}}
+function cdkExpiryInput(value){return String(value||'').slice(0,16).replace(' ','T')}
+function cdkRewardSummary(row){const items=Array.isArray(row?.items)?row.items:[];if(!items.length)return '<span class="muted">未配置</span>';return items.map(x=>`${esc(x.name)} × ${Number(x.quantity||0)}`).join('<br>')}
+function cdkLimitText(v){const n=Number(v||0);return n>0?`每角色 ${n} 次`:'不限次'}
+function cdkStatusCell(_,row){if(row?.expired)return '<span class="badge bad">已过期</span>';return badge(row?.enabled?'active':'disabled')}
+async function openCDKBatchForm(row=null){
+ const cfg={
+   path:row?`/api/redemption-batches/${Number(row.id)}`:'/api/redemption-batches',method:row?'PUT':'POST',
+   note:'同一批次下的所有兑换码共享角色兑换次数、过期时间和奖励道具。每角色兑换次数填 0 表示不限次；过期时间留空表示永不过期。',
+   defaults:row?{name:row.name,per_character_limit:Number(row.per_character_limit||0),expires_at:cdkExpiryInput(row.expires_at),items:row.items||[],enabled:String(Boolean(row.enabled))}:{name:'',per_character_limit:1,expires_at:'',items:[],enabled:'true'},
+   fields:[
+     ['name','CDK名称'],
+     ['per_character_limit','每个角色最多兑换次数','number',true,{min:0,max:100000,step:1,placeholder:'0 表示不限次'}],
+     ['expires_at','兑换码过期时间','datetime-local',false],
+     ['items','兑换奖励道具','item-builder',true,{options:itemPickerOptions(row?.items||[]),remoteApi:'/api/game-items/picker'}],
+     ['enabled','状态','select',true,{options:[{value:'true',label:'启用'},{value:'false',label:'停用'}]}]
+   ],
+   transform:o=>({...o,per_character_limit:Number(o.per_character_limit||0),expires_at:o.expires_at||null,items:parseItemBuilderValue(o.items),enabled:String(o.enabled)!=='false'})
+ };
+ openForm(row?'编辑兑换码批次':'新增兑换码批次',cfg)
+}
+function openGenerateCDKForm(rows){
+ const options=(rows||[]).map(x=>({value:x.id,label:`${x.name} · 未兑换 ${x.unused_count}${x.expired?' · 已过期':''}`,disabled:Boolean(x.expired)}));
+ if(!options.length)return showToast('请先新增兑换码批次','error',3200);
+ openForm('生成兑换码',{path:null,note:'选择已配置奖励的兑换码批次并生成实际CDK。已过期批次不能继续生成。',fields:[['batch_id','CDK批次','select',true,{options,valueType:'number'}],['count','生成数量','number',true,{min:1,max:10000,step:1}],['prefix','前缀']],defaults:{batch_id:options.find(x=>!x.disabled)?.value||options[0].value,count:1,prefix:'CDK'}})
+}
+window.editCDKBatch=id=>{const row=(window.__cdkRows||[]).find(x=>Number(x.id)===Number(id));if(row)openCDKBatchForm(row).catch(e=>showToast(e.message,'error',4200))};
+async function renderCDK(){
+ const rows=await api('/api/redemption-batches');window.__cdkRows=rows;const manage=hasPermission('cdk.manage');
+ $('#content').innerHTML=panel('兑换码批次',table(rows,cdkCols),manage?'<button class="btn primary" id="addBtn">＋ 新增兑换码</button> <button class="btn" id="genBtn">生成CDK</button>':'');
+ if(manage){$('#addBtn').onclick=()=>openCDKBatchForm().catch(e=>showToast(e.message,'error',4200));$('#genBtn').onclick=()=>openGenerateCDKForm(rows)}
+}
 function renderSendMail(){$('#content').innerHTML=panel('发送游戏邮件','<p style="color:#7c879d">当前第一版会完整记录发送任务；接入你的游戏服邮件 API 后即可改为真实投递。</p><button class="btn primary" id="mailBtn">发送邮件</button>');$('#mailBtn').onclick=()=>openForm('发送邮件',forms.mail)}
 
 function playerStatusBadge(v){return v==='active'?'<span class="badge ok">正常</span>':'<span class="badge bad">封禁</span>'}
@@ -1188,7 +1218,7 @@ const platformCols=[
 const mallCols=[['订单号','order_no'],['玩家账号','player_account'],['角色名','role_name'],['区服','server_name'],['礼包名称','product_name'],['数量','quantity'],['平台币','coin_amount',v=>Number(v||0).toLocaleString()],['支付','pay_status',v=>v==='paid'?'<span class="badge ok">已支付</span>':badge(v)],['发货','delivery_status',v=>badge(({waiting:'待发货',sent:'已发货',success:'成功',failed:'失败'})[v]||v)],['创建时间','created_at']];
 const shipmentCols=[['订单号','order_no'],['订单PK','mall_order_id'],['发货状态','delivery_status',badge],['服务商','provider'],['发货单号','tracking_no'],['任务状态','shipment_status',badge],['说明','message'],['发货时间','sent_at']];
 const productCols=[['SKU','sku'],['名称','name'],['分类','category'],['价格','price'],['库存','stock'],['状态','enabled',v=>badge(v?'active':'disabled')],['说明','description']];
-const cdkCols=[['CDK名称','name'],['总数','total_count'],['未兑换数','unused_count'],['已兑换数','redeemed_count'],['状态','enabled',v=>badge(v?'active':'disabled')],['创建时间','created_at']];
+const cdkCols=[['CDK名称','name'],['奖励道具','items',(_,r)=>cdkRewardSummary(r)],['每角色兑换','per_character_limit',cdkLimitText],['过期时间','expires_at',v=>v||'<span class="muted">永不过期</span>'],['总数','total_count'],['未兑换数','unused_count'],['已兑换数','redeemed_count'],['状态','enabled',cdkStatusCell],['创建时间','created_at'],['操作','id',(_,r)=>hasPermission('cdk.manage')?`<button class="btn compact" onclick="editCDKBatch(${Number(r.id)})">编辑</button>`:'<span class="muted">-</span>']];
 const ruleCols=[['名称','name'],['累充门槛','threshold_amount'],['奖励内容','reward_content'],['状态','enabled',v=>badge(v?'active':'disabled')]];
 const claimCols=[['玩家PK','player_id'],['规则PK','rule_id'],['状态','status',badge],['领取时间','claimed_at']];
 const mailCols=[['标题','title'],['目标类型','target_type'],['目标','target_value'],['状态','send_status',badge],['发送人','created_by'],['发送时间','sent_at']];

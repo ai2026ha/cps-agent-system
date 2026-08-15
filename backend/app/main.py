@@ -19,12 +19,12 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, SessionLocal, get_db
 from .models import (
     AdminUser, SystemSetting, AdminIPWhitelist, AdminLoginIPState, Agent, Player, PlayerCharacter, PlayerCoinLedger, Product, GameItem, ProductGameItem, PlatformCoinOrder, MallOrder, Shipment,
-    RedemptionBatch, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord,
+    RedemptionBatch, RedemptionBatchGameItem, RedemptionCode, Settlement, RechargeRule, ClaimRecord, CharacterClaimRecord,
     PrivilegeCardRule, PrivilegeCardGameItem, PrivilegeCardPurchase, PrivilegeCardClaim, MailRecord,
 )
 from .schemas import (
     LoginIn, AdminPasswordChange, AdminCreate, SystemBrandingUpdate, IPWhitelistCreate, AgentCreate, AgentUpdate, PlayerRegister, PlayerAdminUpdate, ProductCreate, ProductUpdate, GameItemCreate, GameItemUpdate, PlatformRechargeOrderCreate, PlatformPaymentSuccess, MallOrderCreate, PlayerMallPurchase,
-    ShipmentCreate, RedemptionBatchCreate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
+    ShipmentCreate, RedemptionBatchCreate, RedemptionBatchUpdate, GenerateCodesIn, RedeemIn, PlayerCDKRedeem, SettlementCreate,
     RechargeRuleCreate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
     PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
 )
@@ -32,8 +32,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v95-game-item-clear-visible"
-BUILD_LABEL = "V95 · ITEM CLEAR VISIBLE"
+BUILD_VERSION = "v96-cdk-rules-rewards"
+BUILD_LABEL = "V96 · CDK RULES & REWARDS"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -383,6 +383,13 @@ def dt(v):
 def utc_now_naive() -> datetime:
     """数据库统一保存 UTC naive，展示时再转换为北京时间。"""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+def business_datetime_to_utc_naive(value: datetime | None) -> datetime | None:
+    """把后台 datetime-local / 带时区时间统一转换成数据库 UTC naive。"""
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=BUSINESS_TZ) if value.tzinfo is None else value
+    return aware.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def real_paid_platform_turnover(
@@ -760,6 +767,27 @@ def ensure_redemption_code_character_columns():
         if "server_name" not in columns:
             conn.execute(text("ALTER TABLE redemption_codes ADD COLUMN server_name VARCHAR(100)"))
 
+def ensure_redemption_batch_rule_columns():
+    """V96：给历史兑换码批次补充角色次数、过期时间与兑换奖励快照字段。"""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        if "redemption_batches" in tables:
+            columns = {c["name"] for c in inspector.get_columns("redemption_batches")}
+            if "per_character_limit" not in columns:
+                conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN per_character_limit INTEGER DEFAULT 0"))
+            if "reward_required" not in columns:
+                conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN reward_required BOOLEAN DEFAULT 0"))
+            if "expires_at" not in columns:
+                conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN expires_at TIMESTAMP"))
+            conn.execute(text("UPDATE redemption_batches SET per_character_limit = 0 WHERE per_character_limit IS NULL"))
+            conn.execute(text("UPDATE redemption_batches SET reward_required = 0 WHERE reward_required IS NULL"))
+        if "redemption_codes" in tables:
+            code_columns = {c["name"] for c in inspector.get_columns("redemption_codes")}
+            if "reward_content" not in code_columns:
+                conn.execute(text("ALTER TABLE redemption_codes ADD COLUMN reward_content TEXT DEFAULT ''"))
+            conn.execute(text("UPDATE redemption_codes SET reward_content = '' WHERE reward_content IS NULL"))
+
 
 def player_character_payloads(db: Session, player_ids: list[int]) -> dict[int, list[dict]]:
     """批量读取玩家角色，主角色优先，其次按最近记录和主键排序。"""
@@ -879,6 +907,7 @@ def startup():
     ensure_product_purchase_limit_columns()
     ensure_mall_order_character_columns()
     ensure_redemption_code_character_columns()
+    ensure_redemption_batch_rule_columns()
     ensure_agent_public_identity_format()
     sync_real_payment_aggregates()
     seed_admin()
@@ -2160,6 +2189,34 @@ def privilege_reward_payload(db: Session, rule_id: int) -> list[dict]:
         .order_by(PrivilegeCardGameItem.id.asc()).all())
     return [{"item_id": item.id, "item_code": item.item_code, "name": item.name, "category": item.category, "quantity": int(link.quantity or 0), "enabled": bool(item.enabled)} for link, item in rows]
 
+def redemption_batch_reward_payload(db: Session, batch_id: int) -> list[dict]:
+    rows = (db.query(RedemptionBatchGameItem, GameItem)
+        .join(GameItem, GameItem.id == RedemptionBatchGameItem.game_item_id)
+        .filter(RedemptionBatchGameItem.batch_id == batch_id)
+        .order_by(RedemptionBatchGameItem.id.asc()).all())
+    return [{"item_id": item.id, "item_code": item.item_code, "name": item.name, "category": item.category, "quantity": int(link.quantity or 0), "enabled": bool(item.enabled)} for link, item in rows]
+
+
+def redemption_batch_reward_text(db: Session, batch_id: int) -> str:
+    rows = redemption_batch_reward_payload(db, batch_id)
+    return "\n".join(f"{x['name']} × {x['quantity']}" for x in rows)
+
+
+def redemption_batch_payload(db: Session, row: RedemptionBatch) -> dict:
+    items = redemption_batch_reward_payload(db, row.id)
+    now_utc = utc_now_naive()
+    expired = bool(row.expires_at and row.expires_at <= now_utc)
+    return {
+        "id": row.id, "name": row.name, "total_count": int(row.total_count or 0),
+        "redeemed_count": int(row.redeemed_count or 0),
+        "unused_count": max(int(row.total_count or 0) - int(row.redeemed_count or 0), 0),
+        "per_character_limit": int(row.per_character_limit or 0),
+        "expires_at": dt(row.expires_at), "expired": expired,
+        "enabled": bool(row.enabled), "reward_required": bool(row.reward_required), "items": items,
+        "reward_content": "\n".join(f"{x['name']} × {x['quantity']}" for x in items),
+        "created_at": dt(row.created_at),
+    }
+
 
 def reward_payload_text(items: list[dict]) -> str:
     return "\n".join(f"{x['name']} × {int(x['quantity'])}" for x in items)
@@ -2553,17 +2610,14 @@ def player_redeem_cdk(
     player: Player = Depends(current_player),
     db: Session = Depends(get_db),
 ):
-    """玩家中心自助兑换 CDK，必须绑定当前玩家拥有的具体角色/区服。"""
+    """玩家中心自助兑换 CDK：校验角色次数、过期时间，并固化奖励快照。"""
     code_text = body.code.strip().upper()
     if not code_text:
         raise HTTPException(400, "请输入CDK兑换码")
 
     selected_character = (
         db.query(PlayerCharacter)
-        .filter(
-            PlayerCharacter.id == body.character_id,
-            PlayerCharacter.player_id == player.id,
-        )
+        .filter(PlayerCharacter.id == body.character_id, PlayerCharacter.player_id == player.id)
         .first()
     )
     if not selected_character:
@@ -2590,13 +2644,31 @@ def player_redeem_cdk(
         raise HTTPException(404, "CDK批次不存在")
     if not batch.enabled:
         raise HTTPException(400, "该CDK兑换码已停用")
+    now_utc = utc_now_naive()
+    if batch.expires_at and batch.expires_at <= now_utc:
+        raise HTTPException(400, "该CDK兑换码已过期")
+
+    per_character_limit = int(batch.per_character_limit or 0)
+    used_count = int(db.query(func.count(RedemptionCode.id)).filter(
+        RedemptionCode.batch_id == batch.id,
+        RedemptionCode.character_id == selected_character.id,
+        RedemptionCode.status == "redeemed",
+    ).scalar() or 0)
+    if per_character_limit > 0 and used_count >= per_character_limit:
+        raise HTTPException(409, f"该角色最多可兑换 {per_character_limit} 次此批次CDK，当前已兑换 {used_count} 次")
+
+    reward_items = redemption_batch_reward_payload(db, batch.id)
+    if batch.reward_required and not reward_items:
+        raise HTTPException(400, "该CDK兑换码未配置奖励道具")
+    reward_content = "\n".join(f"{x['name']} × {x['quantity']}" for x in reward_items)
 
     code.status = "redeemed"
     code.player_id = player.id
     code.character_id = selected_character.id
     code.role_name = selected_character.role_name
     code.server_name = selected_character.server_name
-    code.redeemed_at = utc_now_naive()
+    code.reward_content = reward_content
+    code.redeemed_at = now_utc
     batch.redeemed_count = int(batch.redeemed_count or 0) + 1
     db.commit()
     return {
@@ -2605,6 +2677,11 @@ def player_redeem_cdk(
         "character_id": selected_character.id,
         "role_name": selected_character.role_name,
         "server_name": selected_character.server_name,
+        "per_character_limit": per_character_limit,
+        "character_redeemed_count": used_count + 1,
+        "expires_at": dt(batch.expires_at),
+        "reward_content": reward_content,
+        "reward_items": reward_items,
         "redeemed_at": dt(code.redeemed_at),
     }
 
@@ -3870,15 +3947,18 @@ def clear_all_game_items(db: Session = Depends(get_db), _=Depends(require_permis
     item_count = int(db.query(GameItem).count())
     product_link_count = int(db.query(ProductGameItem).count())
     card_link_count = int(db.query(PrivilegeCardGameItem).count())
+    cdk_link_count = int(db.query(RedemptionBatchGameItem).count())
     if item_count == 0:
         return {
             "message": "道具库已经是空的",
             "deleted_items": 0,
             "deleted_product_links": 0,
             "deleted_privilege_links": 0,
+            "deleted_cdk_links": 0,
         }
     db.query(ProductGameItem).delete(synchronize_session=False)
     db.query(PrivilegeCardGameItem).delete(synchronize_session=False)
+    db.query(RedemptionBatchGameItem).delete(synchronize_session=False)
     db.query(GameItem).delete(synchronize_session=False)
     db.commit()
     return {
@@ -3886,6 +3966,7 @@ def clear_all_game_items(db: Session = Depends(get_db), _=Depends(require_permis
         "deleted_items": item_count,
         "deleted_product_links": product_link_count,
         "deleted_privilege_links": card_link_count,
+        "deleted_cdk_links": cdk_link_count,
     }
 
 
@@ -3896,8 +3977,9 @@ def delete_game_item(item_id: int, db: Session = Depends(get_db), _=Depends(requ
         raise HTTPException(404, "道具不存在")
     used_product = db.query(ProductGameItem.id).filter(ProductGameItem.game_item_id == row.id).first()
     used_card = db.query(PrivilegeCardGameItem.id).filter(PrivilegeCardGameItem.game_item_id == row.id).first()
-    if used_product or used_card:
-        raise HTTPException(409, "该道具已被礼包、商品或特权卡使用，请先停用，不建议删除")
+    used_cdk = db.query(RedemptionBatchGameItem.id).filter(RedemptionBatchGameItem.game_item_id == row.id).first()
+    if used_product or used_card or used_cdk:
+        raise HTTPException(409, "该道具已被礼包、商品、特权卡或兑换码使用，请先编辑对应配置，不建议直接删除")
     db.delete(row); db.commit()
     return {"message": "道具已删除"}
 
@@ -3993,37 +4075,103 @@ def update_product(product_id: int, body: ProductUpdate, db: Session = Depends(g
 @app.get("/api/redemption-batches")
 def redemption_batches(db: Session = Depends(get_db), _=Depends(require_permission("cdk.view"))):
     rows = db.query(RedemptionBatch).order_by(RedemptionBatch.id.desc()).all()
-    return [{"id": x.id, "name": x.name, "total_count": x.total_count, "redeemed_count": x.redeemed_count,
-             "unused_count": x.total_count - x.redeemed_count, "enabled": x.enabled, "created_at": dt(x.created_at)} for x in rows]
+    return [redemption_batch_payload(db, x) for x in rows]
+
 
 @app.post("/api/redemption-batches")
-def create_redemption_batch(body: RedemptionBatchCreate, db: Session = Depends(get_db), _=Depends(current_admin)):
-    if db.query(RedemptionBatch).filter(RedemptionBatch.name == body.name).first(): raise HTTPException(409, "CDK 名称已存在")
-    row = RedemptionBatch(name=body.name); db.add(row); db.commit(); db.refresh(row)
+def create_redemption_batch(body: RedemptionBatchCreate, db: Session = Depends(get_db), _=Depends(require_permission("cdk.manage"))):
+    name = body.name.strip()
+    if db.query(RedemptionBatch).filter(RedemptionBatch.name == name).first():
+        raise HTTPException(409, "CDK 名称已存在")
+    reward_items = normalize_reward_items(db, body.items)
+    if not reward_items:
+        raise HTTPException(400, "请至少添加一个兑换奖励道具")
+    row = RedemptionBatch(
+        name=name,
+        per_character_limit=int(body.per_character_limit or 0),
+        reward_required=True,
+        expires_at=business_datetime_to_utc_naive(body.expires_at),
+        enabled=bool(body.enabled),
+    )
+    db.add(row); db.flush()
+    for item, qty in reward_items:
+        db.add(RedemptionBatchGameItem(batch_id=row.id, game_item_id=item.id, quantity=qty))
+    db.commit(); db.refresh(row)
     return {"id": row.id, "message": "CDK 批次创建成功"}
 
+
+@app.put("/api/redemption-batches/{batch_id}")
+def update_redemption_batch(batch_id: int, body: RedemptionBatchUpdate, db: Session = Depends(get_db), _=Depends(require_permission("cdk.manage"))):
+    row = db.query(RedemptionBatch).filter(RedemptionBatch.id == batch_id).with_for_update().first()
+    if not row:
+        raise HTTPException(404, "CDK 批次不存在")
+    fields = body.model_fields_set
+    if "name" in fields:
+        name = (body.name or "").strip()
+        if not name:
+            raise HTTPException(400, "CDK 名称不能为空")
+        dup = db.query(RedemptionBatch.id).filter(RedemptionBatch.name == name, RedemptionBatch.id != row.id).first()
+        if dup:
+            raise HTTPException(409, "CDK 名称已存在")
+        row.name = name
+    if "per_character_limit" in fields:
+        row.per_character_limit = int(body.per_character_limit or 0)
+    if "expires_at" in fields:
+        row.expires_at = business_datetime_to_utc_naive(body.expires_at)
+    if "enabled" in fields:
+        row.enabled = bool(body.enabled)
+    if "items" in fields:
+        reward_items = normalize_reward_items(db, body.items or [])
+        if not reward_items:
+            raise HTTPException(400, "请至少添加一个兑换奖励道具")
+        db.query(RedemptionBatchGameItem).filter(RedemptionBatchGameItem.batch_id == row.id).delete(synchronize_session=False)
+        row.reward_required = True
+        for item, qty in reward_items:
+            db.add(RedemptionBatchGameItem(batch_id=row.id, game_item_id=item.id, quantity=qty))
+    db.commit(); db.refresh(row)
+    return {"message": "兑换码批次已更新", "batch": redemption_batch_payload(db, row)}
+
+
 @app.post("/api/redemption-batches/{batch_id}/generate")
-def generate_codes(batch_id: int, body: GenerateCodesIn, db: Session = Depends(get_db), _=Depends(current_admin)):
+def generate_codes(batch_id: int, body: GenerateCodesIn, db: Session = Depends(get_db), _=Depends(require_permission("cdk.manage"))):
     batch = db.get(RedemptionBatch, batch_id)
-    if not batch: raise HTTPException(404, "CDK 批次不存在")
+    if not batch:
+        raise HTTPException(404, "CDK 批次不存在")
+    if batch.expires_at and batch.expires_at <= utc_now_naive():
+        raise HTTPException(400, "该CDK批次已过期，不能继续生成兑换码")
+    if batch.reward_required and not redemption_batch_reward_payload(db, batch.id):
+        raise HTTPException(400, "该CDK批次尚未配置兑换道具")
+    prefix = str(body.prefix or "CDK").strip().upper() or "CDK"
     codes = []
     for _i in range(body.count):
-        code = f"{body.prefix}-{secrets.token_hex(6).upper()}"
-        while db.query(RedemptionCode).filter(RedemptionCode.code == code).first(): code = f"{body.prefix}-{secrets.token_hex(6).upper()}"
+        code = f"{prefix}-{secrets.token_hex(6).upper()}"
+        while db.query(RedemptionCode).filter(RedemptionCode.code == code).first():
+            code = f"{prefix}-{secrets.token_hex(6).upper()}"
         db.add(RedemptionCode(batch_id=batch.id, code=code)); codes.append(code)
     batch.total_count += body.count; db.commit()
-    return {"generated": body.count, "codes": codes[:100], "note": "接口最多预览前100个，数据库已保存全部兑换码"}
+    return {"generated": body.count, "codes": codes[:100], "message": f"已生成 {body.count} 个兑换码", "note": "接口最多预览前100个，数据库已保存全部兑换码"}
+
 
 @app.post("/api/redeem")
 def redeem(body: RedeemIn, db: Session = Depends(get_db), _=Depends(current_admin)):
     code = db.query(RedemptionCode).filter(RedemptionCode.code == body.code).first()
-    if not code: raise HTTPException(404, "兑换码不存在")
-    if code.status != "unused": raise HTTPException(409, "兑换码已使用")
-    if not db.get(Player, body.player_id): raise HTTPException(404, "玩家不存在")
+    if not code:
+        raise HTTPException(404, "兑换码不存在")
+    if code.status != "unused":
+        raise HTTPException(409, "兑换码已使用")
+    if not db.get(Player, body.player_id):
+        raise HTTPException(404, "玩家不存在")
     batch = db.get(RedemptionBatch, code.batch_id)
-    if not batch.enabled: raise HTTPException(400, "该兑换码批次已停用")
-    code.status = "redeemed"; code.player_id = body.player_id; code.redeemed_at = datetime.utcnow(); batch.redeemed_count += 1
-    db.commit(); return {"message": "兑换成功"}
+    if not batch or not batch.enabled:
+        raise HTTPException(400, "该兑换码批次已停用")
+    if batch.expires_at and batch.expires_at <= utc_now_naive():
+        raise HTTPException(400, "该兑换码已过期")
+    reward_content = redemption_batch_reward_text(db, batch.id)
+    if batch.reward_required and not reward_content:
+        raise HTTPException(400, "该兑换码未配置奖励道具")
+    code.status = "redeemed"; code.player_id = body.player_id; code.redeemed_at = utc_now_naive(); code.reward_content = reward_content
+    batch.redeemed_count += 1
+    db.commit(); return {"message": "兑换成功", "reward_content": reward_content}
 
 # ---------- 累充管理 ----------
 @app.get("/api/recharge-rules")

@@ -2048,7 +2048,9 @@ def test_v62_player_center_removes_order_list_and_supports_cdk_redeem():
 
     with TestClient(app) as c:
         admin = login(c, 'admin', 'ChangeMe123!')
-        batch = c.post('/api/redemption-batches', headers=auth(admin), json={'name': 'V62玩家兑换批次'})
+        item = c.post('/api/game-items', headers=auth(admin), json={'item_code':'V62-CDK-ITEM','name':'V62兑换奖励','category':'CDK','enabled':True})
+        assert item.status_code == 200, item.text
+        batch = c.post('/api/redemption-batches', headers=auth(admin), json={'name': 'V62玩家兑换批次', 'per_character_limit': 1, 'items':[{'item_id':item.json()['id'],'quantity':1}]})
         assert batch.status_code == 200, batch.text
         generated = c.post(
             f"/api/redemption-batches/{batch.json()['id']}/generate",
@@ -2278,7 +2280,9 @@ def test_v67_cdk_redeem_requires_owned_character_and_saves_role_server_snapshot(
 
     with TestClient(app) as c:
         admin = login(c, 'admin', 'ChangeMe123!')
-        batch = c.post('/api/redemption-batches', headers=auth(admin), json={'name': 'V67角色CDK批次'})
+        item = c.post('/api/game-items', headers=auth(admin), json={'item_code':'V67-CDK-ITEM','name':'V67兑换奖励','category':'CDK','enabled':True})
+        assert item.status_code == 200, item.text
+        batch = c.post('/api/redemption-batches', headers=auth(admin), json={'name': 'V67角色CDK批次', 'per_character_limit': 2, 'items':[{'item_id':item.json()['id'],'quantity':2}]})
         assert batch.status_code == 200, batch.text
         generated = c.post(
             f"/api/redemption-batches/{batch.json()['id']}/generate",
@@ -2526,7 +2530,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v95-game-item-clear-visible' in index_html
+    assert '/static/app.js?v=v96-cdk-rules-rewards' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2833,13 +2837,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v95-game-item-clear-visible'
+        assert index.headers.get('x-cps-build') == 'v96-cdk-rules-rewards'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v95-game-item-clear-visible')
+        js = c.get('/static/app.js?v=v96-cdk-rules-rewards')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2899,9 +2903,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V95 · ITEM CLEAR VISIBLE' in index_html
-    assert '/static/styles.css?v=v95-game-item-clear-visible' in index_html
-    assert '/static/app.js?v=v95-game-item-clear-visible' in index_html
+    assert 'V96 · CDK RULES & REWARDS' in index_html
+    assert '/static/styles.css?v=v96-cdk-rules-rewards' in index_html
+    assert '/static/app.js?v=v96-cdk-rules-rewards' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2917,9 +2921,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V95 · ITEM CLEAR VISIBLE' in index_html
-    assert '/static/styles.css?v=v95-game-item-clear-visible' in index_html
-    assert '/static/app.js?v=v95-game-item-clear-visible' in index_html
+    assert 'V96 · CDK RULES & REWARDS' in index_html
+    assert '/static/styles.css?v=v96-cdk-rules-rewards' in index_html
+    assert '/static/app.js?v=v96-cdk-rules-rewards' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2943,9 +2947,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V95 · ITEM CLEAR VISIBLE" in index_html
-    assert "/static/styles.css?v=v95-game-item-clear-visible" in index_html
-    assert "/static/app.js?v=v95-game-item-clear-visible" in index_html
+    assert "V96 · CDK RULES & REWARDS" in index_html
+    assert "/static/styles.css?v=v96-cdk-rules-rewards" in index_html
+    assert "/static/app.js?v=v96-cdk-rules-rewards" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -2977,7 +2981,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v95-game-item-clear-visible'
+        assert player.headers.get('x-cps-build') == 'v96-cdk-rules-rewards'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3055,7 +3059,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V95 · ITEM CLEAR VISIBLE' in index_html
+    assert 'V96 · CDK RULES & REWARDS' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3251,7 +3255,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v95-game-item-clear-visible'
+        assert data['version'] == 'v96-cdk-rules-rewards'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
@@ -3330,3 +3334,97 @@ def test_v95_game_item_clear_zone_visible():
     assert '清空全部道具（${total.toLocaleString()} 条）' in js
     assert 'page-version-tag' in js
     assert '.game-item-danger-zone' in css
+
+
+
+def test_v96_cdk_edit_character_limit_expiry_and_reward_items():
+    """V96：兑换码可编辑，按角色限制兑换次数，支持过期时间与道具库奖励。"""
+    static_dir = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
+    player_html = (static_dir / 'player_center.html').read_text(encoding='utf-8')
+    assert '编辑兑换码批次' in app_js
+    assert '每个角色最多兑换次数' in app_js
+    assert '兑换码过期时间' in app_js
+    assert '兑换奖励道具' in app_js
+    assert "remoteApi:'/api/game-items/picker'" in app_js
+    assert '奖励：' in player_html
+
+    with TestClient(app) as c:
+        admin = login(c, 'admin', 'ChangeMe123!')
+        item = c.post('/api/game-items', headers=auth(admin), json={
+            'item_code':'V96-CDK-REWARD', 'name':'V96强化石', 'category':'CDK奖励', 'enabled':True,
+        })
+        assert item.status_code == 200, item.text
+        item_id = item.json()['id']
+
+        batch = c.post('/api/redemption-batches', headers=auth(admin), json={
+            'name':'V96可编辑批次', 'per_character_limit':1,
+            'expires_at':'2099-12-31T23:59:00',
+            'items':[{'item_id':item_id,'quantity':9}], 'enabled':True,
+        })
+        assert batch.status_code == 200, batch.text
+        batch_id = batch.json()['id']
+
+        rows = c.get('/api/redemption-batches', headers=auth(admin)).json()
+        current = next(x for x in rows if x['id'] == batch_id)
+        assert current['per_character_limit'] == 1
+        assert current['expires_at'].startswith('2099-12-31')
+        assert current['reward_content'] == 'V96强化石 × 9'
+        assert current['items'][0]['item_code'] == 'V96-CDK-REWARD'
+
+        generated = c.post(f'/api/redemption-batches/{batch_id}/generate', headers=auth(admin), json={
+            'count':3, 'prefix':'V96'
+        })
+        assert generated.status_code == 200, generated.text
+        code1, code2, code3 = generated.json()['codes']
+
+        agent = create_agent(c, admin, 'v96_cdk_agent', 'V96兑换代理', 1, 1, 0.1)
+        assert agent.status_code == 200, agent.text
+        reg = c.post(f"/api/public/registration/{agent.json()['agent_id']}", json={
+            'username':'v96_cdk_player', 'password':'PlayerPass123!'
+        })
+        assert reg.status_code == 200, reg.text
+        player_id = reg.json()['id']
+        db = SessionLocal()
+        try:
+            char = PlayerCharacter(player_id=player_id, role_name='V96角色', server_name='V96一区', is_primary=True)
+            db.add(char); db.commit(); db.refresh(char); char_id = char.id
+        finally:
+            db.close()
+        pt = c.post('/api/player/auth/login', json={'username':'v96_cdk_player','password':'PlayerPass123!'}).json()['access_token']
+
+        first = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code':code1,'character_id':char_id})
+        assert first.status_code == 200, first.text
+        assert first.json()['reward_content'] == 'V96强化石 × 9'
+        assert first.json()['character_redeemed_count'] == 1
+
+        limited = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code':code2,'character_id':char_id})
+        assert limited.status_code == 409
+        assert '最多可兑换 1 次' in limited.text
+
+        edited = c.put(f'/api/redemption-batches/{batch_id}', headers=auth(admin), json={
+            'name':'V96编辑后批次', 'per_character_limit':2,
+        })
+        assert edited.status_code == 200, edited.text
+        assert edited.json()['batch']['name'] == 'V96编辑后批次'
+        assert edited.json()['batch']['per_character_limit'] == 2
+
+        second = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code':code2,'character_id':char_id})
+        assert second.status_code == 200, second.text
+        assert second.json()['character_redeemed_count'] == 2
+
+        expire = c.put(f'/api/redemption-batches/{batch_id}', headers=auth(admin), json={
+            'expires_at':'2020-01-01T00:00:00'
+        })
+        assert expire.status_code == 200, expire.text
+        assert expire.json()['batch']['expired'] is True
+        expired_redeem = c.post('/api/player/cdk/redeem', headers=auth(pt), json={'code':code3,'character_id':char_id})
+        assert expired_redeem.status_code == 400
+        assert '已过期' in expired_redeem.text
+
+        db = SessionLocal()
+        try:
+            row = db.query(RedemptionCode).filter(RedemptionCode.code == code1).first()
+            assert row.reward_content == 'V96强化石 × 9'
+        finally:
+            db.close()

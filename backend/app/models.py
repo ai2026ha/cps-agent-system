@@ -198,8 +198,24 @@ class RedemptionBatch(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     total_count: Mapped[int] = mapped_column(Integer, default=0)
     redeemed_count: Mapped[int] = mapped_column(Integer, default=0)
+    # V96: 0 表示不限制同一角色兑换该批次不同 CDK 的次数。
+    per_character_limit: Mapped[int] = mapped_column(Integer, default=0)
+    # 历史批次升级时为 False；V96 新建/编辑奖励后为 True，用于兼容旧的无奖励 CDK。
+    reward_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    # UTC naive；为空表示永不过期。
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class RedemptionBatchGameItem(Base):
+    __tablename__ = "redemption_batch_game_items"
+    __table_args__ = (UniqueConstraint("batch_id", "game_item_id", name="uq_redemption_batch_game_item"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("redemption_batches.id"), index=True)
+    game_item_id: Mapped[int] = mapped_column(ForeignKey("game_items.id"), index=True)
+    quantity: Mapped[int] = mapped_column(BigInteger, default=1)
+
 
 class RedemptionCode(Base):
     __tablename__ = "redemption_codes"
@@ -214,6 +230,8 @@ class RedemptionCode(Base):
     role_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     server_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     redeemed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 兑换当时的奖励快照，避免管理员后续编辑批次后改写历史兑换记录。
+    reward_content: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 class Settlement(Base):

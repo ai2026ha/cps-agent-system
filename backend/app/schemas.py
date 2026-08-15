@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pydantic import BaseModel, Field
 
@@ -171,7 +171,20 @@ class ShipmentCreate(BaseModel):
     message: str = ""
 
 class RedemptionBatchCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=120)
+    per_character_limit: int = Field(default=1, ge=0, le=100000)
+    expires_at: datetime | None = None
+    items: list[RewardItemInput] = Field(default_factory=list)
+    enabled: bool = True
+
+
+class RedemptionBatchUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    per_character_limit: int | None = Field(default=None, ge=0, le=100000)
+    expires_at: datetime | None = None
+    items: list[RewardItemInput] | None = None
+    enabled: bool | None = None
+
 
 class GenerateCodesIn(BaseModel):
     count: int = Field(gt=0, le=10000)
