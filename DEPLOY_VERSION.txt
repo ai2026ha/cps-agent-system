@@ -1,2 +1,2 @@
-V106
-v106-registration-arithmetic-captcha
+V107
+v107-agent-platform-orders-only

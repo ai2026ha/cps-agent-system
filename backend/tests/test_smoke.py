@@ -475,7 +475,8 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert 'settlements.view' in l1_data['permissions']
         assert 'players.view' in l1_data['permissions']
         assert 'orders.view' in l1_data['permissions']
-        assert 'shipments.view' in l1_data['permissions']
+        assert 'shipments.view' not in l1_data['permissions']
+        assert 'orders.mall.view' not in l1_data['permissions']
         for forbidden_permission in ['products.view', 'cdk.view', 'recharge.view', 'claims.view', 'mail.view', 'mail.send']:
             assert forbidden_permission not in l1_data['permissions']
 
@@ -489,6 +490,8 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert 'channels.create' in l2_data['permissions']
         assert 'players.view' in l2_data['permissions']
         assert 'orders.view' in l2_data['permissions']
+        assert 'shipments.view' not in l2_data['permissions']
+        assert 'orders.mall.view' not in l2_data['permissions']
         assert 'dashboard.view' in l2_data['permissions']
         assert 'products.view' not in l2_data['permissions']
         assert 'system.metrics' not in l2_data['permissions']
@@ -506,7 +509,8 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert 'settlements.view' not in l3_data['permissions']
         assert 'players.view' in l3_data['permissions']
         assert 'orders.view' in l3_data['permissions']
-        assert 'shipments.view' in l3_data['permissions']
+        assert 'shipments.view' not in l3_data['permissions']
+        assert 'orders.mall.view' not in l3_data['permissions']
         assert 'dashboard.view' in l3_data['permissions']
 
         # 一级/二级代理拥有数据总览、渠道、玩家、订单；其它系统接口仅超管可访问。
@@ -531,7 +535,7 @@ def test_unified_login_rbac_and_scoped_agent_views():
         assert c.get('/api/dashboard', headers=auth(l3_token)).status_code == 200
         assert c.get('/api/players', headers=auth(l3_token)).status_code == 200
         assert c.get('/api/orders/platform', headers=auth(l3_token)).status_code == 200
-        assert c.get('/api/shipments', headers=auth(l3_token)).status_code == 200
+        assert c.get('/api/shipments', headers=auth(l3_token)).status_code == 403
         assert c.get('/api/agents', headers=auth(l3_token)).status_code == 403
         caps = c.get('/api/agents/capabilities', headers=auth(l3_token))
         assert caps.status_code == 403
@@ -2557,7 +2561,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v106-registration-arithmetic-captcha' in index_html
+    assert '/static/app.js?v=v107-agent-platform-orders-only' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2864,13 +2868,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v106-registration-arithmetic-captcha'
+        assert index.headers.get('x-cps-build') == 'v107-agent-platform-orders-only'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v106-registration-arithmetic-captcha')
+        js = c.get('/static/app.js?v=v107-agent-platform-orders-only')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2930,9 +2934,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V106 · REGISTRATION CAPTCHA' in index_html
-    assert '/static/styles.css?v=v106-registration-arithmetic-captcha' in index_html
-    assert '/static/app.js?v=v106-registration-arithmetic-captcha' in index_html
+    assert 'V107 · AGENT PLATFORM ORDERS ONLY' in index_html
+    assert '/static/styles.css?v=v107-agent-platform-orders-only' in index_html
+    assert '/static/app.js?v=v107-agent-platform-orders-only' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2948,9 +2952,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V106 · REGISTRATION CAPTCHA' in index_html
-    assert '/static/styles.css?v=v106-registration-arithmetic-captcha' in index_html
-    assert '/static/app.js?v=v106-registration-arithmetic-captcha' in index_html
+    assert 'V107 · AGENT PLATFORM ORDERS ONLY' in index_html
+    assert '/static/styles.css?v=v107-agent-platform-orders-only' in index_html
+    assert '/static/app.js?v=v107-agent-platform-orders-only' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2974,9 +2978,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V106 · REGISTRATION CAPTCHA" in index_html
-    assert "/static/styles.css?v=v106-registration-arithmetic-captcha" in index_html
-    assert "/static/app.js?v=v106-registration-arithmetic-captcha" in index_html
+    assert "V107 · AGENT PLATFORM ORDERS ONLY" in index_html
+    assert "/static/styles.css?v=v107-agent-platform-orders-only" in index_html
+    assert "/static/app.js?v=v107-agent-platform-orders-only" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -3008,7 +3012,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v106-registration-arithmetic-captcha'
+        assert player.headers.get('x-cps-build') == 'v107-agent-platform-orders-only'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3086,7 +3090,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V106 · REGISTRATION CAPTCHA' in index_html
+    assert 'V107 · AGENT PLATFORM ORDERS ONLY' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3282,7 +3286,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v106-registration-arithmetic-captcha'
+        assert data['version'] == 'v107-agent-platform-orders-only'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
@@ -3777,3 +3781,36 @@ def test_registration_arithmetic_captcha_is_required_and_one_time():
         reused = c.post(f'/api/public/registration/{invite}', skip_auto_captcha=True, json={**payload, 'username': 'captcha_reused'})
         assert reused.status_code == 400
         assert '验证码已使用' in reused.json()['detail']
+
+
+
+def test_agent_order_management_only_platform_coin_visible_and_accessible():
+    with TestClient(app) as c:
+        admin_login = c.post('/api/auth/login', json={'username':'admin','password':'ChangeMe123!'})
+        assert admin_login.status_code == 200
+        admin_data = admin_login.json()
+        assert 'orders.mall.view' in admin_data['permissions']
+        assert 'shipments.view' in admin_data['permissions']
+        admin = admin_data['access_token']
+
+        created = create_agent(c, admin, 'orders_agent_v107', '订单代理V107', 1, 1)
+        assert created.status_code == 200, created.text
+        login_resp = c.post('/api/auth/login', json={'username':'orders_agent_v107','password':'AgentPass123!'})
+        assert login_resp.status_code == 200
+        data = login_resp.json()
+        assert 'orders.view' in data['permissions']
+        assert 'orders.mall.view' not in data['permissions']
+        assert 'shipments.view' not in data['permissions']
+        assert 'payment.test' not in data['permissions']
+        headers = auth(data['access_token'])
+        assert c.get('/api/orders/platform', headers=headers).status_code == 200
+        assert c.get('/api/orders/mall', headers=headers).status_code == 403
+        assert c.get('/api/shipments', headers=headers).status_code == 403
+        assert c.get('/api/payment-test/players', headers=headers).status_code == 403
+
+    root = Path(__file__).resolve().parents[1] / 'app' / 'static'
+    index_html = (root / 'index.html').read_text(encoding='utf-8')
+    app_js = (root / 'app.js').read_text(encoding='utf-8')
+    assert 'data-view="platformOrders" data-permission="orders.view"' in index_html
+    assert 'data-view="mallOrders" data-permission="orders.mall.view"' in index_html
+    assert "mallOrders:'orders.mall.view'" in app_js

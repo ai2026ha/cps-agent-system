@@ -10,5 +10,5 @@ def test_v97_migration_does_not_use_integer_boolean_literals():
 
 def test_v97_release_markers_present():
     project = Path(__file__).resolve().parents[2]
-    assert "V97" in (project / "DEPLOY_VERSION.txt").read_text(encoding="utf-8")
-    assert "V97" in (project / "backend" / "DEPLOY_VERSION.txt").read_text(encoding="utf-8")
+    assert "V107" in (project / "DEPLOY_VERSION.txt").read_text(encoding="utf-8")
+    assert "V107" in (project / "backend" / "DEPLOY_VERSION.txt").read_text(encoding="utf-8")

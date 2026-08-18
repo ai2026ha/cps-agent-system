@@ -35,8 +35,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v106-registration-arithmetic-captcha"
-BUILD_LABEL = "V106 · REGISTRATION CAPTCHA"
+BUILD_VERSION = "v107-agent-platform-orders-only"
+BUILD_LABEL = "V107 · AGENT PLATFORM ORDERS ONLY"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -554,7 +554,7 @@ PERMISSION_MATRIX = {
     "superadmin": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "channels.edit_full",
         "settlements.view", "settlements.manage", "players.view", "players.manage",
-        "orders.view", "orders.manage", "shipments.view", "shipments.manage",
+        "orders.view", "orders.mall.view", "orders.manage", "shipments.view", "shipments.manage",
         "products.view", "products.manage", "cdk.view", "cdk.manage",
         "recharge.view", "recharge.manage", "claims.view", "claims.manage",
         "mail.view", "mail.send", "system.rebuild", "system.metrics", "system.settings", "system.admins.manage",
@@ -562,15 +562,15 @@ PERMISSION_MATRIX = {
     },
     "agent_1": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
-        "players.view", "orders.view", "shipments.view", "system.settings",
+        "players.view", "orders.view", "system.settings",
     },
     "agent_2": {
         "dashboard.view", "channels.view", "channels.create", "channels.edit_basic", "settlements.view",
-        "players.view", "orders.view", "shipments.view", "system.settings",
+        "players.view", "orders.view", "system.settings",
     },
     # 三级代理为末级：保留数据总览、玩家与订单查看权限，不能进入渠道管理，也不能新增代理。
     "agent_3": {
-        "dashboard.view", "players.view", "orders.view", "shipments.view", "system.settings",
+        "dashboard.view", "players.view", "orders.view", "system.settings",
     },
 }
 
@@ -3749,9 +3749,9 @@ def mall_orders(
     account: str = "",
     product: str = "",
     db: Session = Depends(get_db),
-    principal=Depends(require_permission("orders.view")),
+    principal=Depends(require_permission("orders.mall.view")),
 ):
-    """商城订单只来自玩家中心购买；支持按玩家账号、礼包/商品名称查询。"""
+    """商城订单只来自玩家中心购买；仅超级管理员可查看。"""
     q = (
         db.query(MallOrder, Player, Product)
         .join(Player, Player.id == MallOrder.player_id)
