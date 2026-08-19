@@ -2561,7 +2561,7 @@ def test_v73_behavior_search_button_is_clickable_and_static_cache_busted():
     assert "searchBtn.addEventListener('click'" in app_js
     assert "e.preventDefault();e.stopPropagation();runSearch()" in app_js
     assert '/api/player-behavior-test/character-search?' in app_js
-    assert '/static/app.js?v=v108-dark-teal-ui' in index_html
+    assert '/static/app.js?v=v109-sidebar-dark-right-light' in index_html
 
 
 def test_v74_system_settings_profile_password_and_superadmin_management():
@@ -2868,13 +2868,13 @@ def test_v77_legacy_admin_still_gets_system_settings_and_static_is_no_cache():
         index = c.get('/')
         assert index.status_code == 200
         assert 'no-store' in index.headers.get('cache-control','')
-        assert index.headers.get('x-cps-build') == 'v108-dark-teal-ui'
+        assert index.headers.get('x-cps-build') == 'v109-sidebar-dark-right-light'
         assert '系统设置' in index.text
         assert '个人信息' in index.text
         assert '管理员' in index.text
         assert '系统编辑' in index.text
         assert '白名单' in index.text
-        js = c.get('/static/app.js?v=v108-dark-teal-ui')
+        js = c.get('/static/app.js?v=v109-sidebar-dark-right-light')
         assert js.status_code == 200
         assert 'no-store' in js.headers.get('cache-control','')
 
@@ -2934,9 +2934,9 @@ def test_v80_cps_accent_uses_fresh_assets_and_forced_cyan_style():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V108 · DARK TEAL UI' in index_html
-    assert '/static/styles.css?v=v108-dark-teal-ui' in index_html
-    assert '/static/app.js?v=v108-dark-teal-ui' in index_html
+    assert 'V109 · SIDEBAR DARK / RIGHT V107' in index_html
+    assert '/static/styles.css?v=v109-sidebar-dark-right-light' in index_html
+    assert '/static/app.js?v=v109-sidebar-dark-right-light' in index_html
     assert "accent.className='brand-name-segment brand-cps-accent'" in app_js
     assert 'renderSidebarBrandName(brand,backendName)' in app_js
     assert '.sidebar .brand .brand-name .brand-cps-accent' in css
@@ -2952,9 +2952,9 @@ def test_v82_brand_title_segments_keep_inherited_size_and_long_name_compacts():
     app_js = (static_dir / 'app.js').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
 
-    assert 'V108 · DARK TEAL UI' in index_html
-    assert '/static/styles.css?v=v108-dark-teal-ui' in index_html
-    assert '/static/app.js?v=v108-dark-teal-ui' in index_html
+    assert 'V109 · SIDEBAR DARK / RIGHT V107' in index_html
+    assert '/static/styles.css?v=v109-sidebar-dark-right-light' in index_html
+    assert '/static/app.js?v=v109-sidebar-dark-right-light' in index_html
     assert "brand.classList.toggle('brand-name-long',visualLength>=9)" in app_js
     assert "brand.classList.toggle('brand-name-xlong',visualLength>=12)" in app_js
     assert '.brand-name .brand-name-segment' in css
@@ -2978,9 +2978,9 @@ def test_v83_brand_legacy_span_rule_removed_and_login_brand_is_dynamic():
     assert 'id="loginBrandLogo"' in index_html
     assert "renderSidebarBrandName($('#loginBrandName'),backendName)" in js
     assert "await loadSystemBranding();" in js
-    assert "V108 · DARK TEAL UI" in index_html
-    assert "/static/styles.css?v=v108-dark-teal-ui" in index_html
-    assert "/static/app.js?v=v108-dark-teal-ui" in index_html
+    assert "V109 · SIDEBAR DARK / RIGHT V107" in index_html
+    assert "/static/styles.css?v=v109-sidebar-dark-right-light" in index_html
+    assert "/static/app.js?v=v109-sidebar-dark-right-light" in index_html
 
 
 def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
@@ -3012,7 +3012,7 @@ def test_v87_player_center_has_no_brand_icon_and_keeps_dynamic_name():
         assert public.json()['player_center_name'] == '天龙玩家中心'
         player = c.get('/player')
         assert player.status_code == 200
-        assert player.headers.get('x-cps-build') == 'v108-dark-teal-ui'
+        assert player.headers.get('x-cps-build') == 'v109-sidebar-dark-right-light'
         assert 'no-store' in player.headers.get('cache-control','')
         assert 'id="playerLoginBrandLogo"' not in player.text
         assert 'id="playerTopbarBrandLogo"' not in player.text
@@ -3090,7 +3090,7 @@ def test_v90_item_picker_is_present_in_all_three_create_flows():
     index_html = (static_dir / 'index.html').read_text(encoding='utf-8')
     css = (static_dir / 'styles.css').read_text(encoding='utf-8')
     assert 'data-view="gameItems"' in index_html
-    assert 'V108 · DARK TEAL UI' in index_html
+    assert 'V109 · SIDEBAR DARK / RIGHT V107' in index_html
     assert "['items',isGift?'礼包道具':'商品道具','item-builder'" in app_js
     assert "['items','每日奖励道具','item-builder'" in app_js
     assert 'function bindItemBuilders(root)' in app_js
@@ -3286,7 +3286,7 @@ def test_v93_public_build_info():
         r = c.get('/api/public/build-info')
         assert r.status_code == 200
         data = r.json()
-        assert data['version'] == 'v108-dark-teal-ui'
+        assert data['version'] == 'v109-sidebar-dark-right-light'
         assert data['features']['gift_edit'] is True
         assert data['features']['gift_publish_toggle'] is True
         assert data['features']['game_item_search'] is True
@@ -3814,3 +3814,20 @@ def test_agent_order_management_only_platform_coin_visible_and_accessible():
     assert 'data-view="platformOrders" data-permission="orders.view"' in index_html
     assert 'data-view="mallOrders" data-permission="orders.mall.view"' in index_html
     assert "mallOrders:'orders.mall.view'" in app_js
+
+
+def test_v109_sidebar_dark_right_area_restored_to_v107_theme():
+    project = Path(__file__).resolve().parents[2]
+    css = (project / "backend" / "app" / "static" / "styles.css").read_text(encoding="utf-8")
+    index_html = (project / "backend" / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    assert "V109: 仅保留左侧导航深黑墨绿主题" in css
+    assert ".sidebar{background:linear-gradient(180deg,#020504 0%,#04100e 100%)!important" in css
+    # V108 对后台右侧的全局深色覆盖必须彻底移除。
+    assert "main{background:radial-gradient(circle at 35% 0%" not in css
+    assert "table{color:#d5e1df!important}" not in css
+    assert "html,body{background:var(--ui-bg)!important" not in css
+    # V107 原始浅色样式仍作为右侧内容区基础样式存在。
+    assert "body{margin:0;font-family:Inter" in css and "background:#f5f7fb;color:#172033" in css
+    assert ".metric,.panel{background:#fff;border:1px solid #e7ebf2" in css
+    assert "th{text-align:left;color:#737f95;font-weight:700;background:#f8f9fc}" in css
+    assert "/static/styles.css?v=v109-sidebar-dark-right-light" in index_html
