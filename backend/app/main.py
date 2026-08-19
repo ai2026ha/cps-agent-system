@@ -35,8 +35,8 @@ from .security import hash_password, verify_password, create_token, current_admi
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v107-agent-platform-orders-only"
-BUILD_LABEL = "V107 · AGENT PLATFORM ORDERS ONLY"
+BUILD_VERSION = "v108-dark-teal-ui"
+BUILD_LABEL = "V108 · DARK TEAL UI"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
