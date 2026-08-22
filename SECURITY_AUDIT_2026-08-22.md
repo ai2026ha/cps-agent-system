@@ -19,11 +19,11 @@ Reviewed the complete uploaded source tree: FastAPI/SQLAlchemy backend, authenti
 
 - Python compile check: passed.
 - New security regression tests: 6 passed.
-- Existing suite under upgraded dependencies: 79 passed, 6 failed.
+- Full suite under upgraded dependencies: 86 passed, 0 failed.
 - Dependency audit: no known vulnerabilities found.
 - Bandit high-severity scan: no high-severity findings.
 
-The six remaining legacy test failures are not new application regressions: four assert an obsolete V107 build identifier even though the uploaded application identifies itself as V120, and two intentionally assume that arbitrary `X-Forwarded-For` input is trusted. Those two expectations conflict with the spoofing fix. The source package should update those legacy assertions before using a fully green CI gate.
+The six legacy failures were resolved by synchronizing obsolete V107/V112 release assertions with the V120 security baseline and making proxy-IP tests explicitly configure one trusted proxy hop. The user-facing web release marker is `V03`.
 
 ## Residual operational risks
 

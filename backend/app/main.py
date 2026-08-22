@@ -40,7 +40,7 @@ from .security_audit import record_security_event
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
 BUILD_VERSION = "v120-security-pro"
-BUILD_LABEL = "V120 · SECURITY PRO RELEASE"
+BUILD_LABEL = "V03"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
