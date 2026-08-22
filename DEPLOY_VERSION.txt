@@ -1,2 +1,1 @@
-V107
-v107-agent-platform-orders-only
+CPS_V120_SECURITY_PRO_FINAL

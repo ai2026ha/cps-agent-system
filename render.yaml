@@ -21,11 +21,13 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: "720"
+        value: "30"
       - key: BUSINESS_TIMEZONE
         value: Asia/Shanghai
       - key: PAYMENT_CALLBACK_SECRET
         sync: false
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
       - key: PYTHON_VERSION
         value: 3.12.8
 

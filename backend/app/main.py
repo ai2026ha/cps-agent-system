@@ -9,11 +9,14 @@ import json
 import base64
 import hashlib
 import hmac
+from collections import defaultdict, deque
+from threading import Lock
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request, UploadFile, File
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, text
@@ -31,12 +34,13 @@ from .schemas import (
     RechargeRuleCreate, RechargeRuleUpdate, ClaimCreate, PrivilegeCardCreate, PrivilegeCardUpdate, PlayerPrivilegePurchase,
     PlayerBehaviorMallPurchase, PlayerBehaviorPrivilegePurchase, PlayerBehaviorCumulativeClaim, MailCreate,
 )
-from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player, JWT_SECRET
+from .security import hash_password, verify_password, create_token, current_admin, current_channel_user, current_user, current_player, JWT_SECRET, _payload, revoke_from_payload
+from .security_audit import record_security_event
 
 app = FastAPI(title="CPS 智能代理系统", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
-BUILD_VERSION = "v107-agent-platform-orders-only"
-BUILD_LABEL = "V107 · AGENT PLATFORM ORDERS ONLY"
+BUILD_VERSION = "v120-security-pro"
+BUILD_LABEL = "V120 · SECURITY PRO RELEASE"
 SUPERADMIN_REGISTRATION_CODE = "SUPERADMIN"
 
 
@@ -51,11 +55,41 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'"
+    response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api") else response.headers.get("Cache-Control", "")
+    return response
+
 BUSINESS_TZ = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Shanghai"))
 LOGIN_FAILURE_LIMIT = max(int(os.getenv("ADMIN_LOGIN_FAILURE_LIMIT", "8")), 2)
 LOGIN_FAILURE_WINDOW_SECONDS = max(int(os.getenv("ADMIN_LOGIN_FAILURE_WINDOW_SECONDS", "600")), 60)
 REGISTRATION_CAPTCHA_TTL_SECONDS = max(int(os.getenv("REGISTRATION_CAPTCHA_TTL_SECONDS", "300")), 60)
 _USED_REGISTRATION_CAPTCHAS: dict[str, int] = {}
+_RATE_LIMIT_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+_RATE_LIMIT_LOCK = Lock()
+
+
+def enforce_rate_limit(scope: str, client_ip: str | None, limit: int, window_seconds: int) -> None:
+    """Small per-process abuse guard. A shared edge/WAF limit is still recommended for multi-worker deployments."""
+    key = f"{scope}:{client_ip or 'unknown'}"
+    now = time_module.monotonic()
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS[key]
+        cutoff = now - window_seconds
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            retry_after = max(1, int(window_seconds - (now - bucket[0])))
+            raise HTTPException(429, "请求过于频繁，请稍后重试", headers={"Retry-After": str(retry_after)})
+        bucket.append(now)
 
 
 def _captcha_b64encode(raw: bytes) -> str:
@@ -157,13 +191,21 @@ def normalize_ip(value: str | None) -> str | None:
 
 
 def backend_client_ip(request: Request) -> str | None:
-    """读取后台真实来源 IP。Render/Cloudflare 等反代环境优先采用转发头。"""
-    candidates = [
-        request.headers.get("cf-connecting-ip"),
-        (request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip(),
-        request.headers.get("x-real-ip"),
-        request.client.host if request.client else None,
-    ]
+    """Return a client IP without trusting attacker-controlled forwarding headers.
+
+    Set TRUSTED_PROXY_HOPS to the exact number of reverse proxies in front of the app.
+    The default (0) only trusts the socket peer.
+    """
+    peer = request.client.host if request.client else None
+    try:
+        trusted_hops = max(0, min(int(os.getenv("TRUSTED_PROXY_HOPS", "0")), 5))
+    except ValueError:
+        trusted_hops = 0
+    candidates = []
+    forwarded = [part.strip() for part in (request.headers.get("x-forwarded-for") or "").split(",") if part.strip()]
+    if trusted_hops and len(forwarded) >= trusted_hops:
+        candidates.append(forwarded[-trusted_hops])
+    candidates.append(peer)
     for value in candidates:
         normalized = normalize_ip(value)
         if normalized:
@@ -640,7 +682,9 @@ def seed_admin():
     db = SessionLocal()
     try:
         username = os.getenv("ADMIN_USERNAME", "admin")
-        password = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
+        password = os.getenv("ADMIN_PASSWORD")
+        if not password:
+            raise RuntimeError("ADMIN_PASSWORD must be configured before first startup")
         admin = db.query(AdminUser).filter(AdminUser.username == username).first()
         created = False
         if not admin:
@@ -905,13 +949,13 @@ def ensure_redemption_batch_rule_columns():
                 conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN per_character_limit INTEGER DEFAULT 0"))
             if "reward_required" not in columns:
                 conn.execute(text(
-                    f"ALTER TABLE redemption_batches ADD COLUMN reward_required BOOLEAN DEFAULT {false_literal}"
+                    f"ALTER TABLE redemption_batches ADD COLUMN reward_required BOOLEAN DEFAULT {false_literal}"  # nosec B608 -- dialect-owned literal
                 ))
             if "expires_at" not in columns:
                 conn.execute(text("ALTER TABLE redemption_batches ADD COLUMN expires_at TIMESTAMP"))
             conn.execute(text("UPDATE redemption_batches SET per_character_limit = 0 WHERE per_character_limit IS NULL"))
             conn.execute(text(
-                f"UPDATE redemption_batches SET reward_required = {false_literal} WHERE reward_required IS NULL"
+                f"UPDATE redemption_batches SET reward_required = {false_literal} WHERE reward_required IS NULL"  # nosec B608 -- dialect-owned literal
             ))
         if "redemption_codes" in tables:
             code_columns = {c["name"] for c in inspector.get_columns("redemption_codes")}
@@ -1067,6 +1111,9 @@ def ensure_agent_public_identity_format():
 @app.on_event("startup")
 def startup():
     print(f"[CPS] starting {BUILD_VERSION} | db={engine.dialect.name} | main={Path(__file__).resolve()} | static={STATIC_DIR.resolve()}", flush=True)
+    # Process-local abuse buckets must start clean after a controlled restart and between isolated app lifespans.
+    with _RATE_LIMIT_LOCK:
+        _RATE_LIMIT_BUCKETS.clear()
     Base.metadata.create_all(bind=engine)
     ensure_agent_hierarchy_columns()
     ensure_platform_order_columns()
@@ -1159,6 +1206,17 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     if became_blocked:
         raise HTTPException(403, f"登录失败次数过多，当前IP {client_ip or '未知'} 已被拉黑，请联系超级管理员解除")
     raise HTTPException(401, "账号或密码错误")
+
+bearer_auth = HTTPBearer(auto_error=False)
+
+@app.post("/api/auth/logout")
+def logout(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_auth)):
+    """V120 BUILD10: revoke current access token."""
+    payload = _payload(credentials)
+    revoke_from_payload(payload)
+    record_security_event("logout", result="success")
+    return {"ok": True, "message": "已退出"}
+
 
 @app.get("/api/auth/me")
 def auth_me(principal=Depends(current_user), db: Session = Depends(get_db)):
@@ -2175,7 +2233,8 @@ def registration_channel(db: Session, invite_code: str):
 
 
 @app.get("/api/public/registration/{invite_code}/captcha")
-def registration_captcha(invite_code: str, db: Session = Depends(get_db)):
+def registration_captcha(invite_code: str, request: Request, db: Session = Depends(get_db)):
+    enforce_rate_limit("registration-captcha", backend_client_ip(request), 30, 300)
     # 先验证注册链接本身有效，避免无效渠道无限领取验证码。
     registration_channel(db, invite_code)
     return create_registration_captcha(invite_code)
@@ -2202,7 +2261,8 @@ def registration_info(invite_code: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/public/registration/{invite_code}")
-def register_player(invite_code: str, body: PlayerRegister, db: Session = Depends(get_db)):
+def register_player(invite_code: str, body: PlayerRegister, request: Request, db: Session = Depends(get_db)):
+    enforce_rate_limit("registration", backend_client_ip(request), 10, 600)
     agent = registration_channel(db, invite_code)
     verify_registration_captcha(invite_code, body.captcha_token, body.captcha_answer)
     username = body.username.strip()
@@ -2457,6 +2517,7 @@ def privilege_purchase_payload(row: PrivilegeCardPurchase, db: Session, today: d
 
 @app.post("/api/player/auth/login")
 def player_login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+    enforce_rate_limit("player-login", backend_client_ip(request), 12, 300)
     player = db.query(Player).filter(Player.username == body.username.strip()).first()
     if not player or player.status != "active" or not verify_password(body.password, player.password_hash):
         raise HTTPException(401, "玩家账号或密码错误")

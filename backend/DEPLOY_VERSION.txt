@@ -1,2 +1,1 @@
-V107
-v107-agent-platform-orders-only
+CPS V112 SECURITY HARDENED RELEASE
