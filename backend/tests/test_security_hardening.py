@@ -9,6 +9,8 @@ from starlette.requests import Request
 
 from app.main import backend_client_ip, enforce_rate_limit, _RATE_LIMIT_BUCKETS
 from app.security import JWT_ALGORITHM, JWT_AUDIENCE, JWT_ISSUER, create_token, decode_refresh_token
+from fastapi.testclient import TestClient
+from app.main import app
 
 
 def request_for(peer: str, forwarded: str | None = None) -> Request:
@@ -47,3 +49,13 @@ def test_access_token_cannot_be_used_as_refresh_token():
     token = create_token("alice", "player", actor_type="player", actor_id=1)
     with pytest.raises(HTTPException):
         decode_refresh_token(token)
+
+
+def test_csp_allows_only_the_known_inline_registration_and_player_scripts():
+    with TestClient(app) as client:
+        response = client.get("/register/SUPERADMIN")
+    policy = response.headers["content-security-policy"]
+    assert "'unsafe-inline'" not in policy.split("style-src", 1)[0]
+    assert "sha256-z1nHEOi2crZSRnsKz6TZmQQ29cKnqLFEhOSKje/N3Wo=" in policy
+    assert "sha256-c8BCj3nEXHjSaEREDys+wbyQwKlXsVc7Kh9B3PCiVw8=" in policy
+    assert "style-src 'self' 'unsafe-inline'" in policy

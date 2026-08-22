@@ -64,7 +64,16 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'"
+    # register.html and player_center.html contain fixed inline scripts. Permit only
+    # their exact SHA-256 digests; injected inline JavaScript remains blocked.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' "
+        "'sha256-z1nHEOi2crZSRnsKz6TZmQQ29cKnqLFEhOSKje/N3Wo=' "
+        "'sha256-c8BCj3nEXHjSaEREDys+wbyQwKlXsVc7Kh9B3PCiVw8='; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; "
+        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
     response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api") else response.headers.get("Cache-Control", "")
     return response
 

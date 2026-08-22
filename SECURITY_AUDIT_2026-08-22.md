@@ -13,11 +13,12 @@ Reviewed the complete uploaded source tree: FastAPI/SQLAlchemy backend, authenti
 5. **Player authentication and registration abuse (medium):** Added server-side rate limits for player login, captcha issuance, and registration, including `Retry-After` responses.
 6. **SQL scanner finding:** Annotated the only dynamic migration literals as dialect-owned constants; no user-controlled SQL construction was found.
 7. **Build hygiene:** Removed bundled Python bytecode/cache artifacts from the deliverable.
+8. **CSP/page compatibility:** Fixed the security policy that blocked the registration and player-center inline assets. Existing inline styles are permitted for compatibility, while the two fixed inline scripts are restricted by exact SHA-256 hashes instead of a broad `unsafe-inline` script exemption.
 
 ## Verification
 
 - Python compile check: passed.
-- New security regression tests: 5 passed.
+- New security regression tests: 6 passed.
 - Existing suite under upgraded dependencies: 79 passed, 6 failed.
 - Dependency audit: no known vulnerabilities found.
 - Bandit high-severity scan: no high-severity findings.
